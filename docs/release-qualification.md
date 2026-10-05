@@ -18,11 +18,11 @@ instruction. Unsupported functionality cannot count as a passed required test.
 Keep synthetic fixtures distinct from captured device evidence. Record errors and
 unexpected outputs; do not replace expected values to make a failing case pass.
 
-| Evidence available at the start of this follow-up | What it establishes |
+| Recorded evidence | What it establishes |
 | --- | --- |
 | Linux engine, UI and native supervisor test results in `validation.md` | Shared calculations, mocked OS adapters, loopback protocols and supervised bundled IPC for the recorded source revision |
 | Extracted Debian package and native CLI verification in the cloud | Payload identity and native supervisor operation from the packaged layout; no graphical installation claim |
-| Windows and both Mac architecture CI definitions | A repeatable test/build recipe; their execution still needs actual job evidence |
+| Native CI job results linked in `validation.md` | Executed target builds and packaged-runtime checks at the recorded commits; no installed-GUI or hardware qualification |
 | Synthetic parameter, metric and protocol fixtures | Parser/arithmetic regressions; no real Q22, radio, camera or firmware validation |
 
 New decoder, repair or release code needs its own recorded results. Never carry a

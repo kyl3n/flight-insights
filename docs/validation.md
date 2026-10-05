@@ -1,6 +1,6 @@
-# Validation record — foundation preview
+# Validation record — flight-log preview
 
-Executed in the managed Debian 13 x86-64 environment on 5 October 2026. These checks establish the first milestone's development capabilities; they do not qualify the complete handoff or real aircraft hardware.
+Local checks ran in the managed Debian 13 x86-64 environment on 5 October 2026. Native GitHub Actions results are recorded separately below. These checks establish this milestone's automated development and packaging capabilities; they do not qualify the complete handoff or real aircraft hardware.
 
 | Check | Observed result |
 | --- | --- |
@@ -26,7 +26,7 @@ Privileged OS mutations, including the new macOS scoped route/address plans and 
 
 ## Cross-platform audit follow-up
 
-The user's Windows/Linux/macOS requirement is recorded in the [platform support matrix](platform-support.md). The follow-up fixes deterministic SQLite connection closure, Windows binary-file handling, localized PowerShell JSON and adapter names, sparse desktop executable paths, and macOS route/source-address selection. Linux engine tests passed after these changes; all six UI tests and the frontend build passed with portable per-run screenshot paths. These source and simulated-platform checks do not establish native Windows/macOS execution.
+The user's Windows/Linux/macOS requirement is recorded in the [platform support matrix](platform-support.md). The follow-up fixes deterministic SQLite connection closure, Windows binary-file handling, localized PowerShell JSON and adapter names, sparse desktop executable paths, and macOS route/source-address selection. The local engine suite, all eight UI tests and the frontend build passed after these changes. UI recovery uses a deterministic host fixture; the separate real-host inspection test remains. Source and simulated-platform checks are distinct from the native CI results below.
 
 CI now requires shared engine/UI checks, native tests, and verification of the packaged runtime on Windows x64, Linux x64, Apple Silicon and Intel Macs. The original Linux-only UI test restriction has been removed. Native bundle verification exercises the packaged shell's engine supervisor independently of graphical startup; its result is not a passed GUI or hardware test.
 
@@ -40,10 +40,25 @@ Managed-cloud benchmarks caught growing Parquet footer memory and prompted bound
 
 Background job results survive restart; unfinished jobs become interrupted without replay. Durable network receipts are validated as local claims of origin and rechecked against current OS state before a separately confirmed rollback. No real host repairs were performed during this work.
 
+## Native CI and artifact provenance
+
+The [native run for `ebe0352`](https://github.com/kyl3n/flight-insights/actions/runs/37315922353) runs engine tests, frozen imports, Rust tests/lints, frontend build, browser integration and packaged-runtime verification on each target. The verification uses the bundled native supervisor, including restart/shutdown, from paths containing spaces and Unicode. It checks runtime payloads and notices. These are automated runtime checks; they do not establish native WebView rendering or hardware qualification.
+
+| Target | Automated pipeline | Artifact formats |
+| --- | --- | --- |
+| Windows x64 | Passed on `ebe0352` | [NSIS `.exe`](https://github.com/kyl3n/flight-insights/actions/runs/37315922353/artifacts/11348971081) |
+| Ubuntu 22.04 x64 | Passed on `ebe0352` | [`.deb`, AppImage](https://github.com/kyl3n/flight-insights/actions/runs/37315922353/artifacts/11347564605) |
+| macOS 15 Apple Silicon | Passed on `ebe0352` | [`.app`, `.dmg`](https://github.com/kyl3n/flight-insights/actions/runs/37315922353/artifacts/11347084679) |
+| macOS 15 Intel | Passed on `ebe0352` | [`.app`, `.dmg`](https://github.com/kyl3n/flight-insights/actions/runs/37315922353/artifacts/11348870261) |
+
+macOS previews carry an ad hoc integrity seal, not a Developer ID signature or notarization. Windows previews have no publisher signature. CI uploads artifacts only after the target's verification succeeds, with a 14-day retention period. Each artifact includes its own `native-verification-<target>.json`, dependency inventory and source identity. Extract the downloaded Actions archive to find the installer and report. Mac `.app` bundles are inside `.app.tar.gz` archives to preserve executable modes and symlinks. Keep each app bundle and its bundled engine intact.
+
+The separately built Debian 13 preview also passed packaged-runtime verification at clean source commit `fa89915e75e1d6b04ac208673c6b8074ba691595`. Its file is `Q22-Flight-Lab-0.1.0-log-preview-linux-amd64.deb`, 48,174,900 bytes, SHA-256 `91d85c6fabf257bae90699d3ea280f13d01685902b7853eb10fcff219ef8bf94`. This is distinct from the Ubuntu CI artifact and retains the Debian 13 runtime dependency requirements.
+
 ## Unpassed or unrun release checks
 
 - Full native WebView rendering is blocked in this cloud: the workspace-extracted Debian WebKit library expects its renderer subprocess in the system `/usr/lib` location. No package binary or browser sandbox was weakened to bypass this. See [cloud prerequisites](cloud-native-prerequisites.md).
-- The `.deb` was built and inspected, not installed and launched on a clean desktop. This local artifact requires the declared Debian/glibc runtime dependencies. Windows/macOS build workflows exist but were not executed here; signed installers, notarization and clean-machine qualification remain open.
+- The `.deb` was built and inspected, not installed and launched on a clean desktop. This local artifact requires the declared Debian/glibc runtime dependencies. Native CI execution is recorded below; publisher signing, notarization and clean-machine GUI qualification remain open.
 - No real Q22 BIN/TLOG/RF bundle, accepted original/Brian parameter baselines, device stream, matched flight experiment or physical ESC mapping was supplied. No hardware-readiness, video-decoding, parameter-tuning or causal-performance claim is made.
 - Live recording, complete verified parameter-state reconstruction, spectrum/filter/PID parity, full migrations, completed 2 GiB decoding on a reference laptop and the rest of the handoff's acceptance families remain pending.
 

@@ -17,7 +17,7 @@ The Linux CI baseline is Ubuntu 22.04. The managed cloud is Debian 13; its local
 
 | Capability | Windows | Linux | macOS |
 | --- | --- | --- | --- |
-| Desktop UI, native file picker, local packaged engine | Implemented; native qualification pending | Implemented; build/transport checks passed; rendered install qualification pending | Implemented; native qualification pending |
+| Desktop UI, native file picker, local packaged engine | Implemented; see recorded CI results; installed-GUI qualification pending | Implemented; build/runtime checks passed; installed-GUI qualification pending | Implemented; see recorded CI results; installed-GUI qualification pending |
 | Immutable files, parameter and BIN/LOG/TLOG imports, scoped metrics and comparisons | Shared engine | Shared engine | Shared engine |
 | IPv4 adapter/subnet/route inspection | PowerShell NetTCPIP and psutil | iproute2 and psutil | netstat/route and psutil |
 | Configured SkyPulse HTTP, RTSP and UDP checks | Shared bounded socket probes | Shared bounded socket probes | Shared bounded socket probes |
@@ -38,4 +38,4 @@ CI runs separate native builds for all four target combinations. Before a releas
 5. Real host networking checks, occupied UDP ports, appropriate OS permission failures, and supported repair/rollback behavior on a separate test network.
 6. Platform signing/notarization and a documented supported OS-version range before general distribution.
 
-At present, Linux build and automated development checks have been executed in the cloud. Windows/macOS jobs and clean installed GUI checks have not run here. The `.github/workflows/native-build.yml` definitions enforce the automated pipeline when run; they do not establish that any unexecuted target passed. Full device and platform qualification remain release gates.
+Native CI has executed on Windows, Linux and both Mac architectures. The [validation record](validation.md) links the actual runs and source commits and distinguishes them from the separate Debian 13 build. Automated checks include the bundled engine and native supervisor; clean installed GUI, supported minimum OS versions, real-device behavior and publisher signing remain release gates.

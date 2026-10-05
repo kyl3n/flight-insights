@@ -6,12 +6,12 @@ Windows x64, Linux x64, macOS Apple Silicon and macOS Intel are all required rel
 
 | Handoff stage | State | Remaining exit work |
 | --- | --- | --- |
-| 0 — Foundation | In progress | Target-OS clean install, desktop/sidecar qualification, migration recovery and release license inventory |
+| 0 — Foundation | In progress | Clean installed-GUI qualification, migration recovery and review of per-target dependency inventories; automated native builds/runtime checks are recorded in [validation.md](validation.md) |
 | 1 — Collection/review | Partial slice | Scoped BIN/LOG/TLOG decoding, boot/source separation and parameter observations implemented; live RF recorder, broader field normalization, real Q22 fixtures and health rules remain |
 | 2 — Evidence workspace | Partial comparison slice | Cross-source alignment, segmentation, comprehensive charts, issue lifecycle |
 | 3 — Control/filter/performance | Not implemented | DSP/PID parity against pinned trusted tools, scoped engineering validation |
 | 4 — Native/live health | Partial host-network slice | Durable reviewed repairs and selected macOS routes/aliases implemented; hardware bench validation, USB/MAVFTP, recording isolation and live alerts remain |
-| 5 — Release qualification | Not passed | Full mandatory acceptance plan, signed installers, accessibility and large-log benchmarks |
+| 5 — Release qualification | Not passed | Full mandatory acceptance plan, publisher-signed installers, accessibility and reference-laptop 2 GiB benchmarks |
 
 ## Evidence still needed
 
