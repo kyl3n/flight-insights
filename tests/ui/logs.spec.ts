@@ -72,14 +72,14 @@ test('BIN import preserves boot and parameter evidence and creates comparable sc
     await expect(crossing.getByRole('cell',{name:'3 s',exact:true})).toBeVisible();
     await crossing.locator('summary').filter({hasText:'Mean power'}).click();
     await expect(crossing.locator('.metric-details>details[open] .metric-unavailable-reason')).toBeVisible();
-    await page.screenshot({path:'/tmp/q22-log-comparison.png',fullPage:true});
+    await page.screenshot({path:testInfo.outputPath('log-comparison.png'),fullPage:true});
     await page.reload();await expect(page.getByText('Engine connected',{exact:true})).toBeVisible();
     await openLogs(page);await expect(panel.getByRole('button',{name:/Synthetic decoded BIN/})).toBeVisible();
     expect(engine.calls.filter(call=>call.method==='logs.import')).toHaveLength(1);
   }finally{await engine.close();}
 });
 
-test('TLOG import keeps MAVLink sources separate and reports unavailable tracking honestly',async({page})=>{
+test('TLOG import keeps MAVLink sources separate and reports unavailable tracking honestly',async({page},testInfo)=>{
   const engine=await connectEngine(page);
   try{
     await page.goto('/');await expect(page.getByText('Engine connected',{exact:true})).toBeVisible();
@@ -108,6 +108,6 @@ test('TLOG import keeps MAVLink sources separate and reports unavailable trackin
     await card.getByText('Logged configuration and split boundaries',{exact:true}).click();
     await expect(card.getByText('Partial logged configuration',{exact:true})).toBeVisible();
     expect(engine.calls.filter(call=>call.method==='logs.session')[0].params).toMatchObject({source_key:'1:1',boot_epoch:0,battery_id:'battery_status:0'});
-    await page.screenshot({path:'/tmp/q22-log-evidence.png',fullPage:true});
+    await page.screenshot({path:testInfo.outputPath('tlog-evidence.png'),fullPage:true});
   }finally{await engine.close();}
 });
