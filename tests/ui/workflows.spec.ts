@@ -93,7 +93,9 @@ test('network inspection runs against this host and does not apply a repair', as
     await expect(page.getByText('Engine connected', { exact: true })).toBeVisible();
     await page.getByRole('navigation').getByRole('button', { name: 'Network checks' }).click();
     await page.getByRole('button', { name: 'Inspect computer' }).click();
-    await expect(page.getByText('Firewall visibility', { exact: true })).toBeVisible();
+    // Windows performs two sequential read-only PowerShell queries, each with
+    // a six-second budget. Allow their supported duration plus UI overhead.
+    await expect(page.getByText('Firewall visibility', { exact: true })).toBeVisible({ timeout: 20_000 });
     await expect(page.getByText('Unknown', { exact: true }).first()).toBeVisible();
     expect(engine.calls.some(call => call.method === 'network.inspect')).toBeTruthy();
     expect(engine.calls.some(call => call.method === 'network.apply')).toBeFalsy();

@@ -130,8 +130,7 @@ def verify_app(app: Path, expected_engine: Path, directory: Path) -> dict:
     # seals its enclosing app resources, so verification must use bundle context.
     # An ad-hoc preview seal establishes integrity, not Developer ID trust.
     run(["codesign", "--verify", "--strict", str(binary.with_name("q22-engine"))])
-    if PACKAGER.host_target().startswith("aarch64"):
-        run(["codesign", "--verify", "--strict", str(app)])
+    run(["codesign", "--verify", "--strict", str(app)])
     PACKAGER.audit_macos_runtime(binary.with_name("q22-engine"), minimum)
     if REQUIRE_PUBLISHER:
         run(["codesign", "--verify", "--deep", "--strict", str(app)])
