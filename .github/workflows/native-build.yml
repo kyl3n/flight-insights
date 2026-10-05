@@ -53,6 +53,11 @@ jobs:
           rustup toolchain install 1.99.0 --profile minimal --component rustfmt --component clippy
           rustup default 1.99.0
           rustup target add ${{ matrix.target }} --toolchain 1.99.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          key: ${{ matrix.target }}
+          cache-on-failure: true
       - name: Linux native libraries
         if: runner.os == 'Linux'
         run: |
@@ -71,7 +76,7 @@ jobs:
           npm run build
           cargo fmt --manifest-path src-tauri/Cargo.toml --check
           cargo test --manifest-path src-tauri/Cargo.toml --target ${{ matrix.target }} --locked
-          cargo clippy --manifest-path src-tauri/Cargo.toml --locked -- -D warnings
+          cargo clippy --manifest-path src-tauri/Cargo.toml --target ${{ matrix.target }} --locked -- -D warnings
       - name: Install Linux browser dependencies
         if: runner.os == 'Linux'
         run: npx playwright install-deps chromium

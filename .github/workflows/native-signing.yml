@@ -59,7 +59,7 @@ jobs:
           npm run build
           cargo fmt --manifest-path src-tauri/Cargo.toml --check
           cargo test --manifest-path src-tauri/Cargo.toml --locked --target ${{ matrix.target }}
-          cargo clippy --manifest-path src-tauri/Cargo.toml --locked -- -D warnings
+          cargo clippy --manifest-path src-tauri/Cargo.toml --target ${{ matrix.target }} --locked -- -D warnings
           npx playwright install chromium
           npm test
       - name: Sign, notarize where required, and verify native artifacts

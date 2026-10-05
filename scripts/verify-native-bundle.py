@@ -30,8 +30,30 @@ REQUIRE_PUBLISHER = False
 
 
 def run(command, **kwargs) -> subprocess.CompletedProcess:
-    return subprocess.run(command, check=True, capture_output=True, text=True,
-                          encoding="utf-8", timeout=kwargs.pop("timeout", 120), **kwargs)
+    try:
+        return subprocess.run(command, check=True, capture_output=True, text=True,
+                              encoding="utf-8", timeout=kwargs.pop("timeout", 120), **kwargs)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+        # Commands here contain artifact paths and public verification options,
+        # never credentials. Do not dump the inherited environment or full logs.
+        displayed = json.dumps(command, ensure_ascii=True)[:2000]
+        outcome = (f"exited {error.returncode}" if isinstance(error, subprocess.CalledProcessError)
+                   else f"timed out after {error.timeout} seconds")
+        details = [f"Verification command {outcome}: {displayed}"]
+        for name, output in (("stdout", error.stdout), ("stderr", error.stderr)):
+            if isinstance(output, bytes):
+                output = output.decode("utf-8", errors="replace")
+            if output:
+                details.append(f"{name} (last 2000 characters):\n{output[-2000:]}")
+        raise RuntimeError("\n".join(details)) from error
+
+
+def emit_error_annotation(error: Exception) -> None:
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        # Workflow command data requires escaping; subprocess output must never
+        # inject another command through a newline or an encoded delimiter.
+        message = str(error)[:7000].replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+        print(f"::error title=Native artifact verification failed::{message}", flush=True)
 
 
 def sha256(path: Path) -> str:
@@ -288,4 +310,8 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as error:
+        emit_error_annotation(error)
+        raise
