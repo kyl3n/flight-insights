@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { connectEngine } from './engine-harness';
+import type { NetworkInspection } from '../../src/api';
 
 test('source configuration survives reload without probing and fits compact screens', async ({page},testInfo) => {
   const engine = await connectEngine(page);
@@ -30,6 +31,16 @@ test('source configuration survives reload without probing and fits compact scre
 test('simulated native failure restores durable repair recovery and requires explicit rollback acknowledgement', async ({page}) => {
   let crashNextInspection = false;
   let persistedRepair = false;
+  let syntheticInspectionCount = 0;
+  // This test exercises recovery UI state, including a deliberately uncertain
+  // repair. Native inspection remains covered by the separate host workflow.
+  const inspection: NetworkInspection = {
+    status:'ready', platform:'Synthetic test host',
+    interfaces:[{name:'synthetic-adapter',index:1,up:true,ipv4:[{address:'10.0.0.10',prefix:24,network:'10.0.0.0/24'}]}],
+    routes:[], default_routes:[], targets:[],
+    firewall:{state:'unknown',reason:'Synthetic inspection fixture; no native firewall query is performed by this recovery test.'},
+    limitations:['This response validates the recovery UI, not a physical network.'],
+  };
   const engine = await connectEngine(page,{boundaryOverride:(method) => {
     // Test-only plans/outcomes: no host settings or real repair commands execute.
     if (method === 'network.plan') return {plan_id:'test-plan',state:'ready',title:'Synthetic boundary repair',commands:[['synthetic-network-command','add','10.0.0.10']],rollback_commands:[['synthetic-network-command','remove','10.0.0.10']],requires_elevation:true,warnings:['Test-only boundary response; no host settings change.']};
@@ -37,6 +48,7 @@ test('simulated native failure restores durable repair recovery and requires exp
     if (method === 'network.recovery') return {status:'ready',warnings:[],repairs:persistedRepair?[{plan_id:'test-plan',state:'applied',title:'Synthetic boundary repair',commands:[],rollback_commands:[['synthetic-network-command','remove','10.0.0.10']],requires_elevation:true,warnings:[],ownership:'owned',may_have_applied:true,recovered:true,message:'Synthetic recorded ownership was revalidated.'}]:[]};
     if (method === 'network.rollback') {persistedRepair=false;return {plan_id:'test-plan',state:'rolled_back',message:'Synthetic rollback boundary acknowledged.'};}
     if (method === 'network.inspect' && crashNextInspection) {crashNextInspection=false;return {__q22TransportError:{code:'engine_crashed',message:'Synthetic native transport failure'}};}
+    if (method === 'network.inspect') {syntheticInspectionCount++;return inspection;}
     if (method === 'engine.restart') return {protocol_version:1,engine_version:'test-native-boundary'};
     return undefined;
   }});
@@ -80,5 +92,6 @@ test('simulated native failure restores durable repair recovery and requires exp
     expect(engine.calls.filter(call => call.method === 'network.apply')).toHaveLength(1);
     expect(engine.calls.filter(call => call.method === 'engine.restart')).toHaveLength(1);
     expect(engine.calls.filter(call => call.method === 'network.rollback')).toHaveLength(1);
+    expect(syntheticInspectionCount).toBe(2);
   } finally {await engine.close();}
 });

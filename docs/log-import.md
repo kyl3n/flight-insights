@@ -148,8 +148,8 @@ archives may remain after cancellation to preserve evidence.
 
 ```sh
 uv sync --frozen --group dev
-.venv/bin/python fixtures/logs/generate_synthetic.py
-.venv/bin/python -m pytest engine/tests/test_log_decoder.py engine/tests/test_logs.py -q
+uv run --frozen python fixtures/logs/generate_synthetic.py
+uv run --frozen pytest engine/tests/test_log_decoder.py engine/tests/test_logs.py -q
 ```
 
 The fixture generator constructs genuine BIN/LOG wire records and CRC-bearing

@@ -82,7 +82,7 @@ def verify_layout(binary: Path, expected_engine: Path, directory: Path) -> dict:
     if payload_digest(engine) != payload_digest(expected_engine):
         raise RuntimeError("The installer contains a different frozen engine payload")
     if sys.platform != "darwin" and not REQUIRE_PUBLISHER and sha256(engine) != sha256(expected_engine):
-        raise RuntimeError("Unsigned packaged engine bytes differ from the verified source sidecar")
+        raise RuntimeError(f"Unsigned packaged engine bytes differ from the verified source sidecar: {engine}")
     if REQUIRE_PUBLISHER and sys.platform == "win32":
         verify_authenticode(binary)
         verify_authenticode(engine)

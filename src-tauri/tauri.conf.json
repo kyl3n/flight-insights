@@ -35,7 +35,7 @@
     "shortDescription": "Offline flight evidence and network diagnostics",
     "longDescription": "Foundation preview of Q22 Flight Lab. Local immutable source archives, ArduPilot parameter comparison, and explicit network diagnostics. Hardware validation and full flight analysis remain pending.",
     "category": "Utility",
-    "macOS": {"minimumSystemVersion": "13.0"},
+    "macOS": {"minimumSystemVersion": "13.0", "signingIdentity": "-"},
     "linux": {
       "deb": {"depends": ["libc6 (>= 2.35)"]}
     },

@@ -206,6 +206,24 @@ def host_target() -> str:
     raise SystemExit(f"Unsupported packaging host: {system} {machine}")
 
 
+def normalize_linux_runtime(binary: Path) -> None:
+    """Prepare the exact RPATH linuxdeploy applies, before recording frozen bytes."""
+    if sys.platform != "linux":
+        return
+    patchelf = shutil.which("patchelf")
+    if not patchelf:
+        raise RuntimeError("Linux packaging requires patchelf; install the documented native prerequisites or activate scripts/cloud-native-env.sh.")
+    # Tauri's pinned linuxdeploy rewrites existing usr/bin ELF files to this
+    # RPATH. Preparing it here makes that later operation byte-idempotent and
+    # retains the verifier's whole-executable equality check, including bootloader.
+    command = [patchelf, "--set-rpath", "$ORIGIN/../lib", str(binary)]
+    subprocess.run(command, check=True)
+    first = hashlib.sha256(binary.read_bytes()).digest()
+    subprocess.run(command, check=True)
+    if hashlib.sha256(binary.read_bytes()).digest() != first:
+        raise RuntimeError("patchelf does not preserve an already-normalized engine; refuse an unverifiable AppImage build")
+
+
 def smoke(binary: Path) -> None:
     """Exercise the frozen runtime, persistent process, ID association and EOF exit."""
     with tempfile.TemporaryDirectory(prefix="Q22 packaging Δ ") as directory:
@@ -364,6 +382,7 @@ def main() -> None:
                        env={**os.environ, "PYINSTALLER_CONFIG_DIR": str(build / "cache")})
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(build / "dist" / f"q22-engine{suffix}", destination)
+        normalize_linux_runtime(destination)
         collect_linux_native_notices()
     inventory = frozen_inventory(destination)
     RESOURCES.mkdir(parents=True, exist_ok=True)

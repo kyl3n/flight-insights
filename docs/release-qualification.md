@@ -84,6 +84,14 @@ sample with provenance, SHA-256, exact firmware/dialect and a reproducible expec
 result from a pinned trusted reader. Record permission to distribute samples;
 flight logs can contain location, operator and device-identifying information.
 
+Begin Q22 qualification with one matched controller BIN/LOG, GCS TLOG and actual
+parameter readback, plus the exact board/build, flight interval, battery monitor
+mapping/calibration and recorded flight conditions. Import logs through
+**Evidence → Flight log** and the readback through **Parameter snapshot**. Choose
+one source and clock segment before creating each scoped session. A separate
+readback import does not automatically verify the log's parameter history; keep
+that association evidence with the sample bundle.
+
 | Scenario | Required observable result |
 | --- | --- |
 | BIN/textual DataFlash schemas change | FMT/FMTU/UNIT/MULT applicability retained; fixed-point scaling applied once; unknown fields and units remain unresolved |
@@ -136,7 +144,12 @@ repair; do not use a subnet sweep to discover addresses.
 2. Enable probes for explicitly configured sources. Retain HTTP endpoint/status
    evidence, RTSP negotiation and received UDP counts. JSON access is not RF
    health; SDP is not decoded video; a heartbeat is not complete authenticated
-   telemetry. Verify these distinctions in the displayed result.
+   telemetry. Use **digiQ / SkyPulse** only when the device supports the documented
+   SkyPulse endpoints; other modules need their actual UDP/RTSP source type.
+   For forwarded UDP, configure the GCS/router's actual sending IP, which may
+   differ from the radio's IP. RTSP `401`/`403` means authentication is required;
+   this probe does not negotiate credentials. Verify authenticated playback in
+   the supported player/GCS and retain it as separate evidence.
 3. Occupy the intended UDP port using a test receiver/GCS forwarding socket.
    Q22 must report the binding conflict and leave that receiver working. Move Q22
    to an unused dedicated forwarding port, then verify expected-sender packets
