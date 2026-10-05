@@ -1,0 +1,903 @@
+{
+  "document_type": "implementation_design_contract",
+  "status": "specification_only_not_implemented",
+  "version": "1.0",
+  "date": "2026-10-03",
+  "product": "Q22 Flight Lab",
+  "authoritative_human_spec": "Q22_Codex_Specification.txt",
+  "architecture": {
+    "shell": "Tauri 2 / Rust",
+    "ui": "React / TypeScript / Vite",
+    "charts": "Apache ECharts",
+    "engine": "bundled Python: pymavlink, NumPy, SciPy, PyArrow",
+    "metadata": "SQLite single writer",
+    "numeric_storage": "Parquet",
+    "query": "DuckDB local queries",
+    "ipc": "versioned framed stdio via narrow Rust commands",
+    "default_network": "offline except explicitly configured LAN sources / user-opened references",
+    "platforms": [
+      "Windows x64",
+      "Linux x64",
+      "macOS Apple Silicon",
+      "macOS x64 if supported by release target matrix"
+    ],
+    "version_policy": "Select and lock tested versions during packaging spike; pin firmware adapters, parser and algorithm revisions."
+  },
+  "non_negotiables": [
+    "Original logs and protected tune baselines are immutable.",
+    "Every number/finding traces to source hash, instance, field, time scope, parser and rule version.",
+    "Missing/unsupported/stale is not zero, healthy or a physical fault.",
+    "Raw, measured post-filter and simulated post-filter data are distinct.",
+    "No VIBE-to-FFT inference; no current-only PID prescription.",
+    "No automatic aircraft parameter writes, flight commands, log erase or firmware update.",
+    "No unrelated vehicle, boot epoch, battery monitor or flight merging.",
+    "No required cloud upload or user-installed Python/Node runtime.",
+    "No dummy data outside explicitly labeled synthetic demo/test context.",
+    "No silent numerical threshold copied across firmware/hardware profiles."
+  ],
+  "protected_baselines": [
+    "Q22 original - before Brian settings",
+    "Q22 with Brian tune"
+  ],
+  "screens": [
+    "Overview",
+    "Signals",
+    "Insights / issues",
+    "Collect",
+    "Compare",
+    "Aircraft"
+  ],
+  "source_outcomes": [
+    "not_configured",
+    "searching",
+    "recording",
+    "found",
+    "matching",
+    "transferring",
+    "validating",
+    "collected",
+    "partial",
+    "unavailable",
+    "unsupported",
+    "failed",
+    "cancelled"
+  ],
+  "evidence_states": [
+    "observed",
+    "partial",
+    "not_logged",
+    "unsupported",
+    "disabled",
+    "unknown",
+    "stale"
+  ],
+  "issue_states": [
+    "open",
+    "investigating",
+    "change_planned",
+    "retest_needed",
+    "resolved"
+  ],
+  "collector_contract": {
+    "operations": [
+      "capabilities",
+      "discover",
+      "probe",
+      "start_recording",
+      "stop_recording",
+      "list_records",
+      "collect",
+      "validate",
+      "checkpoint",
+      "resume",
+      "cancel",
+      "status"
+    ],
+    "result_fields": [
+      "source_id",
+      "device_identity",
+      "firmware",
+      "capture_method",
+      "clock_domain",
+      "raw_artifact_reference",
+      "sha256",
+      "bytes",
+      "completeness",
+      "warnings",
+      "recovery_action"
+    ]
+  },
+  "ipc_methods": [
+    "handshake",
+    "profile.list",
+    "profile.create_version",
+    "sources.capabilities",
+    "collection.start",
+    "collection.cancel",
+    "collection.retry_missing",
+    "recording.start",
+    "recording.stop",
+    "sessions.list",
+    "sessions.import",
+    "sessions.analyze",
+    "signals.query",
+    "alignment.propose",
+    "alignment.confirm",
+    "segments.update",
+    "findings.query",
+    "issues.update",
+    "comparison.run",
+    "parameters.diff",
+    "proposals.export",
+    "reports.export",
+    "engine.status"
+  ],
+  "ipc_events": [
+    "job.progress",
+    "job.completed",
+    "job.failed",
+    "source.status",
+    "recording.health",
+    "live.alert",
+    "engine.health"
+  ],
+  "entities": [
+    {
+      "name": "AircraftProfileVersion",
+      "required_contents": "Aircraft ID; board/firmware identity; physical motor map; ESC instance mapping evidence; motors/props/battery; calibration status; hardware changes; limits and their provenance."
+    },
+    {
+      "name": "FlightSession",
+      "required_contents": "UUID; aircraft profile version; operator/test notes; mass/payload/battery/weather; actual parameter snapshots; source IDs; proposed and confirmed flight intervals."
+    },
+    {
+      "name": "SourceManifest",
+      "required_contents": "Original name/location; SHA-256; byte size; device and software identity; acquisition method; start/end clocks; parser version; success/partial/error status; warnings."
+    },
+    {
+      "name": "SignalSchema",
+      "required_contents": "Source message/field; physical quantity; raw and engineering units; scaling provenance; sensor/ESC/system/component instance; expected and observed cadence; sentinels."
+    },
+    {
+      "name": "Sample / event",
+      "required_contents": "Source ID; boot epoch; source sequence/message offset; raw time; time domain; normalized time if valid; value or null; quality flags."
+    },
+    {
+      "name": "TimeAlignment",
+      "required_contents": "Source and target clocks; anchor pairs; affine/piecewise transform; offset/drift; fit residuals; uncertainty; confidence; user adjustments and provenance."
+    },
+    {
+      "name": "MetricResult",
+      "required_contents": "Algorithm/version; interval and phase; value/unit; count and time coverage; exclusions; uncertainty; source/field references; interpretation limits."
+    },
+    {
+      "name": "Finding",
+      "required_contents": "Rule/version; severity; evidence quality; confidence; observation; competing hypotheses; evidence intervals; next action; expected result; parameter applicability; retest criteria."
+    },
+    {
+      "name": "ParameterSnapshot / proposal",
+      "required_contents": "Immutable original; parsed values; firmware metadata; before/after diff; reason; target aircraft; validation status; rollback snapshot; no implicit application."
+    },
+    {
+      "name": "Experiment / issue",
+      "required_contents": "Baseline and candidate; one functional change; confounders; planned success criteria; repetitions; results; open/investigating/retest/resolved history."
+    },
+    {
+      "name": "CollectionJob",
+      "required_contents": "Per-adapter state/progress; resumable transfer position; retries; chosen flight grouping; missing-data consequences and recovery instructions."
+    }
+  ],
+  "rules": [
+    {
+      "id": "DQ-01",
+      "name": "Source identity and schema",
+      "inputs": "VER/MSG/FMT/FMTU/UNIT/MULT; manifest",
+      "algorithm_requirement": "Identify firmware, schema, vehicle and source before semantic decoding.",
+      "abstention_or_limit": "Unknown identity/units => partial assessment; never silently apply another build's scale.",
+      "threshold_origin": "none_descriptive",
+      "implementation_status": "required_not_implemented",
+      "spec_sections": [
+        "09  Time alignment and flight segmentation",
+        "10  Diagnostic policy and recommendation levels",
+        "22  Acceptance and validation plan"
+      ]
+    },
+    {
+      "id": "DQ-02",
+      "name": "Recording completeness",
+      "inputs": "DSF, cadence, parser status, byte ranges",
+      "algorithm_requirement": "Measure missing/corrupt/truncated intervals and logger rejection deltas.",
+      "abstention_or_limit": "Mark affected results partial; missing messages do not establish healthy operation.",
+      "threshold_origin": "firmware_logic",
+      "implementation_status": "required_not_implemented",
+      "spec_sections": [
+        "09  Time alignment and flight segmentation",
+        "10  Diagnostic policy and recommendation levels",
+        "22  Acceptance and validation plan"
+      ]
+    },
+    {
+      "id": "DQ-03",
+      "name": "Clock validity",
+      "inputs": "Boot/sample/UTC/receive clocks; anchors",
+      "algorithm_requirement": "Split epochs and estimate transform with residual/uncertainty.",
+      "abstention_or_limit": "No cross-source ordering or causal claims below clock uncertainty.",
+      "threshold_origin": "engineering_heuristic",
+      "implementation_status": "required_not_implemented",
+      "spec_sections": [
+        "09  Time alignment and flight segmentation",
+        "10  Diagnostic policy and recommendation levels",
+        "22  Acceptance and validation plan"
+      ]
+    },
+    {
+      "id": "VI-01",
+      "name": "Vibration exposure",
+      "inputs": "VIBE by IMU and axis; phase",
+      "algorithm_requirement": "Quantiles, time exposure and longest exceedance at 30/60 m/s² guidance bands.",
+      "abstention_or_limit": "Separate persistent airborne vibration from takeoff/landing impacts.",
+      "threshold_origin": "published_guidance",
+      "implementation_status": "required_not_implemented",
+      "spec_sections": [
+        "09  Time alignment and flight segmentation",
+        "10  Diagnostic policy and recommendation levels",
+        "11  Vibration, clipping and IMU analysis",
+        "22  Acceptance and validation plan"
+      ]
+    },
+    {
+      "id": "VI-02",
+      "name": "Clipping episodes",
+      "inputs": "Version-correct clipping counters",
+      "algorithm_requirement": "Reset/wrap-aware increments per sensor, preserving unknown initial history.",
+      "abstention_or_limit": "Unknown event timing across a gap; mechanical review before tuning persistent clipping.",
+      "threshold_origin": "firmware_logic",
+      "implementation_status": "required_not_implemented",
+      "spec_sections": [
+        "09  Time alignment and flight segmentation",
+        "10  Diagnostic policy and recommendation levels",
+        "11  Vibration, clipping and IMU analysis",
+        "22  Acceptance and validation plan"
+      ]
+    },
+    {
+      "id": "VI-03",
+      "name": "IMU health and disagreement",
+      "inputs": "IMU health/error/rate/temp, sensor/lane selection",
+      "algorithm_requirement": "Track new errors, sensor changes and paired disagreement.",
+      "abstention_or_limit": "Different orientation/scale or missing health data blocks sensor-fault attribution.",
+      "threshold_origin": "profile_limit",
+      "implementation_status": "required_not_implemented",
+      "spec_sections": [
+        "09  Time alignment and flight segmentation",
+        "10  Diagnostic policy and recommendation levels",
+        "11  Vibration, clipping and IMU analysis",
+        "22  Acceptance and validation plan"
+      ]
+    },
+    {
+      "id": "NF-01",
+      "name": "Spectrum eligibility",
+      "inputs": "GYR or valid ISBH/ISBD raw samples",
+      "algorithm_requirement": "Validate scale, timing, continuity, sample rate, pre/post identity and Nyquist.",
+      "abstention_or_limit": "Reject VIBE-as-FFT, missing batches and unsupported provenance.",
+      "threshold_origin": "engineering_heuristic",
+      "implementation_status": "required_not_implemented",
+      "spec_sections": [
+        "09  Time alignment and flight segmentation",
+        "10  Diagnostic policy and recommendation levels",
+        "12  Gyro spectra and harmonic-notch analysis",
+        "22  Acceptance and validation plan"
+      ]
+    },
+    {
+      "id": "NF-02",
+      "name": "Noise orders and notch candidate",
+      "inputs": "Gyro spectra, RPM lineage, filter chain/params",
+      "algorithm_requirement": "Identify persistent ridges/orders; model attenuation and delay using matching firmware.",
+      "abstention_or_limit": "No numeric notch candidate with unknown RPM scale, stale data, aliasing or filter topology.",
+      "threshold_origin": "engineering_heuristic",
+      "implementation_status": "required_not_implemented",
+      "spec_sections": [
+        "09  Time alignment and flight segmentation",
+        "10  Diagnostic policy and recommendation levels",
+        "12  Gyro spectra and harmonic-notch analysis",
+        "22  Acceptance and validation plan"
+      ]
+    },
+    {
+      "id": "PC-01",
+      "name": "Rate/attitude tracking",
+      "inputs": "ATT/ANG/RATE, targets, phase",
+      "algorithm_requirement": "Error, lag, bias, quantiles, valid-step or identified response with uncertainty.",
+      "abstention_or_limit": "No universal tuning score; invalid excitation or saturation suppresses gain inference.",
+      "threshold_origin": "none_descriptive",
+      "implementation_status": "required_not_implemented",
+      "spec_sections": [
+        "09  Time alignment and flight segmentation",
+        "10  Diagnostic policy and recommendation levels",
+        "13  Attitude, PID and actuator diagnosis",
+        "22  Acceptance and validation plan"
+      ]
+    },
+    {
+      "id": "PC-02",
+      "name": "PID contribution diagnosis",
+      "inputs": "PID terms/flags, gyro/output spectra, target/error",
+      "algorithm_requirement": "Evaluate I accumulation/recovery, D noise association and limiter activity.",
+      "abstention_or_limit": "Large I/D terms alone do not prove windup or wrong gains.",
+      "threshold_origin": "engineering_heuristic",
+      "implementation_status": "required_not_implemented",
+      "spec_sections": [
+        "09  Time alignment and flight segmentation",
+        "10  Diagnostic policy and recommendation levels",
+        "13  Attitude, PID and actuator diagnosis",
+        "22  Acceptance and validation plan"
+      ]
+    },
+    {
+      "id": "PC-03",
+      "name": "Actuator authority",
+      "inputs": "Motor mapping, RCOU, MOTB/PID flags, output protocol",
+      "algorithm_requirement": "Match limit episodes and output demand to tracking loss.",
+      "abstention_or_limit": "Output number is not physical thrust; absent protocol/limits blocks saturation claims.",
+      "threshold_origin": "firmware_logic",
+      "implementation_status": "required_not_implemented",
+      "spec_sections": [
+        "09  Time alignment and flight segmentation",
+        "10  Diagnostic policy and recommendation levels",
+        "13  Attitude, PID and actuator diagnosis",
+        "22  Acceptance and validation plan"
+      ]
+    },
+    {
+      "id": "PW-01",
+      "name": "Energy and phase power",
+      "inputs": "Primary physical battery V/I, counters, phase",
+      "algorithm_requirement": "Signed trapezoidal integration; gap-aware coverage; compare valid counters.",
+      "abstention_or_limit": "Never sum aggregate/component duplicate monitors; partial Wh must remain labeled partial.",
+      "threshold_origin": "none_descriptive",
+      "implementation_status": "required_not_implemented",
+      "spec_sections": [
+        "09  Time alignment and flight segmentation",
+        "10  Diagnostic policy and recommendation levels",
+        "14  Power, battery and endurance optimization",
+        "22  Acceptance and validation plan"
+      ]
+    },
+    {
+      "id": "PW-02",
+      "name": "Battery limits and voltage demand",
+      "inputs": "Calibrated pack/cell signals, chemistry, configured thresholds",
+      "algorithm_requirement": "Evaluate applicable voltage/current/thermal limits and dwell with actual source selection.",
+      "abstention_or_limit": "No universal 12S chemistry limits or cell-balance inference from pack voltage.",
+      "threshold_origin": "profile_limit",
+      "implementation_status": "required_not_implemented",
+      "spec_sections": [
+        "09  Time alignment and flight segmentation",
+        "10  Diagnostic policy and recommendation levels",
+        "14  Power, battery and endurance optimization",
+        "22  Acceptance and validation plan"
+      ]
+    },
+    {
+      "id": "PW-03",
+      "name": "Efficiency and endurance scenario",
+      "inputs": "Power, usable energy, mass/conditions, motion",
+      "algorithm_requirement": "Matched hover/cruise metrics and scenario estimates with reserve/uncertainty.",
+      "abstention_or_limit": "No causal PID-energy claim from one flight or unsupported nominal capacity.",
+      "threshold_origin": "engineering_heuristic",
+      "implementation_status": "required_not_implemented",
+      "spec_sections": [
+        "09  Time alignment and flight segmentation",
+        "10  Diagnostic policy and recommendation levels",
+        "14  Power, battery and endurance optimization",
+        "22  Acceptance and validation plan"
+      ]
+    },
+    {
+      "id": "EM-01",
+      "name": "ESC channel freshness",
+      "inputs": "Mapped ESC/RPM/electrical/thermal records",
+      "algorithm_requirement": "Completeness and sample-age checks per expected instance/channel.",
+      "abstention_or_limit": "RPM-only presence cannot establish temperature/current coverage.",
+      "threshold_origin": "engineering_heuristic",
+      "implementation_status": "required_not_implemented",
+      "spec_sections": [
+        "09  Time alignment and flight segmentation",
+        "10  Diagnostic policy and recommendation levels",
+        "15  ESCs, motors, airframe and power distribution",
+        "22  Acceptance and validation plan"
+      ]
+    },
+    {
+      "id": "EM-02",
+      "name": "Motor asymmetry and response",
+      "inputs": "Command, RPM/current/temp, phase/CG/wind",
+      "algorithm_requirement": "Detect persistent matched-condition differences and abrupt response changes.",
+      "abstention_or_limit": "Preserve allocation/wind/calibration alternatives; no unique fault cause from imbalance alone.",
+      "threshold_origin": "engineering_heuristic",
+      "implementation_status": "required_not_implemented",
+      "spec_sections": [
+        "09  Time alignment and flight segmentation",
+        "10  Diagnostic policy and recommendation levels",
+        "15  ESCs, motors, airframe and power distribution",
+        "22  Acceptance and validation plan"
+      ]
+    },
+    {
+      "id": "NV-01",
+      "name": "GNSS quality",
+      "inputs": "GPS/GPA and optional receiver diagnostics",
+      "algorithm_requirement": "Fix/accuracy/cadence/correction transitions and estimator impact.",
+      "abstention_or_limit": "No position trust or interference-source conclusion from satellites/jam indicator alone.",
+      "threshold_origin": "firmware_logic",
+      "implementation_status": "required_not_implemented",
+      "spec_sections": [
+        "09  Time alignment and flight segmentation",
+        "10  Diagnostic policy and recommendation levels",
+        "16  Navigation, heading, altitude and controller health",
+        "22  Acceptance and validation plan"
+      ]
+    },
+    {
+      "id": "NV-02",
+      "name": "Estimator consistency",
+      "inputs": "Lane-specific XKF/NKF status, innovation tests, sensor sources",
+      "algorithm_requirement": "Identify excursions, resets, timeouts, lane/aiding changes.",
+      "abstention_or_limit": "Use exact transformed metric semantics; a ratio crossing is not the complete failsafe logic.",
+      "threshold_origin": "firmware_logic",
+      "implementation_status": "required_not_implemented",
+      "spec_sections": [
+        "09  Time alignment and flight segmentation",
+        "10  Diagnostic policy and recommendation levels",
+        "16  Navigation, heading, altitude and controller health",
+        "22  Acceptance and validation plan"
+      ]
+    },
+    {
+      "id": "NV-03",
+      "name": "Heading/compass interference",
+      "inputs": "MAG, yaw innovations, source/orientation and current",
+      "algorithm_requirement": "Controlled heading/field comparisons and current-associated residuals.",
+      "abstention_or_limit": "No copied offsets or interference percentage derived from an unrelated regression.",
+      "threshold_origin": "engineering_heuristic",
+      "implementation_status": "required_not_implemented",
+      "spec_sections": [
+        "09  Time alignment and flight segmentation",
+        "10  Diagnostic policy and recommendation levels",
+        "16  Navigation, heading, altitude and controller health",
+        "22  Acceptance and validation plan"
+      ]
+    },
+    {
+      "id": "NV-04",
+      "name": "Altitude/trajectory response",
+      "inputs": "PSC/CTUN, mode/mission/offsets and frames",
+      "algorithm_requirement": "Compare requested, shaped target and achieved motion with reset/frame handling.",
+      "abstention_or_limit": "Mission upload/ACK is not execution or completion.",
+      "threshold_origin": "none_descriptive",
+      "implementation_status": "required_not_implemented",
+      "spec_sections": [
+        "09  Time alignment and flight segmentation",
+        "10  Diagnostic policy and recommendation levels",
+        "16  Navigation, heading, altitude and controller health",
+        "22  Acceptance and validation plan"
+      ]
+    },
+    {
+      "id": "SY-01",
+      "name": "Power rails and resets",
+      "inputs": "POWR/MCU, board topology, error/reset evidence",
+      "algorithm_requirement": "Review new flags and measured rail/temperature excursions.",
+      "abstention_or_limit": "An abrupt log ending is not proof of brownout; low-rate data misses transients.",
+      "threshold_origin": "profile_limit",
+      "implementation_status": "required_not_implemented",
+      "spec_sections": [
+        "09  Time alignment and flight segmentation",
+        "10  Diagnostic policy and recommendation levels",
+        "16  Navigation, heading, altitude and controller health",
+        "22  Acceptance and validation plan"
+      ]
+    },
+    {
+      "id": "SY-02",
+      "name": "Scheduler and logging load",
+      "inputs": "PM/RTDT/DSF, loop and logging config",
+      "algorithm_requirement": "Properly scaled load, long-loop counts, memory and dropped-log episodes.",
+      "abstention_or_limit": "Do not use a universal raw Load or rail threshold.",
+      "threshold_origin": "firmware_logic",
+      "implementation_status": "required_not_implemented",
+      "spec_sections": [
+        "09  Time alignment and flight segmentation",
+        "10  Diagnostic policy and recommendation levels",
+        "16  Navigation, heading, altitude and controller health",
+        "22  Acceptance and validation plan"
+      ]
+    },
+    {
+      "id": "CP-01",
+      "name": "Control path / failsafe reconstruction",
+      "inputs": "RCIN/RCI2/MAVC/MODE/ERR/MSG/TLOG/ACK and configured timeouts",
+      "algorithm_requirement": "Reconstruct per-system request, receipt, acceptance and observed response.",
+      "abstention_or_limit": "No RF-loss attribution from sequence gaps; ACK is not physical completion.",
+      "threshold_origin": "firmware_logic",
+      "implementation_status": "required_not_implemented",
+      "spec_sections": [
+        "09  Time alignment and flight segmentation",
+        "10  Diagnostic policy and recommendation levels",
+        "17  Radio, GCS, joystick and video troubleshooting",
+        "22  Acceptance and validation plan"
+      ]
+    },
+    {
+      "id": "RF-01",
+      "name": "RF diagnostics and capture health",
+      "inputs": "Both radios raw/normalized records with verified units/windows",
+      "algorithm_requirement": "Separate API failure, missing samples and RF observations; deduplicate known rolling history.",
+      "abstention_or_limit": "Unknown timestamp/units => raw archive only; expired unrecorded history is unrecoverable.",
+      "threshold_origin": "profile_limit",
+      "implementation_status": "required_not_implemented",
+      "spec_sections": [
+        "09  Time alignment and flight segmentation",
+        "10  Diagnostic policy and recommendation levels",
+        "17  Radio, GCS, joystick and video troubleshooting",
+        "22  Acceptance and validation plan"
+      ]
+    },
+    {
+      "id": "GV-01",
+      "name": "GCS/video observation path",
+      "inputs": "Supported host/player/camera/network measurements",
+      "algorithm_requirement": "Correlate freezes/drops/load and control-stream health with clock uncertainty.",
+      "abstention_or_limit": "Ping or video file alone does not measure glass-to-glass latency.",
+      "threshold_origin": "engineering_heuristic",
+      "implementation_status": "required_not_implemented",
+      "spec_sections": [
+        "09  Time alignment and flight segmentation",
+        "10  Diagnostic policy and recommendation levels",
+        "17  Radio, GCS, joystick and video troubleshooting",
+        "22  Acceptance and validation plan"
+      ]
+    },
+    {
+      "id": "CF-01",
+      "name": "Configuration and baseline diff",
+      "inputs": "Actual per-flight snapshots plus parameter timeline",
+      "algorithm_requirement": "Version-aware changed/added/removed values and hardware/calibration-specific fields.",
+      "abstention_or_limit": "Never overwrite protected baselines or assume final parameters applied to the whole flight.",
+      "threshold_origin": "none_descriptive",
+      "implementation_status": "required_not_implemented",
+      "spec_sections": [
+        "09  Time alignment and flight segmentation",
+        "10  Diagnostic policy and recommendation levels",
+        "20  Parameter proposals and controlled experiments",
+        "22  Acceptance and validation plan"
+      ]
+    },
+    {
+      "id": "EX-01",
+      "name": "Experiment result and regression",
+      "inputs": "Repeated matched baseline/candidate flights and acceptance criteria",
+      "algorithm_requirement": "Flight/segment-aware comparison with uncertainty and multi-objective constraints.",
+      "abstention_or_limit": "No success label with confounded conditions or unacceptable tracking/thermal/health regression.",
+      "threshold_origin": "engineering_heuristic",
+      "implementation_status": "required_not_implemented",
+      "spec_sections": [
+        "09  Time alignment and flight segmentation",
+        "10  Diagnostic policy and recommendation levels",
+        "20  Parameter proposals and controlled experiments",
+        "22  Acceptance and validation plan"
+      ]
+    },
+    {
+      "id": "LV-01",
+      "name": "Observer freshness and alert state",
+      "inputs": "Source time progression, receipt age, recorder/engine status",
+      "algorithm_requirement": "Per-channel staleness, dwell/hysteresis, clear/recur and post-flight reconciliation.",
+      "abstention_or_limit": "A stale dashboard is not an all-clear; acknowledgement is not resolution.",
+      "threshold_origin": "engineering_heuristic",
+      "implementation_status": "required_not_implemented",
+      "spec_sections": [
+        "09  Time alignment and flight segmentation",
+        "10  Diagnostic policy and recommendation levels",
+        "18  Live monitoring and alert lifecycle",
+        "22  Acceptance and validation plan"
+      ]
+    }
+  ],
+  "acceptance_families": [
+    {
+      "family": "Data identity",
+      "scenarios": "Duplicate bytes, duplicate filenames with different bytes, two vehicles in one TLOG, multiple flights in one file, wrong profile and unknown firmware.",
+      "status": "not_executed_specification"
+    },
+    {
+      "family": "Units / schema",
+      "scenarios": "Older/newer VIBE formats; fixed-point scale applied once; missing/sentinel values; corrupt/truncated records; unknown units; very large input.",
+      "status": "not_executed_specification"
+    },
+    {
+      "family": "Clocks",
+      "scenarios": "FC reboot, counter wrap, PC wall-clock jump, drift, invalid UTC, delayed TLOG delivery and radio time with unknown epoch.",
+      "status": "not_executed_specification"
+    },
+    {
+      "family": "Numerics",
+      "scenarios": "Known constant/ramp power; long gaps; negative current; partial windows; battery-monitor duplication; clipping counters starting nonzero/resetting.",
+      "status": "not_executed_specification"
+    },
+    {
+      "family": "DSP / PID",
+      "scenarios": "Known sine/noise, missing batch, irregular sampling, aliasing, pre/post provenance; valid/rejected steps; saturation and low-excitation cases.",
+      "status": "not_executed_specification"
+    },
+    {
+      "family": "Coverage",
+      "scenarios": "One missing ESC/RPM/temperature channel; stale values; unsupported sensor; partial log; enough data to plot but insufficient to recommend.",
+      "status": "not_executed_specification"
+    },
+    {
+      "family": "Collection",
+      "scenarios": "Busy port, armed aircraft, growing log, byte gap, disconnect/resume, changed remote log, bad radio JSON, failed poll, overlapping RF windows, disk full.",
+      "status": "not_executed_specification"
+    },
+    {
+      "family": "Safety of interactions",
+      "scenarios": "Inspect every outbound controller message; no arming, mode, mission, parameter writes or log deletion. Read-only source failure cannot stop the controlling GCS.",
+      "status": "not_executed_specification"
+    },
+    {
+      "family": "UX / persistence",
+      "scenarios": "Fresh install, offline mode, crash/restart, profile revision, immutable baselines, report reproduction, keyboard/200% zoom and clear synthetic data.",
+      "status": "not_executed_specification"
+    },
+    {
+      "family": "Live observer",
+      "scenarios": "Recorder overload, UI crash, stale telemetry, duplicate timestamps, app sleep/resume, alert clear/recur and post-flight revision of a hypothesis.",
+      "status": "not_executed_specification"
+    },
+    {
+      "family": "Hardware validation",
+      "scenarios": "Representative Cube and H7 logs; four mapped APD ESCs; both SkyPulse responses; actual GCS forwarding; SIYI capability probe.",
+      "status": "not_executed_specification"
+    },
+    {
+      "family": "Comparison",
+      "scenarios": "Matched trials improve known synthetic metrics; confounded payload/wind/time scope blocks causal improvement claims.",
+      "status": "not_executed_specification"
+    }
+  ],
+  "milestones": [
+    {
+      "stage": "0 - Foundation",
+      "deliverable": "Repository, contracts, dependency/license review, installer/sidecar spike, fixture plan",
+      "exit_condition": "App/engine handshake and clean install on target OS; raw archive and migration design proven."
+    },
+    {
+      "stage": "1 - Useful collection and review",
+      "deliverable": "BIN/LOG/TLOG/params/CSV/JSONL import; local/SD discovery; RF recorder; manifests; basic coverage/health/power/vibration",
+      "exit_condition": "Identity/schema/units, per-source boot epochs and explicit scope validated before metrics. Real fixtures reproduce findings; missing/corrupt data never appears healthy."
+    },
+    {
+      "stage": "2 - Full evidence workspace",
+      "deliverable": "Cross-source alignment, advanced phase selection, comprehensive health/event channels, issue workflow, comparisons",
+      "exit_condition": "Correct instance/clock/unit handling and source-linked charts across representative Q22 bundles."
+    },
+    {
+      "stage": "3 - Control/filter/performance",
+      "deliverable": "Raw and batch gyro, spectra, filter modeling, PID response and actuator context, matched-condition energy analysis",
+      "exit_condition": "Parity fixtures versus pinned trusted tools; evidence-gated candidate proposals and regressions."
+    },
+    {
+      "stage": "4 - Native integration and live health",
+      "deliverable": "Validated USB/optional MAVFTP, forwarded telemetry, live alert lifecycle, supported camera/GCS adapters",
+      "exit_condition": "Device tests and failure recovery; no unauthorized flight/parameter messages; recorder isolation under load."
+    },
+    {
+      "stage": "5 - Release qualification",
+      "deliverable": "Installers, accessibility, large-log performance, migration/recovery, reports and operational guide",
+      "exit_condition": "All mandatory acceptance cases pass; unsupported device capabilities and outstanding limitations are explicit."
+    }
+  ],
+  "source_references": [
+    {
+      "id": "R01",
+      "title": "Tauri 2: external binaries / sidecars",
+      "url": "https://v2.tauri.app/develop/sidecar/",
+      "use": "Native shell and packaged engine capability; architecture choice is our recommendation."
+    },
+    {
+      "id": "R02",
+      "title": "DuckDB: Parquet overview",
+      "url": "https://duckdb.org/docs/stable/data/parquet/overview",
+      "use": "Column and time-window query design."
+    },
+    {
+      "id": "R03",
+      "title": "Apache ECharts",
+      "url": "https://echarts.apache.org/en/index.html",
+      "use": "Chart library capabilities; app performance must be measured."
+    },
+    {
+      "id": "R04",
+      "title": "ArduPilot: measuring vibration",
+      "url": "https://ardupilot.org/copter/docs/common-measuring-vibration.html",
+      "use": "Vibration bands and clipping interpretation."
+    },
+    {
+      "id": "R05",
+      "title": "ArduPilot: raw IMU logging",
+      "url": "https://ardupilot.org/copter/docs/common-raw-imu-logging.html",
+      "use": "Raw gyro/filter evidence requirements."
+    },
+    {
+      "id": "R06",
+      "title": "ArduPilot: harmonic notch filtering",
+      "url": "https://ardupilot.org/copter/docs/common-imu-notch-filtering.html",
+      "use": "Filter modes and trade-offs; exact masks remain firmware-specific."
+    },
+    {
+      "id": "R07",
+      "title": "ArduPilot WebTools repository / FilterReview",
+      "url": "https://github.com/ArduPilot/WebTools",
+      "use": "Reference implementations and license review; pin commits before reuse."
+    },
+    {
+      "id": "R08",
+      "title": "ArduPilot PIDReview README",
+      "url": "https://github.com/ArduPilot/WebTools/blob/main/PIDReview/Readme.md",
+      "use": "PID/response analysis prerequisites and rate-only limitations."
+    },
+    {
+      "id": "R09",
+      "title": "ArduPilot: ESC telemetry",
+      "url": "https://ardupilot.org/copter/docs/common-esc-telemetry.html",
+      "use": "Telemetry capabilities differ by firmware and protocol."
+    },
+    {
+      "id": "R10",
+      "title": "DigiQ SkyPulse manual v1.2.0",
+      "url": "https://digiq-rf.com/datasheets/DigiQ_RF_SkyPulse_User_Guide_Manual.pdf",
+      "use": "Sections 15.2.8-15.2.9; documented API and rolling histories, not hardware-tested here."
+    },
+    {
+      "id": "R11",
+      "title": "MAVLink: log transfer protocol",
+      "url": "https://mavlink.io/en/services/log.html",
+      "use": "Controller log retrieval protocol."
+    },
+    {
+      "id": "R12",
+      "title": "ArduPilot: MAVLink log transfer",
+      "url": "https://ardupilot.org/dev/docs/mavlink-log-download.html",
+      "use": "Version/capability differences for retrieval."
+    },
+    {
+      "id": "R13",
+      "title": "MAVLink common messages: SYSTEM_TIME",
+      "url": "https://mavlink.io/en/messages/common.html#SYSTEM_TIME",
+      "use": "Unix and boot clock fields; validity must be checked."
+    },
+    {
+      "id": "R14",
+      "title": "ArduPilot: onboard log message catalog",
+      "url": "https://ardupilot.org/copter/docs/logmessages.html",
+      "use": "Representative field discovery; use matching source/FMT for exact build."
+    },
+    {
+      "id": "R15",
+      "title": "ArduPilot: log download and analysis",
+      "url": "https://ardupilot.org/copter/docs/common-downloading-and-analyzing-data-logs-in-mission-planner.html",
+      "use": "Logging configuration and dropped-message diagnostics."
+    },
+    {
+      "id": "R16",
+      "title": "ArduPilot pymavlink DFReader",
+      "url": "https://github.com/ArduPilot/pymavlink/blob/master/DFReader.py",
+      "use": "Decoding/scaling/time behavior; pin parser revision."
+    },
+    {
+      "id": "R17",
+      "title": "ArduPilot: diagnosing problems using logs",
+      "url": "https://ardupilot.org/copter/docs/common-diagnosing-problems-using-logs.html",
+      "use": "Health review context."
+    },
+    {
+      "id": "R18",
+      "title": "ArduPilot: tuning process",
+      "url": "https://ardupilot.org/copter/docs/tuning-process-instructions.html",
+      "use": "Mechanical/filter/control tuning order."
+    },
+    {
+      "id": "R19",
+      "title": "ArduPilot: SIYI camera/gimbal integration",
+      "url": "https://ardupilot.org/copter/docs/common-siyi-zr10-gimbal.html",
+      "use": "Model/firmware-dependent integration and media retrieval."
+    },
+    {
+      "id": "R20",
+      "title": "ArduPilot Copter-4.7.1 source tree",
+      "url": "https://github.com/ArduPilot/ardupilot/tree/Copter-4.7.1",
+      "use": "Version-specific implementation authority when the aircraft matches this tag."
+    },
+    {
+      "id": "R21",
+      "title": "Copter-4.7.1: logger structures",
+      "url": "https://raw.githubusercontent.com/ArduPilot/ardupilot/Copter-4.7.1/libraries/AP_Logger/LogStructure.h",
+      "use": "Schema and event/command fields."
+    },
+    {
+      "id": "R22",
+      "title": "Copter-4.7.1: IMU structures",
+      "url": "https://raw.githubusercontent.com/ArduPilot/ardupilot/Copter-4.7.1/libraries/AP_InertialSensor/LogStructure.h",
+      "use": "Modern VIBE, raw and batch fields."
+    },
+    {
+      "id": "R23",
+      "title": "Copter-4.7.1: EKF outputs",
+      "url": "https://raw.githubusercontent.com/ArduPilot/ardupilot/Copter-4.7.1/libraries/AP_NavEKF3/AP_NavEKF3_Outputs.cpp",
+      "use": "Test metric transformations and meaning."
+    },
+    {
+      "id": "R24",
+      "title": "Copter-4.7.1: EKF structures",
+      "url": "https://raw.githubusercontent.com/ArduPilot/ardupilot/Copter-4.7.1/libraries/AP_NavEKF3/LogStructure.h",
+      "use": "Lane/source/innovation metadata."
+    },
+    {
+      "id": "R25",
+      "title": "Copter-4.7.1: battery logging",
+      "url": "https://raw.githubusercontent.com/ArduPilot/ardupilot/Copter-4.7.1/libraries/AP_BattMonitor/AP_BattMonitor_Logging.cpp",
+      "use": "Consumption units and sentinel/encoding behavior."
+    },
+    {
+      "id": "R26",
+      "title": "Copter-4.7.1: ESC structures",
+      "url": "https://raw.githubusercontent.com/ArduPilot/ardupilot/Copter-4.7.1/libraries/AP_ESC_Telem/LogStructure.h",
+      "use": "ESC schemas; verify actual installed firmware."
+    },
+    {
+      "id": "R27",
+      "title": "Copter-4.7.1: scheduler",
+      "url": "https://raw.githubusercontent.com/ArduPilot/ardupilot/Copter-4.7.1/libraries/AP_Scheduler/AP_Scheduler.cpp",
+      "use": "Scheduler metrics and load encoding."
+    },
+    {
+      "id": "R28",
+      "title": "Copter-4.7.1: attitude/position structures",
+      "url": "https://raw.githubusercontent.com/ArduPilot/ardupilot/Copter-4.7.1/libraries/AC_AttitudeControl/LogStructure.h",
+      "use": "Modern PSC, RATE and control units."
+    },
+    {
+      "id": "R29",
+      "title": "Copter-4.7.1: mission structures",
+      "url": "https://raw.githubusercontent.com/ArduPilot/ardupilot/Copter-4.7.1/libraries/AP_Mission/LogStructure.h",
+      "use": "Mission logging semantics."
+    },
+    {
+      "id": "R30",
+      "title": "ArduPilot: MAVFTP",
+      "url": "https://ardupilot.org/dev/docs/mavlink-mavftp.html",
+      "use": "Optional transport and version-specific paths."
+    },
+    {
+      "id": "R31",
+      "title": "EdgeTX: special functions / SD Logs",
+      "url": "https://manual.edgetx.org/color-radios/model-settings/special-functions",
+      "use": "Optional radio-side CSV when SD logging is enabled; available values depend on inputs."
+    },
+    {
+      "id": "R32",
+      "title": "ArduPilot batch sampler implementation",
+      "url": "https://github.com/ArduPilot/ardupilot/blob/master/libraries/AP_InertialSensor/BatchSampler.cpp",
+      "use": "Batch scale/encoding reference; pin matching revision before implementation."
+    },
+    {
+      "id": "R33",
+      "title": "Copter-4.7.1: EKF failsafe logic",
+      "url": "https://raw.githubusercontent.com/ArduPilot/ardupilot/Copter-4.7.1/ArduCopter/ekf_check.cpp",
+      "use": "Configured threshold and filtered/state-dependent failsafe behavior."
+    }
+  ]
+}

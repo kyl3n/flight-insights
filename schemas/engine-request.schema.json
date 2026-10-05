@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:q22:engine:request:1",
+  "title": "Q22 foundation engine JSON-RPC request, protocol version 1",
+  "description": "One UTF-8 JSON object per newline. Maximum 1 MiB. Native shell additionally handles engine.restart, without forwarding it to Python. Log imports and sessions return background jobs. Method-specific parameters are documented in docs/network-diagnostics.md, docs/log-import.md and docs/parameter-comparison.md.",
+  "type": "object",
+  "required": ["jsonrpc", "id", "method"],
+  "properties": {
+    "jsonrpc": {"const": "2.0"},
+    "id": {"type": ["string", "integer"]},
+    "method": {
+      "enum": ["handshake", "engine.status", "sources.capabilities", "network.inspect", "network.probe", "network.plan", "network.apply", "network.rollback", "network.recovery", "parameters.import", "parameters.list", "parameters.diff", "sessions.import", "sessions.list", "comparison.run", "logs.import", "logs.list", "logs.detail", "logs.session", "jobs.get", "jobs.list", "jobs.cancel"]
+    },
+    "params": {"type": "object", "default": {}}
+  }
+}

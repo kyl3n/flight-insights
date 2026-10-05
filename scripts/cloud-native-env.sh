@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Source this file for native builds in the managed Debian 13 cloud machine.
+export Q22_TOOLCHAIN_DIR="${Q22_TOOLCHAIN_DIR:-/workspace/shared/q22-toolchain}"
+export Q22_SYSROOT_DIR="${Q22_SYSROOT_DIR:-/workspace/shared/q22-sysroot}"
+export CARGO_HOME="${CARGO_HOME:-$Q22_TOOLCHAIN_DIR/cargo}"
+export PATH="$Q22_TOOLCHAIN_DIR/rust/bin:$Q22_SYSROOT_DIR/usr/bin:$PATH"
+export PKG_CONFIG_PATH="$Q22_SYSROOT_DIR/usr/lib/x86_64-linux-gnu/pkgconfig:$Q22_SYSROOT_DIR/usr/share/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+export PKG_CONFIG_SYSROOT_DIR="$Q22_SYSROOT_DIR"
+export LIBRARY_PATH="$Q22_SYSROOT_DIR/usr/lib/x86_64-linux-gnu${LIBRARY_PATH:+:$LIBRARY_PATH}"
+export LD_LIBRARY_PATH="$Q22_SYSROOT_DIR/usr/lib/x86_64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-4}"
+export XDG_CACHE_HOME="${XDG_CACHE_HOME:-$Q22_TOOLCHAIN_DIR/runtime/cache}"
+export XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$Q22_TOOLCHAIN_DIR/runtime/config}"
+export XDG_DATA_HOME="${XDG_DATA_HOME:-$Q22_TOOLCHAIN_DIR/runtime/data}"
+mkdir -p "$CARGO_HOME" "$XDG_CACHE_HOME" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME"

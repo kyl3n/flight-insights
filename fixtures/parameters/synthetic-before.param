@@ -1,0 +1,5 @@
+# SYNTHETIC Mission Planner-format fixture; not a Q22 baseline or tuning advice.
+ATC_RAT_RLL_P,0.10
+INS_GYRO_FILTER,30
+BATT_AMP_PERVLT,17
+LOG_DISARMED,1

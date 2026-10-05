@@ -1,0 +1,46 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Q22 Flight Lab",
+  "version": "0.1.0",
+  "identifier": "com.q22.flightlab",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://127.0.0.1:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Q22 Flight Lab — Foundation Preview",
+        "width": 1440,
+        "height": 940,
+        "minWidth": 880,
+        "minHeight": 640
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src ipc: http://ipc.localhost; object-src 'none'; frame-src 'none'; base-uri 'self'",
+      "devCsp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src ipc: http://ipc.localhost ws://127.0.0.1:1420 http://127.0.0.1:1420; object-src 'none'; frame-src 'none'; base-uri 'self'",
+      "capabilities": ["main"]
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "externalBin": ["binaries/q22-engine"],
+    "resources": {"resources/engine/": "engine/"},
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"],
+    "shortDescription": "Offline flight evidence and network diagnostics",
+    "longDescription": "Foundation preview of Q22 Flight Lab. Local immutable source archives, ArduPilot parameter comparison, and explicit network diagnostics. Hardware validation and full flight analysis remain pending.",
+    "category": "Utility",
+    "macOS": {"minimumSystemVersion": "13.0"},
+    "linux": {
+      "deb": {"depends": ["libc6 (>= 2.35)"]}
+    },
+    "windows": {
+      "webviewInstallMode": {"type": "offlineInstaller", "silent": true}
+    }
+  }
+}

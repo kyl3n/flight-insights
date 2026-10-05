@@ -1,0 +1,5 @@
+# SYNTHETIC QGroundControl format: sysid compid name value MAV_PARAM_TYPE
+1	1	ATC_RAT_RLL_P	0.10	9
+1	1	INS_GYRO_FILTER	30	9
+1	1	BATT_AMP_PERVLT	17	9
+1	1	LOG_DISARMED	1	6

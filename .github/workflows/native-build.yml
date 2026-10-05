@@ -1,0 +1,105 @@
+name: Native preview builds
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            bundles: deb,appimage
+          - os: windows-2022
+            target: x86_64-pc-windows-msvc
+            bundles: nsis
+          - os: macos-15
+            target: aarch64-apple-darwin
+            bundles: app,dmg
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+            bundles: app,dmg
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    env:
+      # Audit the frozen Python libraries too; changing only this linker target
+      # cannot make a newer native dependency compatible with an older macOS.
+      MACOSX_DEPLOYMENT_TARGET: '13.0'
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.19.0'
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12.14'
+      - name: Install locked build tools
+        run: |
+          python -m pip install uv==0.12.19
+          rustup toolchain install 1.99.0 --profile minimal --component rustfmt --component clippy
+          rustup default 1.99.0
+          rustup target add ${{ matrix.target }} --toolchain 1.99.0
+      - name: Linux native libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf libssl-dev pkg-config
+      - name: Install locked project dependencies
+        run: |
+          npm ci
+          uv sync --frozen --python 3.12.14
+      - name: Engine tests and frozen sidecar smoke
+        run: |
+          uv run --frozen pytest
+          uv run --frozen python scripts/package-engine.py --target ${{ matrix.target }}
+      - name: Frontend and native transport checks
+        run: |
+          npm run build
+          cargo fmt --manifest-path src-tauri/Cargo.toml --check
+          cargo test --manifest-path src-tauri/Cargo.toml --target ${{ matrix.target }} --locked
+          cargo clippy --manifest-path src-tauri/Cargo.toml --locked -- -D warnings
+      - name: Install Linux browser dependencies
+        if: runner.os == 'Linux'
+        run: npx playwright install-deps chromium
+      - name: Browser integration tests on the target operating system
+        run: |
+          npx playwright install chromium
+          npm test
+      - name: Build unsigned preview installers
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: '1'
+        run: npm run tauri -- build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --ci -- --locked
+      - name: Verify every packaged runtime through its native supervisor
+        run: |
+          uv run --frozen python scripts/verify-native-bundle.py --target ${{ matrix.target }} --bundle-root src-tauri/target/${{ matrix.target }}/release/bundle --formats ${{ matrix.bundles }} --report native-verification-${{ matrix.target }}.json
+      - name: Archive macOS app with executable modes and symlinks preserved
+        if: runner.os == 'macOS'
+        run: |
+          python -c 'from pathlib import Path; import shutil; app, = Path("src-tauri/target/${{ matrix.target }}/release/bundle/macos").glob("*.app"); shutil.make_archive(str(app), "gztar", root_dir=app.parent, base_dir=app.name)'
+      - name: Save unsigned preview installers and engine checksum
+        uses: actions/upload-artifact@v4
+        with:
+          name: q22-foundation-preview-${{ matrix.target }}
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            src-tauri/target/${{ matrix.target }}/release/bundle/
+            !src-tauri/target/${{ matrix.target }}/release/bundle/macos/*.app/**
+            src-tauri/binaries/*.sha256
+            src-tauri/binaries/*.macos-runtime.json
+            src-tauri/binaries/*.inventory.json
+            src-tauri/resources/engine/
+            native-verification-${{ matrix.target }}.json

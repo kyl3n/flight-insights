@@ -1,0 +1,33 @@
+{
+  "name": "q22-flight-lab",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 1420 --strictPort",
+    "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "playwright test",
+    "tauri": "tauri",
+    "desktop:dev": "uv run --frozen python scripts/package-engine.py && tauri dev",
+    "desktop:build": "uv run --frozen python scripts/package-engine.py && tauri build -- --locked",
+    "desktop:build:windows": "uv run --frozen python scripts/package-engine.py --target x86_64-pc-windows-msvc && tauri build --target x86_64-pc-windows-msvc --bundles nsis -- --locked",
+    "desktop:build:linux": "uv run --frozen python scripts/package-engine.py --target x86_64-unknown-linux-gnu && tauri build --target x86_64-unknown-linux-gnu --bundles deb,appimage -- --locked",
+    "desktop:build:macos": "uv run --frozen python scripts/package-engine.py && tauri build --bundles app,dmg -- --locked"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.10.0",
+    "@tauri-apps/plugin-dialog": "^2.6.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.58.2",
+    "@tauri-apps/cli": "^2.10.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "^5.1.0",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.1"
+  }
+}

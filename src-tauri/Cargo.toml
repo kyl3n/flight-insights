@@ -1,0 +1,27 @@
+[package]
+name = "q22-flight-lab"
+version = "0.1.0"
+description = "Q22 Flight Lab offline desktop workspace"
+authors = ["Q22 Flight Lab contributors"]
+edition = "2021"
+rust-version = "1.99"
+
+[lib]
+name = "q22_flight_lab"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "=2.7.1", features = [] }
+
+[dependencies]
+tauri = { version = "=2.12.1", features = [] }
+tauri-plugin-dialog = "=2.8.1"
+serde = { version = "=1.0.228", features = ["derive"] }
+serde_json = "=1.0.145"
+tokio = { version = "=1.47.1", features = ["io-util", "process", "sync", "time", "rt", "macros"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "=0.2.190"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Threading"] }

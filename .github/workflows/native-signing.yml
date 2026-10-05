@@ -1,0 +1,80 @@
+name: Protected native signing candidate
+
+# Select an already-reviewed, protected v* tag in Run workflow. There is no ref
+# input, PR trigger, release creation, upload-to-store, or publishing permission.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sign:
+    if: github.ref_type == 'tag' && github.ref_protected == true && startsWith(github.ref, 'refs/tags/v')
+    environment: release-signing
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - labels: '["self-hosted", "Linux", "X64", "q22-release"]'
+            target: x86_64-unknown-linux-gnu
+          - labels: '["self-hosted", "Windows", "X64", "q22-release"]'
+            target: x86_64-pc-windows-msvc
+          - labels: '["self-hosted", "macOS", "ARM64", "q22-release"]'
+            target: aarch64-apple-darwin
+          - labels: '["self-hosted", "macOS", "X64", "q22-release"]'
+            target: x86_64-apple-darwin
+    runs-on: ${{ fromJSON(matrix.labels) }}
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '13.0'
+      APPLE_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
+      APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+      Q22_APPLE_NOTARY_PROFILE: ${{ vars.Q22_APPLE_NOTARY_PROFILE }}
+      Q22_WINDOWS_CERT_THUMBPRINT: ${{ vars.Q22_WINDOWS_CERT_THUMBPRINT }}
+      Q22_WINDOWS_TIMESTAMP_URL: ${{ vars.Q22_WINDOWS_TIMESTAMP_URL }}
+      Q22_GPG_FINGERPRINT: ${{ vars.Q22_GPG_FINGERPRINT }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Require trusted tag and provisioned pinned tools
+        run: |
+          python -c 'import os,re; assert re.fullmatch(r"refs/tags/v\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?",os.environ["GITHUB_REF"])'
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(node --version)" = "v24.19.0"
+          python -c 'import sys; assert sys.version_info[:3] == (3,12,14)'
+          test "$(uv --version)" = "uv 0.12.19"
+          rustc --version | rg '^rustc 1\.99\.0 '
+      - name: Locked build and tests at the trusted commit
+        run: |
+          npm ci
+          uv sync --frozen --python 3.12.14
+          uv run --frozen pytest
+          uv run --frozen python scripts/package-engine.py --target ${{ matrix.target }}
+          npm run build
+          cargo fmt --manifest-path src-tauri/Cargo.toml --check
+          cargo test --manifest-path src-tauri/Cargo.toml --locked --target ${{ matrix.target }}
+          cargo clippy --manifest-path src-tauri/Cargo.toml --locked -- -D warnings
+          npx playwright install chromium
+          npm test
+      - name: Sign, notarize where required, and verify native artifacts
+        run: uv run --frozen python src-tauri/signing/release.py
+      - name: Preserve signed candidates for release qualification, without publication
+        uses: actions/upload-artifact@v4
+        with:
+          name: q22-signed-candidate-${{ matrix.target }}-${{ github.sha }}
+          retention-days: 14
+          if-no-files-found: error
+          path: |
+            src-tauri/target/${{ matrix.target }}/release/bundle/
+            !src-tauri/target/${{ matrix.target }}/release/bundle/macos/*.app/**
+            src-tauri/binaries/*.sha256
+            src-tauri/binaries/*.inventory.json
+            src-tauri/binaries/*.macos-runtime.json
+            src-tauri/resources/engine/
+            native-verification-signed-${{ matrix.target }}.json
