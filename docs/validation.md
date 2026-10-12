@@ -8,7 +8,9 @@ Local validation includes real loopback capture through the production coordinat
 
 The frozen-runtime smoke also launches the actual separate worker from the relocated packaged executable, requires journal delivery without callback errors, validates exact archived artifact digests/roles/lengths, reimports its TLOG, verifies socket/worker cleanup, and checks restart plus explicit recovery. The native transport allowlist includes only the new typed session/association/profile operations; event injection and aircraft controls are not renderer methods.
 
-| Final local check | Result |
+Windows follow-up validation covers bounded checkpoint replacement when another process briefly holds a read handle, preservation of the prior checkpoint when that handle remains locked, and rejection of browser-test RPC calls during engine teardown. Generated CI transcripts are excluded from source tracking so they do not incorrectly mark packaged source inventories as modified.
+
+| Check | Result |
 | --- | --- |
 | Python engine | 281 tests and 29 subtests passed locally; 2 Windows-only read-handle tests passed in native CI |
 | UI integration | All 10 Playwright tests passed, including real isolated loopback collection, retained bundles and closed-transport polling regression |
@@ -17,7 +19,18 @@ The frozen-runtime smoke also launches the actual separate worker from the reloc
 | Native Rust | 5 tests passed; rustfmt and Clippy with warnings denied passed against the final packaged engine |
 | Handoff provenance | All 11 canonical/archived source-file hashes matched; both revisions' document bytes preserved |
 
-The final cross-platform run will be recorded after completion. Earlier run links belong to the earlier source commits and do not validate these changes. Installed-GUI close confirmation, real GCS coexistence/failsafes, actual dual-NIC hardware, complete readbacks, automatic matched BIN retrieval, radio/video adapters and qualified repair helpers remain unpassed.
+The [final native run for `2887703`](https://github.com/kyl3n/flight-insights/actions/runs/38318550751) passed on all four targets. Every target ran engine tests, frozen recorder/archive/restart checks, Rust tests and lints, frontend build, all ten browser integration tests, installer builds and verification through the packaged native supervisor. Windows also executed both real read-handle tests. The application and test code is identical to `19fa5a6`; the later commit only excludes generated CI logs from source tracking and updates this validation record.
+
+| Target | Automated pipeline | Verified preview artifacts |
+| --- | --- | --- |
+| Windows x64 (Windows Server 2022 runner) | Passed | [NSIS `.exe`](https://github.com/kyl3n/flight-insights/actions/runs/38318550751/artifacts/11778301477) |
+| Ubuntu 22.04 x64 | Passed | [`.deb`, AppImage](https://github.com/kyl3n/flight-insights/actions/runs/38318550751/artifacts/11778180312) |
+| macOS 15 Apple Silicon | Passed | [`.app`, `.dmg`](https://github.com/kyl3n/flight-insights/actions/runs/38318550751/artifacts/11777818854) |
+| macOS 15 Intel | Passed | [`.app`, `.dmg`](https://github.com/kyl3n/flight-insights/actions/runs/38318550751/artifacts/11778515196) |
+
+Each artifact includes its source identity, dependency inventory and `native-verification-<target>.json`. Actions downloads have a 14-day retention period. Windows previews have no publisher signature; Mac previews have an ad hoc integrity seal, without Developer ID signing or notarization. Mac app bundles are archived as `.app.tar.gz` to preserve executable modes and symlinks.
+
+Installed-GUI close confirmation, real GCS coexistence/failsafes, actual dual-NIC hardware, complete readbacks, automatic matched BIN retrieval, radio/video adapters and qualified repair helpers remain unpassed. Earlier run links below belong to earlier source commits and do not validate this slice.
 
 The separately built Debian 13 preview passed packaged-runtime verification at clean source commit `19fa5a615908a06e6b5814234016b2484d48b667`. Its file is `Q22-Flight-Lab-0.1.0-passive-collection-linux-amd64.deb`, 48,282,184 bytes, SHA-256 `e3da02595915b3d0c473bdf2d857d86bf7a07cbff9faa8b4f748b5a84c95e68a`. It is distinct from the Ubuntu CI artifact and requires the declared Debian 13 runtime dependencies. The bundled engine's recorder, archival, restart and EOF checks passed again after the Windows checkpoint fix, followed by all five Rust tests and verification of the installer payload.
 
