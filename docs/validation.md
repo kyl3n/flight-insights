@@ -10,14 +10,16 @@ The frozen-runtime smoke also launches the actual separate worker from the reloc
 
 | Final local check | Result |
 | --- | --- |
-| Python engine | 281 tests and 29 subtests passed; 2 Windows-only read-handle tests await native execution |
+| Python engine | 281 tests and 29 subtests passed locally; 2 Windows-only read-handle tests passed in native CI |
 | UI integration | All 10 Playwright tests passed, including real isolated loopback collection, retained bundles and closed-transport polling regression |
 | React/TypeScript | Production build passed |
 | Frozen engine | Expanded worker, archive, restart and EOF recovery smoke passed |
 | Native Rust | 5 tests passed; rustfmt and Clippy with warnings denied passed against the final packaged engine |
 | Handoff provenance | All 11 canonical/archived source-file hashes matched; both revisions' document bytes preserved |
 
-The new cross-platform run will be recorded after completion. Earlier run links belong to the earlier source commits and do not validate these changes. Installed-GUI close confirmation, real GCS coexistence/failsafes, actual dual-NIC hardware, complete readbacks, automatic matched BIN retrieval, radio/video adapters and qualified repair helpers remain unpassed.
+The final cross-platform run will be recorded after completion. Earlier run links belong to the earlier source commits and do not validate these changes. Installed-GUI close confirmation, real GCS coexistence/failsafes, actual dual-NIC hardware, complete readbacks, automatic matched BIN retrieval, radio/video adapters and qualified repair helpers remain unpassed.
+
+The separately built Debian 13 preview passed packaged-runtime verification at clean source commit `19fa5a615908a06e6b5814234016b2484d48b667`. Its file is `Q22-Flight-Lab-0.1.0-passive-collection-linux-amd64.deb`, 48,282,184 bytes, SHA-256 `e3da02595915b3d0c473bdf2d857d86bf7a07cbff9faa8b4f748b5a84c95e68a`. It is distinct from the Ubuntu CI artifact and requires the declared Debian 13 runtime dependencies. The bundled engine's recorder, archival, restart and EOF checks passed again after the Windows checkpoint fix, followed by all five Rust tests and verification of the installer payload.
 
 ## Earlier flight-log preview — 5 October 2026
 
