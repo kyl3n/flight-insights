@@ -67,10 +67,20 @@ jobs:
         run: |
           npm ci
           uv sync --frozen --python 3.12.14
-      - name: Engine tests and frozen sidecar smoke
-        run: |
-          uv run --frozen pytest
-          uv run --frozen python scripts/package-engine.py --target ${{ matrix.target }}
+      - name: Engine tests
+        run: python scripts/ci-check.py engine-test-output.txt uv run --frozen pytest
+      - name: Frozen sidecar smoke
+        run: python scripts/ci-check.py engine-package-output.txt uv run --frozen python scripts/package-engine.py --target ${{ matrix.target }}
+      - name: Preserve engine failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: engine-failure-${{ matrix.target }}
+          if-no-files-found: ignore
+          retention-days: 14
+          path: |
+            engine-test-output.txt
+            engine-package-output.txt
       - name: Frontend and native transport checks
         run: |
           npm run build
