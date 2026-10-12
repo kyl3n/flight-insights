@@ -47,6 +47,25 @@ def _utc() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _replace_checkpoint(temporary: Path, path: Path) -> None:
+    # Windows' normal read handles do not share delete/rename access. A short
+    # status read (or antivirus scan) can therefore overlap an atomic replace.
+    # Keep the fsynced temporary and prior checkpoint intact throughout retries;
+    # persistent locks/ACL failures still surface within a bounded retry window.
+    deadline, delay = time.monotonic() + .5, .01
+    while True:
+        try:
+            os.replace(temporary, path)
+            return
+        except OSError as error:
+            remaining = deadline - time.monotonic()
+            if (os.name != "nt" or getattr(error, "winerror", None) not in {5, 32, 33}
+                    or remaining <= 0):
+                raise
+            time.sleep(min(delay, remaining))
+            delay = min(delay * 2, .05)
+
+
 def _atomic_json(path: Path, value: dict) -> None:
     temporary = None
     try:
@@ -57,7 +76,7 @@ def _atomic_json(path: Path, value: dict) -> None:
             json.dump(value, stream, ensure_ascii=True, allow_nan=False, separators=(",", ":"))
             stream.flush()
             os.fsync(stream.fileno())
-        os.replace(temporary, path)
+        _replace_checkpoint(temporary, path)
     finally:
         # Windows cannot unlink an open NamedTemporaryFile. The stream has
         # closed before cleanup, including when a checkpoint runs out of space.

@@ -132,7 +132,12 @@ def test_wire_valid_unindexed_parameter_cannot_block_later_flight_events(tmp_pat
         assert len(records) == 1
         eventually(lambda: engine.call("session.detail", {"flight_record_id": records[0]["id"]})
                    ["armed_interval"]["disarm_evidence"])
-        recorder = engine.call("session.status", {})["recorder"]
+        # The catalog commit is visible before the callback returns and its
+        # journal offset is acknowledged by the recorder's delivery thread.
+        def drained_or_failed():
+            state = engine.call("session.status", {})["recorder"]
+            return state if state["callback_error"] or state["event_backlog_bytes"] == 0 else None
+        recorder = eventually(drained_or_failed)
         assert recorder["callback_error"] is None
         assert recorder["event_backlog_bytes"] == 0
     finally:

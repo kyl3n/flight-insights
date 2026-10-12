@@ -10,7 +10,7 @@ The frozen-runtime smoke also launches the actual separate worker from the reloc
 
 | Final local check | Result |
 | --- | --- |
-| Python engine | 274 tests and 29 subtests passed |
+| Python engine | 281 tests and 29 subtests passed; 2 Windows-only read-handle tests await native execution |
 | UI integration | All 10 Playwright tests passed, including real isolated loopback collection, retained bundles and closed-transport polling regression |
 | React/TypeScript | Production build passed |
 | Frozen engine | Expanded worker, archive, restart and EOF recovery smoke passed |

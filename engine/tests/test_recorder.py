@@ -6,6 +6,7 @@ from pathlib import Path
 import socket
 import threading
 import time
+from types import SimpleNamespace
 from uuid import uuid4
 
 import psutil
@@ -324,6 +325,132 @@ def test_metadata_checkpoint_failure_preserves_previous_file_and_cleans_temp(tmp
     with pytest.raises(OSError, match="disk exhaustion"):
         recorder._atomic_json(path, {"state": "stopped"})
     assert json.loads(path.read_text()) == {"state": "recording"}
+    assert not list(tmp_path.glob(".checkpoint-*"))
+
+
+def replacement_fault(monkeypatch, replace, *, windows=True):
+    """Simulate Windows error classification without changing pathlib's host OS."""
+    clock = {"now": 0.0, "waits": []}
+
+    def sleep(seconds):
+        clock["waits"].append(seconds)
+        clock["now"] += seconds
+
+    monkeypatch.setattr(recorder, "os", SimpleNamespace(**{
+        **vars(os), "name": "nt" if windows else "posix", "replace": replace}))
+    monkeypatch.setattr(recorder, "time", SimpleNamespace(monotonic=lambda: clock["now"], sleep=sleep))
+    return clock
+
+
+@pytest.mark.parametrize("winerror", [5, 32, 33])
+def test_transient_windows_checkpoint_sharing_preserves_prior_bytes_until_replace(tmp_path, monkeypatch, winerror):
+    path = tmp_path / "status.json"
+    path.write_bytes(b'{"state":"recording"}')
+    real_replace, attempts = os.replace, []
+    denied = PermissionError("injected sharing violation")
+    denied.winerror = winerror
+
+    def replace(temporary, destination):
+        attempts.append(Path(temporary).read_bytes())
+        assert destination.read_bytes() == b'{"state":"recording"}'
+        if len(attempts) < 3:
+            raise denied
+        real_replace(temporary, destination)
+
+    clock = replacement_fault(monkeypatch, replace)
+    recorder._atomic_json(path, {"state": "stopped"})
+    assert len(attempts) == 3 and len(set(attempts)) == 1
+    assert 0 < sum(clock["waits"]) < .5
+    assert json.loads(path.read_text()) == {"state": "stopped"}
+    assert not list(tmp_path.glob(".checkpoint-*"))
+
+
+def test_windows_checkpoint_sharing_deadline_preserves_original_and_error(tmp_path, monkeypatch):
+    path = tmp_path / "status.json"
+    path.write_bytes(b'{"state":"recording"}')
+    denied, attempts = PermissionError("injected persistent sharing violation"), []
+    denied.winerror = 32
+
+    def replace(temporary, destination):
+        attempts.append(Path(temporary).read_bytes())
+        assert destination.read_bytes() == b'{"state":"recording"}'
+        raise denied
+
+    clock = replacement_fault(monkeypatch, replace)
+    with pytest.raises(PermissionError) as caught:
+        recorder._atomic_json(path, {"state": "stopped"})
+    assert caught.value is denied
+    assert len(attempts) > 1 and sum(clock["waits"]) == pytest.approx(.5)
+    assert max(clock["waits"]) <= .05
+    assert path.read_bytes() == b'{"state":"recording"}'
+    assert not list(tmp_path.glob(".checkpoint-*"))
+
+
+@pytest.mark.parametrize("windows,winerror", [(False, 32), (True, 112), (True, None)])
+def test_checkpoint_other_os_and_nonsharing_errors_never_retry(tmp_path, monkeypatch, windows, winerror):
+    path = tmp_path / "status.json"
+    path.write_bytes(b"prior evidence")
+    failure, attempts = OSError("injected non-retryable replacement failure"), []
+    if winerror is not None:
+        failure.winerror = winerror
+
+    def replace(temporary, destination):
+        attempts.append(temporary)
+        raise failure
+
+    clock = replacement_fault(monkeypatch, replace, windows=windows)
+    with pytest.raises(OSError) as caught:
+        recorder._atomic_json(path, {"state": "stopped"})
+    assert caught.value is failure and len(attempts) == 1 and clock["waits"] == []
+    assert path.read_bytes() == b"prior evidence"
+    assert not list(tmp_path.glob(".checkpoint-*"))
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows read-handle rename sharing semantics")
+def test_windows_live_read_handle_can_close_during_checkpoint_retry(tmp_path, monkeypatch):
+    path = tmp_path / "status.json"
+    path.write_bytes(b'{"state":"recording"}')
+    held = path.open("rb")
+    conflict = threading.Event()
+    real_replace = os.replace
+
+    def replace(temporary, destination):
+        try:
+            return real_replace(temporary, destination)
+        except OSError as error:
+            if getattr(error, "winerror", None) in {5, 32, 33}:
+                conflict.set()
+            raise
+
+    monkeypatch.setattr(recorder, "os", SimpleNamespace(**{**vars(os), "replace": replace}))
+
+    def release():
+        conflict.wait(2)
+        held.close()
+
+    reader = threading.Thread(target=release)
+    reader.start()
+    try:
+        recorder._atomic_json(path, {"state": "stopped"})
+        assert conflict.is_set(), "An actual Windows read handle must deny the first rename"
+        assert json.loads(path.read_text()) == {"state": "stopped"}
+        assert not list(tmp_path.glob(".checkpoint-*"))
+    finally:
+        reader.join(timeout=3)
+        held.close()
+    assert not reader.is_alive()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows read-handle rename sharing semantics")
+def test_windows_persistent_read_handle_rejects_checkpoint_without_losing_prior_bytes(tmp_path):
+    path = tmp_path / "status.json"
+    path.write_bytes(b'{"state":"recording"}')
+    with path.open("rb") as held:
+        with pytest.raises(OSError) as caught:
+            recorder._atomic_json(path, {"state": "stopped"})
+        assert caught.value.winerror in {5, 32, 33}
+        assert held.read() == b'{"state":"recording"}'
+    assert path.read_bytes() == b'{"state":"recording"}'
     assert not list(tmp_path.glob(".checkpoint-*"))
 
 
