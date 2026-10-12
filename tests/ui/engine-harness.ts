@@ -13,6 +13,7 @@ export async function connectEngine(page: Page, options: {boundaryOverride?: (me
   const python = process.platform === 'win32' ? '.venv/Scripts/python.exe' : '.venv/bin/python';
   const child = spawn(resolve(python), ['-m', 'q22_engine', '--data-dir', data]);
   let sequence = 0;
+  let closing = false;
   const pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
   const calls: { method: string; params: Record<string, unknown> }[] = [];
   const files: string[] = [];
@@ -24,16 +25,28 @@ export async function connectEngine(page: Page, options: {boundaryOverride?: (me
     else request?.resolve(result.result);
   });
   child.stderr.on('data', value => process.stderr.write(value));
-  child.on('exit', code => {
-    for (const request of pending.values()) request.reject(new Error(`Test engine exited (${code})`));
+  function rejectPending(error: Error) {
+    for (const request of pending.values()) request.reject(error);
     pending.clear();
+  }
+  // Persistent UI polling may race test teardown. Match the native supervisor's
+  // closed-transport behavior instead of writing to an ended Node stream.
+  child.stdin.on('error', rejectPending);
+  child.on('error', error => { closing = true; rejectPending(error); });
+  child.on('exit', code => {
+    closing = true;
+    rejectPending(new Error(`Test engine exited (${code})`));
   });
   async function rpc(method: string, params: Record<string, unknown> = {}) {
+    if (closing || child.stdin.destroyed || child.stdin.writableEnded || child.exitCode !== null)
+      throw new Error('Test engine transport is closed');
     calls.push({ method, params });
     return new Promise<unknown>((resolveRequest, reject) => {
       const id = ++sequence;
       pending.set(id, { resolve: resolveRequest, reject });
-      child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n');
+      child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n', error => {
+        if (error) { pending.delete(id); reject(error); }
+      });
     });
   }
   await page.exposeFunction('__q22TestInvoke', async (command: string, args: Record<string, unknown>) => {
@@ -58,7 +71,8 @@ export async function connectEngine(page: Page, options: {boundaryOverride?: (me
   return {
     rpc, calls, files, data,
     async close() {
-      child.stdin.end();
+      closing = true;
+      if (!child.stdin.destroyed && !child.stdin.writableEnded) child.stdin.end();
       await new Promise<void>(resolveExit => {
         if (child.exitCode !== null) return resolveExit();
         child.once('exit', () => resolveExit());

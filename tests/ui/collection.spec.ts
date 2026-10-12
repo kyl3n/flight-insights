@@ -24,6 +24,18 @@ function heartbeatPackets():{disarmed:string[];armed:string[]} {
   ].join('\n')],{encoding:'utf8'}));
 }
 
+test('test transport rejects a status poll racing engine teardown',async({page})=>{
+  const engine=await connectEngine(page);
+  await engine.rpc('handshake');
+  const shutdown=engine.close();
+  try {
+    await expect(engine.rpc('session.status')).rejects.toThrow('transport is closed');
+  } finally {
+    await shutdown;
+  }
+  await expect(engine.rpc('session.status')).rejects.toThrow('transport is closed');
+});
+
 test('passive observer records distinct armed intervals and preserves incomplete bundles after reload',async({page},testInfo)=>{
   const engine=await connectEngine(page);
   const sender=createSocket('udp4');
