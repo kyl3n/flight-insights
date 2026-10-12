@@ -1,0 +1,12 @@
+REVISION 2 CHANGES - 12 OCTOBER 2026
+
+Integrated original 26 chapters with 10 new chapters, 17 additional diagnostic rules, 13 new entity contracts and expanded acceptance cases.
+Main action changed from manual record/collect to Prepare & watch with automatic flight-session orchestration.
+Added network/UDP/video/GCS diagnosis, OS capability reporting and reviewed reversible repairs.
+Added pre/post full parameter evidence, non-atomic capture semantics, effective configuration timeline and performance attribution.
+Added native MP/QGC adapters, app-owned recorder and one-way-QGC forwarding limitation.
+Added verified many-to-many BIN/TLOG linking and exact-evidence manual SD requests.
+Updated baseline display names to FACt; originals and old aliases must remain unchanged.
+Updated implementation sequence so identity/recording/association are foundational.
+
+No application source, network changes, flight testing or installer is included. All test scenarios are requirements for Codex to implement and execute.

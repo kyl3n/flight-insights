@@ -10,6 +10,7 @@ import sys
 import time
 
 from . import __version__
+from .collection_controller import CollectionController
 from .jobs import JobService
 from .network import NetworkService
 from .parameters import ParameterService
@@ -20,6 +21,9 @@ MAX_RESPONSE = 4 * 1024 * 1024
 METHODS = (
     "handshake", "engine.status", "sources.capabilities", "network.inspect",
     "network.probe", "network.plan", "network.apply", "network.rollback", "network.recovery",
+    "network.profile", "network.capabilities",
+    "session.preview", "session.prepare_and_watch", "session.status", "session.detail", "session.stop",
+    "associations.evaluate", "associations.review",
     "parameters.import", "parameters.list", "parameters.diff", "sessions.import",
     "sessions.list", "comparison.run", "logs.import", "logs.list", "logs.detail", "logs.session",
     "jobs.get", "jobs.list", "jobs.cancel",
@@ -28,7 +32,8 @@ LIMITATIONS = [
     "Foundation preview; the complete handoff acceptance plan has not passed.",
     "No real-aircraft or Windows/macOS hardware validation has been performed.",
     "Log metrics use only validated source/epoch/unit mappings; incomplete parameter timelines cannot establish historical settings.",
-    "Live recorders, DSP and tuning recommendations are not implemented yet.",
+    "Passive UDP capture is available; complete readbacks, automatic BIN retrieval, DSP and tuning recommendations are not implemented.",
+    "Automatic host repairs require a qualified native helper and are diagnosis-only in this release.",
     "A network response is not proof of video decoding, bidirectional delivery, or aircraft health.",
 ]
 
@@ -37,23 +42,25 @@ class Engine:
     def __init__(self, data_dir: Path):
         self.store = Store(data_dir)
         self.parameters = ParameterService(self.store)
-        self.network = NetworkService(data_dir=data_dir)
         self.jobs = JobService(data_dir)
+        self.collection = CollectionController(self.store, self.jobs)
+        self.network = NetworkService(data_dir=data_dir, safety_state=self.collection.safety_state)
         self.logs = None
         self.started = time.monotonic()
 
     def close(self):
+        self.collection.close()
         self.jobs.close()
 
     def call(self, method: str, params: dict) -> dict:
         if method == "handshake":
             return {"protocol_version": 1, "engine_version": __version__,
-                    "product": "Q22 Flight Lab", "milestone": "foundation-preview",
+                    "product": "Q22 Flight Lab", "milestone": "passive-collection-preview",
                     "capabilities": list(METHODS), "limitations": LIMITATIONS}
         if method == "engine.status":
             return {"state": "available", "protocol_version": 1,
                     "engine_version": __version__, "uptime_s": round(time.monotonic() - self.started, 2),
-                    "recording": "not_implemented", "limitations": LIMITATIONS}
+                    "recording": self.collection.recorder.status(), "limitations": LIMITATIONS}
         if method == "sources.capabilities":
             return {"sources": [
                 {"kind": "parameters", "state": "available", "formats": ["Mission Planner", "QGroundControl"]},
@@ -61,13 +68,15 @@ class Engine:
                 {"kind": "network", "state": "available", "limits": "Configured sources only; explicit stream probes."},
                 {"kind": "dataflash", "state": "available", "formats": ["BIN", "LOG"], "limits": "Bounded offline import; fields without validated units remain unavailable."},
                 {"kind": "tlog", "state": "available", "limits": "Recorded MAVLink only; source and boot epochs remain separate."},
-                {"kind": "live_recording", "state": "not_implemented"},
+                {"kind": "live_recording", "state": "available", "limits": "Explicit separate passive UDP feed; no full readback, automatic BIN retrieval or authenticated replay protection."},
                 {"kind": "skypulse_normalization", "state": "unvalidated", "recovery": "Supply radio firmware and actual raw responses."},
             ]}
         if method.startswith("network."):
             return self.network.dispatch(method, params)
         if method.startswith("jobs."):
             return self.jobs.dispatch(method, params)
+        if method.startswith(("session.", "associations.")):
+            return self.collection.dispatch(method, params)
         if method.startswith("logs."):
             if self.logs is None:
                 from .logs import LogService
@@ -103,6 +112,12 @@ def error(request_id: object, code: int, message: str) -> dict:
 
 
 def main() -> None:
+    # PyInstaller workers re-enter this executable; never start a second RPC
+    # engine or accept a renderer-selected program for the passive recorder.
+    if sys.argv[1:2] == ["--recorder-worker"]:
+        from .recorder import worker_main
+        worker_main(sys.argv[2:])
+        return
     parser = argparse.ArgumentParser(description="Q22 Flight Lab stdio engine")
     parser.add_argument("--data-dir", type=Path, required=True)
     args = parser.parse_args()

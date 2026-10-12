@@ -15,6 +15,7 @@ from pathlib import Path
 import platform
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import sysconfig
@@ -22,6 +23,7 @@ import tempfile
 import threading
 import queue
 import time
+from uuid import uuid4
 
 ROOT = Path(__file__).resolve().parent.parent
 RESOURCES = ROOT / "src-tauri" / "resources" / "engine"
@@ -66,15 +68,18 @@ class SmokeRPC:
 
     def job(self, method: str, params: dict) -> dict:
         job = self.call(method, params)["job"]
+        return self.wait_job(job, method)
+
+    def wait_job(self, job: dict, label: str) -> dict:
         deadline = time.monotonic() + 60
         while job["state"] in {"queued", "running"}:
             if time.monotonic() >= deadline:
                 self.call("jobs.cancel", {"job_id": job["id"]})
-                raise RuntimeError(f"Synthetic {method} job exceeded its smoke-test deadline")
+                raise RuntimeError(f"Synthetic {label} job exceeded its smoke-test deadline")
             time.sleep(0.05)
             job = self.call("jobs.get", {"job_id": job["id"]})["job"]
         if job["state"] != "succeeded":
-            raise RuntimeError(f"Frozen {method} job failed: {job}")
+            raise RuntimeError(f"Frozen {label} job failed: {job}")
         return job["result"]
 
     def close(self) -> None:
@@ -143,7 +148,9 @@ def frozen_inventory(binary: Path) -> dict:
     rejected = [name for name in modules if any(name.lower().startswith(prefix) for prefix in forbidden)]
     if rejected:
         raise RuntimeError(f"Unexpected excluded Python modules: {rejected}")
-    required = {"pymavlink.dialects.v20.ardupilotmega", "q22_engine.logs", "q22_engine.jobs"}
+    required = {"pymavlink.dialects.v20.ardupilotmega", "q22_engine.logs", "q22_engine.jobs",
+                "q22_engine.recorder", "q22_engine.collection", "q22_engine.collection_controller",
+                "q22_engine.parameter_capture"}
     if not required.issubset(modules):
         raise RuntimeError(f"Frozen runtime missing required modules: {sorted(required - set(modules))}")
     commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True, text=True, encoding="utf-8")
@@ -249,8 +256,10 @@ def smoke(binary: Path) -> None:
         try:
             replies = [rpc.call(request["method"], request["params"]) for request in requests]
             smoke_logs(rpc, Path(directory))
+            capture = smoke_recorder(rpc, Path(directory), binary)
         finally:
             rpc.close()
+        smoke_recorder_restart(binary, Path(directory), environment, capture)
         handshake = replies[0]
         if handshake.get("protocol_version") != 1 or handshake.get("product") != "Q22 Flight Lab":
             raise RuntimeError("Frozen engine handshake does not match desktop protocol version 1")
@@ -265,7 +274,210 @@ def smoke(binary: Path) -> None:
         if (network.get("platform") != platform.system() or not network.get("interfaces")
                 or network.get("status") not in {"inspected", "partial"}):
             raise RuntimeError("Frozen runtime failed native interface inspection")
-        print("Frozen engine smoke passed: Unicode imports, BIN/LOG/TLOG jobs, Parquet reads, scoped metrics, native interfaces, clean EOF exit.")
+        print("Frozen engine smoke passed: Unicode imports, BIN/LOG/TLOG jobs, Parquet reads, scoped metrics, native interfaces, synthetic receive-only recorder subprocess, verified capture archives, restart recovery, clean EOF worker exit.")
+
+
+def wait_smoke(check, ready, label: str, timeout: float = 15):
+    """Poll real bounded operations; elapsed time alone never establishes success."""
+    deadline = time.monotonic() + timeout
+    while True:
+        result = check()
+        if ready(result):
+            return result
+        if time.monotonic() >= deadline:
+            raise RuntimeError(f"Frozen recorder smoke timed out waiting for {label}: {result}")
+        time.sleep(.05)
+
+
+def recorder_operation(capture: dict) -> dict:
+    return {"operation_id": str(uuid4()),
+            "target_profile_version": capture["profile"]["aircraft_profile_version"],
+            "applicability_fingerprint": capture["applicability_fingerprint"]}
+
+
+def start_smoke_capture(rpc: SmokeRPC, profile: dict, binary: Path) -> tuple[dict, dict]:
+    import psutil
+
+    preview = rpc.call("session.preview", profile)
+    capture = rpc.call("session.prepare_and_watch", {
+        **preview["profile"], "operation_id": str(uuid4()),
+        "target_profile_version": preview["profile"]["aircraft_profile_version"],
+        "applicability_fingerprint": preview["applicability_fingerprint"],
+    })["capture_session"]
+    status = wait_smoke(lambda: rpc.call("session.status", {"capture_session_id": capture["uuid"]}),
+                        lambda value: value.get("recorder", {}).get("state") == "recording",
+                        "separate recorder process readiness")
+    worker = status["recorder"]
+    process = psutil.Process(worker["worker_pid"])
+    if (worker["worker_pid"] == worker["parent_pid"] or worker["synthetic"] is not True
+            or "--recorder-worker" not in process.cmdline()
+            or Path(process.exe()).resolve() != binary.resolve()):
+        raise RuntimeError("Recorder did not re-enter the actual frozen executable as a synthetic worker")
+    if not worker.get("owns_udp") or not worker.get("active"):
+        raise RuntimeError("Frozen recorder did not own its dedicated loopback socket")
+    if status["readiness"]["can_claim_complete"] is not False:
+        raise RuntimeError("Starting a synthetic observer falsely established complete evidence")
+    return capture, worker
+
+
+def check_worker_exit(worker: dict, port: int) -> None:
+    import psutil
+
+    def alive():
+        try:
+            process = psutil.Process(worker["worker_pid"])
+            return (abs(process.create_time() - worker["worker_created"]) < .01
+                    and process.is_running() and process.status() != psutil.STATUS_ZOMBIE)
+        except psutil.NoSuchProcess:
+            return False
+
+    wait_smoke(alive, lambda value: not value, "worker shutdown")
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as endpoint:
+        if os.name == "nt":
+            endpoint.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        endpoint.bind(("127.0.0.1", port))
+
+
+def smoke_recorder(rpc: SmokeRPC, directory: Path, binary: Path) -> dict:
+    """Exercise the bundled worker on loopback; synthetic packets never become flights."""
+    from pymavlink.dialects.v20 import ardupilotmega as mavlink
+
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as reservation:
+        reservation.bind(("127.0.0.1", 0))
+        port = reservation.getsockname()[1]
+    profile = {"aircraft_id": "synthetic-packaging-observer",
+               "aircraft_profile_version": "synthetic-v1", "connection_profile_version": "loopback-v1",
+               "connection": {"local_address": "127.0.0.1", "listen_port": port,
+                              "expected_sender": "127.0.0.1", "system_id": 1, "component_id": 1,
+                              "feed_origin": "live_forwarded", "synthetic": True},
+               "required_sources": ["app_mavlink_capture", "onboard_bin", "preflight_parameters", "postflight_parameters"]}
+    capture, worker = start_smoke_capture(rpc, profile, binary)
+    source = mavlink.MAVLink(None, srcSystem=1, srcComponent=1)
+    messages = [mavlink.MAVLink_heartbeat_message(2, 3, 0, 0, 3, 3),
+                mavlink.MAVLink_param_value_message(b"ATC_RAT_RLL_P", .1, 9, 2, 0),
+                mavlink.MAVLink_heartbeat_message(2, 3, mavlink.MAV_MODE_FLAG_SAFETY_ARMED, 0, 3, 3),
+                mavlink.MAVLink_heartbeat_message(2, 3, 0, 0, 3, 3)]
+    frames = []
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sender:
+        sender.bind(("127.0.0.1", 0))
+        sender.settimeout(.25)
+        for index, message in enumerate(messages):
+            if index == 2:
+                # A gap produces both a journal event and a heartbeat for one frame;
+                # event identity must not collide with telemetry record identity.
+                source.seq = (source.seq + 2) % 256
+            frame = message.pack(source)
+            source.seq = (source.seq + 1) % 256
+            frames.append(frame)
+            sender.sendto(frame, ("127.0.0.1", port))
+        status = wait_smoke(lambda: rpc.call("session.status", {"capture_session_id": capture["uuid"]}),
+                            lambda value: (value.get("recorder", {}).get("valid_frames", 0) >= len(frames)
+                                           and not value["recorder"].get("callback_error")
+                                           and value["recorder"].get("event_backlog_bytes") == 0
+                                           and value["capture_session"].get("rejected_event_count", 0) >= len(frames)),
+                            "CRC-validated frames and drained synthetic-event bridge")
+        if rpc.call("handshake", {"protocol_version": 1})["protocol_version"] != 1:
+            raise RuntimeError("Engine protocol stopped responding during passive recording")
+        try:
+            packet, _ = sender.recvfrom(65535)
+        except socket.timeout:
+            pass
+        else:
+            raise RuntimeError(f"Receive-only recorder unexpectedly sent {len(packet)} bytes")
+    if (status["flight_records"] or status["capture_session"]["armed_interval_ids"]
+            or status["readiness"]["can_claim_complete"] is not False):
+        raise RuntimeError("Synthetic heartbeats became real flight intervals or complete evidence")
+    stopped = rpc.call("session.stop", {"capture_session_id": capture["uuid"], **recorder_operation(capture)})
+    if stopped.get("archive_job"):
+        rpc.wait_job(stopped["archive_job"], "capture archival")
+    check_worker_exit(worker, port)
+    status = wait_smoke(lambda: rpc.call("session.status", {"capture_session_id": capture["uuid"]}),
+                        lambda value: bool(value["capture_session"].get("artifact_sources")),
+                        "immutable capture archive")
+    capture = status["capture_session"]
+    if (capture["status"] != "stopped" or capture.get("archive_state") != "complete"
+            or status["flight_records"] or status["readiness"]["can_claim_complete"]):
+        raise RuntimeError("Stopping a synthetic capture falsely established a completed flight")
+    recording = directory / "captures" / capture["uuid"]
+    artifacts = json.loads((recording / "artifacts.json").read_text(encoding="utf-8"))["artifacts"]
+    if {item["role"] for item in artifacts} != {"raw_udp_capture", "app_mavlink_capture", "recorder_journal"}:
+        raise RuntimeError("Frozen recorder omitted raw UDP, TLOG, or journal evidence")
+    for artifact in artifacts:
+        path = Path(artifact["path"])
+        payload = path.read_bytes()
+        if (len(payload) != artifact["bytes"] or hashlib.sha256(payload).hexdigest() != artifact["sha256"]
+                or artifact["complete"] is not True):
+            raise RuntimeError("Frozen recorder artifact bytes do not match their finalized integrity receipt")
+        if artifact["role"] == "raw_udp_capture" and any(frame not in payload for frame in frames):
+            raise RuntimeError("Raw UDP capture lost the transmitted synthetic frames")
+        if artifact["role"] == "recorder_journal":
+            events = [json.loads(line) for line in payload.splitlines()]
+            if (not events or any(event.get("origin") != "synthetic" or event.get("live") is not False for event in events)
+                    or not any(event.get("kind") == "heartbeat" and event.get("armed") is True for event in events)
+                    or not any(event.get("reason") == "sequence_discontinuity" for event in events)):
+                raise RuntimeError("Recorder journal lost synthetic provenance or the captured armed heartbeat")
+        if artifact["role"] == "app_mavlink_capture":
+            log = rpc.job("logs.import", {"path": str(path), "label": "Synthetic packaged live capture", "synthetic": True})["log"]
+            if log["synthetic"] is not True or log["record_count"] != len(frames):
+                raise RuntimeError("Frozen decoder could not read every frame from its own synthetic TLOG")
+    roles = {item["role"] for item in capture["artifact_sources"]}
+    if not {"raw_udp_capture", "app_mavlink_capture", "recorder_journal"}.issubset(roles):
+        raise RuntimeError("Completed capture evidence was not attached to its durable session")
+    expected = {(item["role"], item["sha256"], item["bytes"]) for item in artifacts}
+    attached = {(item["role"], item["source"]["sha256"], item["source"]["byte_size"])
+                for item in capture["artifact_sources"]}
+    if attached != expected:
+        raise RuntimeError("Archived capture source roles and bytes differ from the recorder's finalized receipts")
+    for item in capture["artifact_sources"]:
+        original = item["source"]
+        path = directory / "raw" / "sha256" / original["sha256"]
+        payload = path.read_bytes()
+        if (hashlib.sha256(payload).hexdigest() != original["sha256"]
+                or len(payload) != original["byte_size"]
+                or original["acquisition_method"] != "app_owned_passive_udp_capture"):
+            raise RuntimeError("Managed recorder original was not preserved with matching bytes and provenance")
+    return capture
+
+
+def smoke_recorder_restart(binary: Path, directory: Path, environment: dict, capture: dict) -> None:
+    """Restart retains evidence; EOF terminates a worker instead of silently resuming it."""
+    rpc = SmokeRPC(binary, directory, environment)
+    worker = None
+    try:
+        status = rpc.call("session.status", {"capture_session_id": capture["uuid"]})
+        restored = status["capture_session"]
+        if (restored["status"] != "stopped" or not restored["artifact_sources"]
+                or restored["artifact_sources"] != capture["artifact_sources"]
+                or restored["profile"]["connection"]["synthetic"] is not True
+                or status.get("recorder", {}).get("active") or status["flight_records"]
+                or status["readiness"]["can_claim_complete"]):
+            raise RuntimeError("Frozen engine restart lost synthetic evidence or automatically resumed recording")
+        # Leave a second explicitly started observer running: EOF must stop its subprocess.
+        restarted, worker = start_smoke_capture(rpc, capture["profile"], binary)
+    finally:
+        rpc.close()
+    if worker is not None:
+        check_worker_exit(worker, capture["profile"]["connection"]["listen_port"])
+        final = json.loads((directory / "captures" / restarted["uuid"] / "status.json").read_text(encoding="utf-8"))
+        if final["state"] != "stopped" or final["active"] or final["synthetic"] is not True:
+            raise RuntimeError("Engine EOF did not finalize its active synthetic recorder")
+        recovery = SmokeRPC(binary, directory, environment)
+        try:
+            status = recovery.call("session.status", {"capture_session_id": restarted["uuid"]})
+            interrupted = status["capture_session"]
+            if (interrupted["status"] != "interrupted" or status.get("recorder", {}).get("active")
+                    or status["flight_records"] or status["readiness"]["can_claim_complete"]):
+                raise RuntimeError("Restart inferred a complete flight or resumed an EOF-interrupted observer")
+            stopped = recovery.call("session.stop", {"capture_session_id": interrupted["uuid"],
+                                                     **recorder_operation(interrupted)})
+            if not stopped.get("archive_job"):
+                raise RuntimeError("Explicit interrupted-capture recovery did not queue preserved source archival")
+            recovery.wait_job(stopped["archive_job"], "interrupted capture recovery")
+            restored = recovery.call("session.status", {"capture_session_id": interrupted["uuid"]})["capture_session"]
+            if restored.get("archive_state") != "complete" or not restored["artifact_sources"]:
+                raise RuntimeError("Explicit recovery lost the EOF-finalized recorder evidence")
+        finally:
+            recovery.close()
 
 
 def smoke_logs(rpc: SmokeRPC, directory: Path) -> None:

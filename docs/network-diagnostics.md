@@ -1,5 +1,11 @@
 # Network diagnostics milestone
 
+Revision 2 makes production host repairs **diagnosis-only on Windows, Linux and macOS**. The app has no qualified signed privilege helper, manager-aware writer or supervised timed rollback. Administrator privileges do not enable the old Python mutation path. The command previews, ownership checks and receipt format below remain available for review and manual recovery; automatic execution tests use an explicitly injected fake backend. They do not qualify a production repair helper.
+
+`network.profile` returns the supplied Q22 reference: drone NIC `10.0.0.5/24`, SkyPulse ground `10.0.0.2`, receive destination `10.0.0.5`, Internet Wi-Fi on DHCP `192.168.0.x` with gateway `192.168.0.1`, H.265 UDP `5600`, and GCS MAVLink UDP `14550`. These are historical expectations, not detected settings or an enrolled aircraft. The historical Windows firewall profile uses wired interfaces, remote `10.0.0.2`, all profiles and no local-address pin; it is preserved separately from narrower proposed previews. The app does not silently replace it.
+
+Mission Planner's documented system-wide MinGW GStreamer/H.265 path is separate from QGC's runtime. QGC forwarding is one-way and cannot establish a parameter or log request path. SkyPulse may learn a destination from incoming MAVLink: diagnostic traffic must not teach it a new receiver. The passive observer therefore sends no packets and uses an explicitly configured separate forwarding port.
+
 The Network screen inspects this computer and explicitly configured IPv4 sources. It does not scan the LAN, send MAVLink commands, change aircraft settings, or start a second video player. Inspection works through `psutil` plus the OS routing tools: `ip` on Linux, PowerShell NetTCPIP on Windows, and `netstat`/`route` on macOS. Known system-tool locations are used when the desktop launcher's PATH is sparse. Missing tools produce a partial result and block repair planning.
 
 Windows PowerShell output is explicitly UTF-8, with BOM-safe JSON parsing so localized interface aliases survive intact. Firewall commands encode the alias as UTF-8 data inside a fixed decoding expression, avoiding PowerShell interpretation of ASCII or smart quotes in names. Supplemental interface-query failure preserves the addresses observed through `psutil` for explicit probes, while the partial result blocks repair planning. On macOS, abbreviated route prefixes and changing `netstat` column layouts are normalized. Since `route get` omits the chosen source address, an ephemeral UDP socket uses `connect` and `getsockname` for local kernel source selection; it never sends a datagram or binds to a GCS port. Failure is reported as an unknown source address rather than guessing among aliases. The kernel-selected address is checked against the reported interface to detect inconsistent observations.
@@ -20,7 +26,7 @@ If the dedicated adapter has no address in the radio subnet, a host route by its
 | UDP | Exclusive bind on one existing local IPv4 address and configured port; packets from the exact configured sender | Playback or full telemetry continuity; other senders are counted separately |
 | MAVLink UDP | A common HEARTBEAT packet with valid MAVLink v1/v2 framing and CRC extra 50 | Signing authentication, other message types, stream completeness, physical RF loss |
 
-No incoming UDP during the timeout means **no packets observed**. It does not prove a firewall block. JSON reachability does not establish radio health; an SDP reply does not establish playable video. Effective firewall policy remains `unknown`, even after creating a scoped exception, because other rules and security software can override it. A native video receive/decode adapter and full live UDP MAVLink decoding/recording remain later milestones; parsing recorded MAVLink TLOG files is already supported.
+No incoming UDP during the timeout means **no packets observed**. It does not prove a firewall block. JSON reachability does not establish radio health; an SDP reply does not establish playable video. Effective firewall policy remains `unknown` because other rules and security software can override a scoped exception. A native video receive/decode adapter remains a later milestone. Separate passive MAVLink capture and recorded TLOG parsing are available; see [managed collection](managed-collection.md).
 
 RTSP probes use unauthenticated `DESCRIBE` over TCP to a numeric IPv4 address, port and path. Credential negotiation and encrypted RTSP are not implemented. A `401`/`403` response is reported as `authentication_required`, not a route/firewall failure; verify the URL and credentials using the camera's supported player or GCS.
 
@@ -30,9 +36,9 @@ For UDP, the UI's **Device IPv4** is the packet sender to accept, not necessaril
 
 ## Reviewed repairs and ownership
 
-Generating a plan only displays exact additions and rollback commands. Applying it requires the server-held plan ID and a separate explicit confirmation. Client-supplied commands are rejected. Plans expire after ten minutes before application; interfaces/routes and firewall scope are rechecked immediately before mutation. The native app must already have administrator rights for the apply step; otherwise it returns `permission_required` without running any command. No silent elevation or password prompt is implemented.
+Generating a plan displays exact additions and rollback commands. Production apply and rollback return `diagnosis_only`; client-supplied commands are rejected. The retained backend contract requires a server-held plan ID, explicit confirmation, current host-state checks and fresh disarmed/identity/recorder safety evidence. Plans expire after ten minutes. Armed, stale, unknown, unverified or active-recording states block disruptive changes. No elevation helper is implemented.
 
-| Repair | Linux | Windows | macOS |
+| Preview/ownership model (automatic execution disabled) | Linux | Windows | macOS |
 | --- | --- | --- | --- |
 | Interface-scoped `/32` host route | Supported with static protocol, unique metric, exact destination/interface/source/gateway/table/type ownership | Supported with interface index, unique metric, exact destination and next hop in ActiveStore | Reviewed static `/32` route through the selected interface, `PROTO2` marker and exact observed receipt; native qualification pending |
 | Additional IPv4 address | Dedicated adapter only, no default-route adapter, no subnet overlap, unique ownership label, no implicit subnet route | Unsupported: adding an address can disable DHCP | Reviewed `/32` alias on a dedicated adapter, with unchanged original address/route state required for rollback; native qualification pending |
@@ -51,6 +57,8 @@ If a command times out or post-change verification fails, the result has `may_ha
 ## RPC contract
 
 `NetworkService.dispatch(method, params)` returns an object; invalid inputs raise `ValueError` for the engine's JSON-RPC error handler. Hostnames, subnets, broadcast/multicast destinations, command fragments and noninteger ports are rejected. Up to eight individually configured sources are accepted; no auto-discovery occurs.
+
+`network.profile` accepts `{ "profile_id": "q22" }` and returns a versioned handoff reference. `network.capabilities` accepts `{}` and reports each platform's inspection/probe/repair capability and current engine-owned safety reasons. A renderer cannot declare itself disarmed or provide a repair backend. A UDP probe defers when ownership is unknown or the passive recorder already owns the requested socket.
 
 ```json
 {

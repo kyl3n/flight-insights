@@ -57,6 +57,13 @@ export interface NetworkInspection {
   targets: {source_id: string; host: string; state: string; selected_interface: string | null; local_address: string | null; issues: string[]}[];
   firewall: {state: string; reason: string}; limitations: string[];
   probes?: {source_id: string; state: string; checks: Record<string, unknown>[]; details: string; recovery_action: string}[];
+  profile_evidence?:Record<string,unknown>;
+}
+export interface NetworkCapabilities {
+  current_platform:string;
+  platforms:Record<string,{inspection:unknown;stream_probes:unknown;repair:{state:string;automatic_apply:boolean;reason:string};qualification:unknown}>;
+  layers:{layer:string;state:string;coverage:string}[];
+  repair_safety:{allowed:boolean;state:string;reasons:string[]};
 }
 export interface RepairPlan {
   plan_id: string; state: string; title: string; commands: string[][]; rollback_commands: string[][];
@@ -90,6 +97,50 @@ export interface RecoveryReceipt extends RepairPlan {
   ownership:'owned'|'changed'|'absent'|'unknown'; may_have_applied:boolean; recovered:boolean;
 }
 export interface RecoveryResponse {status:'ready'|'unavailable';repairs:RecoveryReceipt[];warnings:string[]}
+export interface CollectionProfile {
+  aircraft_id:string;aircraft_profile_version:string;connection_profile_version:string;
+  connection:{local_address:string;listen_port:number;expected_sender:string;system_id:number;component_id:number;expected_uid?:string;feed_origin:'live_forwarded';synthetic:boolean};
+  required_sources:string[];
+}
+export interface CollectionReadiness {state:string;reasons:string[];can_observe:boolean;can_claim_complete:boolean}
+export interface CaptureSession {
+  uuid:string;status:string;profile:CollectionProfile;applicability_fingerprint:string;watcher_state:string;
+  armed_interval_ids:string[];source_ids:string[];coverage:Record<string,unknown>;latest_event:Record<string,unknown>|null;
+  archive_state?:string;archive_error?:string;artifact_count?:number;archive_job_id?:string;
+  [key:string]:unknown;
+}
+export interface CollectionCompleteness {state:string;required:string[];present:string[];missing:string[]}
+export interface FlightRecord {
+  id:string;armed_interval_id:string;capture_session_id:string;display_number:number;classification:string;
+  processing_state:string;started_already_armed:boolean;arm_evidence:Record<string,unknown>;disarm_evidence:Record<string,unknown>|null;
+  latest_manifest_revision:number;collection_completeness:CollectionCompleteness;
+  association_summary:{verified:number;provisional:number;rejected:number;missing:number};
+  parameter_evidence:{preflight:Record<string,unknown>|null;postflight:Record<string,unknown>|null;applicability:string;limitations:string[]};missing_sources:string[];
+}
+export interface ArtifactAssociation {
+  id:string;revision:number;artifact_sha256:string;role:string;vehicle_filter:Record<string,unknown>;boot_epoch:number|string|string[];
+  time_or_record_spans:{kind:string;start:number|string;end:number|string|null}[];state:string;supporting_evidence:string[];
+  contradictions:string[];candidate_alternatives:string[];rule_version:string;review_history:unknown[];
+}
+export interface CollectionStatus {
+  capture_sessions:CaptureSession[];capture_session:CaptureSession|null;flight_records:FlightRecord[];
+  readiness:CollectionReadiness;limitations:string[];recorder?:RecorderStatus;status_unavailable?:boolean;
+  active_capture_session?:CaptureSession|null;capture_total?:number;capture_offset?:number;captures_truncated?:boolean;
+  flight_record_total?:number;offset?:number;limit?:number;flight_records_truncated?:boolean;
+}
+export interface RecorderStatus {
+  state:string;active:boolean;packets?:number;received_bytes?:number;valid_frames?:number;invalid_frames?:number;
+  written_bytes?:number;durable_bytes?:number;status_age_s?:number|null;sources?:{source_id?:string;system_id?:number;component_id?:number;heartbeat_age_s?:number|null;armed_state?:string}[];
+  [key:string]:unknown;
+}
+export interface FlightBundleDetail {
+  flight_record:FlightRecord;armed_interval:Record<string,unknown>;capture_session:CaptureSession;
+  manifest:{revision:number;artifacts:ArtifactAssociation[];collection_completeness:CollectionCompleteness;parameter_evidence:FlightRecord['parameter_evidence'];limitations:string[];[key:string]:unknown};
+  revisions:{revision:number;created_at:string;reason:string}[];associations:ArtifactAssociation[];
+  retrieval_requests:{id?:string;role?:string;state:string;recovery_action:string;observed_path_or_null:string|null;[key:string]:unknown}[];
+  association_total?:number;association_offset?:number;associations_truncated?:boolean;revision_total?:number;revisions_truncated?:boolean;
+}
+export interface CollectionPreview {profile:CollectionProfile;applicability_fingerprint:string;capabilities:Record<string,unknown>;limitations:string[]}
 export async function listAll<T>(method:string,key:string):Promise<T[]> {
   const all:T[] = [];let offset=0;
   for (;;) {

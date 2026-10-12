@@ -1,8 +1,8 @@
 {
   "document_type": "implementation_design_contract",
   "status": "specification_only_not_implemented",
-  "version": "1.0",
-  "date": "2026-10-03",
+  "version": "2.0",
+  "date": "2026-10-12",
   "product": "Q22 Flight Lab",
   "authoritative_human_spec": "Q22_Codex_Specification.txt",
   "architecture": {
@@ -21,7 +21,10 @@
       "macOS Apple Silicon",
       "macOS x64 if supported by release target matrix"
     ],
-    "version_policy": "Select and lock tested versions during packaging spike; pin firmware adapters, parser and algorithm revisions."
+    "version_policy": "Select and lock tested versions during packaging spike; pin firmware adapters, parser and algorithm revisions.",
+    "connection_service": "Separately supervised, explicitly commissioned transport/fan-out with recorder isolation; never synthesize controlling GCS heartbeat.",
+    "network_inspector": "Unprivileged native per-OS observation adapters",
+    "repair_broker": "Narrow signed elevated helper; typed plan-bound host changes; audited apply/verify/rollback"
   },
   "non_negotiables": [
     "Original logs and protected tune baselines are immutable.",
@@ -33,11 +36,19 @@
     "No unrelated vehicle, boot epoch, battery monitor or flight merging.",
     "No required cloud upload or user-installed Python/Node runtime.",
     "No dummy data outside explicitly labeled synthetic demo/test context.",
-    "No silent numerical threshold copied across firmware/hardware profiles."
+    "No silent numerical threshold copied across firmware/hardware profiles.",
+    "No disruptive host/GCS/radio repair when aircraft state is armed or unknown.",
+    "No firewall disable, indiscriminate port ranges, arbitrary shell commands, bridge/NAT or default-route changes as a generic repair.",
+    "No snapshot is falsely labeled atomic or complete solely because a file exists.",
+    "No filename/date/sysid-only automatic evidence association; hard contradictions override ranking.",
+    "No log download while armed or armed-state freshness is unknown.",
+    "No recorder/router heartbeat substitution that masks loss of the controlling GCS.",
+    "QGC one-way forwarding is not a bidirectional parameter/log request channel.",
+    "Historical flight analysis always retains its own effective-configuration evidence."
   ],
   "protected_baselines": [
-    "Q22 original - before Brian settings",
-    "Q22 with Brian tune"
+    "Q22 original - pre-FACt",
+    "Q22 with FACt tune"
   ],
   "screens": [
     "Overview",
@@ -45,7 +56,8 @@
     "Insights / issues",
     "Collect",
     "Compare",
-    "Aircraft"
+    "Aircraft",
+    "Network & devices"
   ],
   "source_outcomes": [
     "not_configured",
@@ -130,7 +142,18 @@
     "parameters.diff",
     "proposals.export",
     "reports.export",
-    "engine.status"
+    "engine.status",
+    "network.inspect",
+    "network.plan_repair",
+    "network.apply_repair",
+    "network.rollback",
+    "session.prepare_and_watch",
+    "session.status",
+    "parameters.capture",
+    "parameters.reconcile",
+    "associations.evaluate",
+    "associations.review",
+    "retrieval.resolve"
   ],
   "ipc_events": [
     "job.progress",
@@ -139,7 +162,15 @@
     "source.status",
     "recording.health",
     "live.alert",
-    "engine.health"
+    "engine.health",
+    "source_freshness_changed",
+    "flight_state_changed",
+    "parameter_readiness_changed",
+    "association_status_changed",
+    "artifact_missing",
+    "repair_progress",
+    "repair_outcome",
+    "disk_pressure"
   ],
   "entities": [
     {
@@ -147,8 +178,19 @@
       "required_contents": "Aircraft ID; board/firmware identity; physical motor map; ESC instance mapping evidence; motors/props/battery; calibration status; hardware changes; limits and their provenance."
     },
     {
-      "name": "FlightSession",
-      "required_contents": "UUID; aircraft profile version; operator/test notes; mass/payload/battery/weather; actual parameter snapshots; source IDs; proposed and confirmed flight intervals."
+      "name": "FlightRecord",
+      "required_contents": "Canonical analysis record for exactly one ArmedInterval; FlightSession is a deprecated design alias, not another grouping.",
+      "required_fields": [
+        "id",
+        "armed_interval_id",
+        "capture_session_id",
+        "aircraft_profile_version",
+        "classification",
+        "airborne_segment_ids",
+        "evidence_manifest_revisions",
+        "notes",
+        "comparison_context"
+      ]
     },
     {
       "name": "SourceManifest",
@@ -168,15 +210,52 @@
     },
     {
       "name": "MetricResult",
-      "required_contents": "Algorithm/version; interval and phase; value/unit; count and time coverage; exclusions; uncertainty; source/field references; interpretation limits."
+      "required_contents": "Algorithm/version; interval and phase; value/unit; count and time coverage; exclusions; uncertainty; source/field references; interpretation limits.",
+      "required_fields": [
+        "flight_record_id",
+        "armed_interval_id",
+        "capture_session_id",
+        "evidence_manifest_revision",
+        "effective_configuration_interval_ids",
+        "configuration_eligibility",
+        "configuration_eligibility_reasons",
+        "source_evidence_refs",
+        "rule_or_algorithm_version"
+      ],
+      "unknown_policy": "Unknown configuration permits eligible descriptive metrics only; empty interval references require explicit unknown state and reasons; mixed intervals must be partitioned or labeled."
     },
     {
       "name": "Finding",
-      "required_contents": "Rule/version; severity; evidence quality; confidence; observation; competing hypotheses; evidence intervals; next action; expected result; parameter applicability; retest criteria."
+      "required_contents": "Rule/version; severity; evidence quality; confidence; observation; competing hypotheses; evidence intervals; next action; expected result; parameter applicability; retest criteria.",
+      "required_fields": [
+        "flight_record_id",
+        "armed_interval_id",
+        "capture_session_id",
+        "evidence_manifest_revision",
+        "effective_configuration_interval_ids",
+        "configuration_eligibility",
+        "configuration_eligibility_reasons",
+        "source_evidence_refs",
+        "rule_or_algorithm_version"
+      ],
+      "unknown_policy": "Unknown configuration permits eligible descriptive metrics only; empty interval references require explicit unknown state and reasons; mixed intervals must be partitioned or labeled."
     },
     {
-      "name": "ParameterSnapshot / proposal",
-      "required_contents": "Immutable original; parsed values; firmware metadata; before/after diff; reason; target aircraft; validation status; rollback snapshot; no implicit application."
+      "name": "ParameterSnapshot",
+      "required_contents": "Immutable captured/reconstructed or reference-only state; only flight-supported evidence can seed an EffectiveConfigurationInterval.",
+      "required_fields": [
+        "id",
+        "kind",
+        "aircraft_identity",
+        "firmware_identity",
+        "component_scope",
+        "completeness",
+        "values",
+        "raw_refs",
+        "capture_id_or_reconstruction_evidence",
+        "typed_hash",
+        "scope_hash"
+      ]
     },
     {
       "name": "Experiment / issue",
@@ -184,7 +263,265 @@
     },
     {
       "name": "CollectionJob",
-      "required_contents": "Per-adapter state/progress; resumable transfer position; retries; chosen flight grouping; missing-data consequences and recovery instructions."
+      "required_contents": "Per-adapter state/progress; resumable transfer position; retries; chosen flight grouping; missing-data consequences and recovery instructions.",
+      "required_fields": [
+        "id",
+        "flight_record_id",
+        "armed_interval_id",
+        "capture_session_id",
+        "state",
+        "source_jobs",
+        "checkpoints",
+        "missing_requests",
+        "schedule_priority"
+      ]
+    },
+    {
+      "name": "NetworkProfileVersion",
+      "required_fields": [
+        "id",
+        "version",
+        "os_capability_matrix",
+        "interfaces",
+        "endpoints",
+        "approved_source_scopes",
+        "gcs_integration",
+        "observed_baseline",
+        "secrets_references"
+      ],
+      "required_contents": "Versioned, provenance-linked record; see sections 27-36."
+    },
+    {
+      "name": "NetworkObservation",
+      "required_fields": [
+        "id",
+        "profile_version",
+        "monotonic_ns",
+        "utc_us",
+        "interface_stable_id",
+        "route_and_source_selection",
+        "socket_owner",
+        "firewall_visibility",
+        "probe_results",
+        "evidence_refs"
+      ],
+      "required_contents": "Versioned, provenance-linked record; see sections 27-36."
+    },
+    {
+      "name": "RepairPlan",
+      "required_fields": [
+        "id",
+        "schema_version",
+        "baseline_fingerprint",
+        "target_profile_version",
+        "typed_operations",
+        "before_values",
+        "after_values",
+        "privilege",
+        "persistence",
+        "disruption",
+        "expiry",
+        "preconditions",
+        "inverse_operations",
+        "verification_checks"
+      ],
+      "required_contents": "Versioned, provenance-linked record; see sections 27-36."
+    },
+    {
+      "name": "RepairTransaction",
+      "required_fields": [
+        "id",
+        "plan_id",
+        "review_token",
+        "apply_journal",
+        "before_snapshot",
+        "owned_object_ids",
+        "verification_results",
+        "rollback_status",
+        "remaining_recovery",
+        "timestamps"
+      ],
+      "required_contents": "Versioned, provenance-linked record; see sections 27-36."
+    },
+    {
+      "name": "CaptureSession",
+      "required_fields": [
+        "uuid",
+        "aircraft_profile_version",
+        "connection_profile_version",
+        "clock_maps",
+        "source_ids",
+        "armed_interval_ids",
+        "journal_checkpoint",
+        "coverage",
+        "watcher_state",
+        "independent_collection_job_ids"
+      ],
+      "required_contents": "Versioned, provenance-linked record; see sections 27-36."
+    },
+    {
+      "name": "ArmedInterval",
+      "required_fields": [
+        "uuid",
+        "capture_session_id",
+        "aircraft_id",
+        "display_number",
+        "boot_epochs",
+        "arm_evidence",
+        "disarm_evidence",
+        "started_already_armed",
+        "flight_segments",
+        "parameter_evidence_id",
+        "flight_record_id",
+        "processing_state",
+        "collection_job_ids"
+      ],
+      "required_contents": "Versioned, provenance-linked record; see sections 27-36."
+    },
+    {
+      "name": "GcsObservation",
+      "required_fields": [
+        "id",
+        "app_name",
+        "executable_path",
+        "version",
+        "process_start",
+        "connection_ownership_evidence",
+        "log_paths",
+        "recording_state",
+        "integration_profile_version"
+      ],
+      "required_contents": "Versioned, provenance-linked record; see sections 27-36."
+    },
+    {
+      "name": "ParameterCapture",
+      "required_fields": [
+        "id",
+        "aircraft_id",
+        "boot_epoch",
+        "component_scope",
+        "firmware_identity",
+        "start_end_clock_bounds",
+        "transport",
+        "expected_count",
+        "decoded_count",
+        "completeness",
+        "consistency",
+        "freshness",
+        "raw_refs",
+        "typed_hash",
+        "scope_hash",
+        "observed_change_ids",
+        "snapshot_id"
+      ],
+      "required_contents": "Versioned, provenance-linked record; see sections 27-36."
+    },
+    {
+      "name": "ParameterObservation",
+      "required_fields": [
+        "id",
+        "component",
+        "name",
+        "transport_type",
+        "decoded_type",
+        "raw_value",
+        "canonical_value",
+        "source_ref",
+        "observed_at",
+        "effective_time_bounds",
+        "reboot_requirement",
+        "encoding_provenance",
+        "aircraft_identity",
+        "boot_epoch",
+        "capture_id_or_null"
+      ],
+      "required_contents": "Versioned, provenance-linked record; see sections 27-36."
+    },
+    {
+      "name": "EffectiveConfigurationInterval",
+      "required_fields": [
+        "id",
+        "armed_interval_id",
+        "interval_bounds",
+        "uncertainty",
+        "base_snapshot_id",
+        "ordered_observations",
+        "firmware_identity",
+        "effective_state",
+        "eligible_diagnostics",
+        "conflicts"
+      ],
+      "required_contents": "Versioned, provenance-linked record; see sections 27-36."
+    },
+    {
+      "name": "ArtifactAssociation",
+      "required_fields": [
+        "id",
+        "artifact_sha256",
+        "vehicle_filter",
+        "boot_epoch",
+        "time_or_record_spans",
+        "state",
+        "supporting_evidence",
+        "contradictions",
+        "candidate_alternatives",
+        "rule_version",
+        "review_history",
+        "flight_record_id",
+        "armed_interval_id",
+        "capture_session_id"
+      ],
+      "required_contents": "Versioned, provenance-linked record; see sections 27-36."
+    },
+    {
+      "name": "RetrievalRequest",
+      "required_fields": [
+        "id",
+        "aircraft_identity",
+        "observed_remote_id",
+        "observed_path_or_null",
+        "mapping_provenance",
+        "expected_size_and_stability",
+        "clock_quality",
+        "required_interval",
+        "state",
+        "recovery_action",
+        "resolved_artifact_id",
+        "flight_record_id",
+        "armed_interval_id",
+        "capture_session_id"
+      ],
+      "required_contents": "Versioned, provenance-linked record; see sections 27-36."
+    },
+    {
+      "name": "RecorderCoverage",
+      "required_fields": [
+        "source_id",
+        "session_id",
+        "interval",
+        "expected_cadence",
+        "observed_cadence",
+        "gaps",
+        "durable_bytes",
+        "last_checkpoint",
+        "required_policy",
+        "failure_reason"
+      ],
+      "required_contents": "Versioned, provenance-linked record; see sections 27-36."
+    },
+    {
+      "name": "ParameterProposal",
+      "required_fields": [
+        "id",
+        "baseline_snapshot_id",
+        "target_aircraft_firmware",
+        "proposed_diff",
+        "purpose",
+        "review_state",
+        "validation_evidence",
+        "rollback_snapshot_id"
+      ],
+      "required_contents": "Unapplied candidate; never eligible as the observed base_snapshot_id of actual-flight metrics."
     }
   ],
   "rules": [
@@ -604,6 +941,210 @@
         "18  Live monitoring and alert lifecycle",
         "22  Acceptance and validation plan"
       ]
+    },
+    {
+      "id": "NET-01",
+      "name": "Address and route suitability",
+      "inputs": "Native interface, route, source-address and endpoint observations",
+      "algorithm_requirement": "Evaluate actual path including prefix, default route, VPN and return path.",
+      "abstention_or_limit": "A secondary IP cannot bridge a physical gap; unknown next hop blocks route repair.",
+      "threshold_origin": "engineering_policy_or_protocol_evidence",
+      "implementation_status": "required_not_implemented",
+      "spec_sections": [
+        "27-36 Revision 2 automation and network contracts"
+      ]
+    },
+    {
+      "id": "NET-02",
+      "name": "Firewall policy evidence",
+      "inputs": "Effective policy, receiver, interface, source and observed traffic",
+      "algorithm_requirement": "Separate explicit block from incomplete visibility; prepare narrow rule only for diagnosed need.",
+      "abstention_or_limit": "No-packet silence alone is not a proven firewall fault.",
+      "threshold_origin": "engineering_policy_or_protocol_evidence",
+      "implementation_status": "required_not_implemented",
+      "spec_sections": [
+        "27-36 Revision 2 automation and network contracts"
+      ]
+    },
+    {
+      "id": "NET-03",
+      "name": "UDP ownership and delivery",
+      "inputs": "Socket owners, arrival/cadence and MAVLink/RTP parser evidence",
+      "algorithm_requirement": "Identify intended receiver and distinguish arrival from valid decode.",
+      "abstention_or_limit": "Never seize GCS socket or use reuse flags as a tee.",
+      "threshold_origin": "engineering_policy_or_protocol_evidence",
+      "implementation_status": "required_not_implemented",
+      "spec_sections": [
+        "27-36 Revision 2 automation and network contracts"
+      ]
+    },
+    {
+      "id": "NET-04",
+      "name": "Video pipeline and runtime",
+      "inputs": "Actual loaded GCS runtime, codec, plugins and frame counters",
+      "algorithm_requirement": "Locate transport/codec/parser/decoder/buffering failure and retest fresh frames.",
+      "abstention_or_limit": "Gst-launch in another runtime does not prove GCS health; no unsupported end-to-end latency claim.",
+      "threshold_origin": "engineering_policy_or_protocol_evidence",
+      "implementation_status": "required_not_implemented",
+      "spec_sections": [
+        "27-36 Revision 2 automation and network contracts"
+      ]
+    },
+    {
+      "id": "NET-05",
+      "name": "Radio destination and service path",
+      "inputs": "Configured and observed radio endpoints, source interface, firmware",
+      "algorithm_requirement": "Detect wrong fallback/learned destination or unsupported air-side management path.",
+      "abstention_or_limit": "Do not teach a new destination with a probe; configuration writes can reboot.",
+      "threshold_origin": "engineering_policy_or_protocol_evidence",
+      "implementation_status": "required_not_implemented",
+      "spec_sections": [
+        "27-36 Revision 2 automation and network contracts"
+      ]
+    },
+    {
+      "id": "NET-06",
+      "name": "Repair eligibility and verification",
+      "inputs": "Reviewed typed plan, baseline, flight state, effective policy",
+      "algorithm_requirement": "Apply idempotently through broker, verify target and Internet, rollback owned objects.",
+      "abstention_or_limit": "Armed/unknown state, stale plan or unsupported writer blocks disruption.",
+      "threshold_origin": "engineering_policy_or_protocol_evidence",
+      "implementation_status": "required_not_implemented",
+      "spec_sections": [
+        "27-36 Revision 2 automation and network contracts"
+      ]
+    },
+    {
+      "id": "AUTO-01",
+      "name": "Session lifecycle integrity",
+      "inputs": "Fresh autopilot state, identity, boot/time evidence and journal",
+      "algorithm_requirement": "Create persistent interval identity; handle rearm, replay, gap and late start.",
+      "abstention_or_limit": "Armed is not airborne; silence is not disarmed.",
+      "threshold_origin": "engineering_policy_or_protocol_evidence",
+      "implementation_status": "required_not_implemented",
+      "spec_sections": [
+        "27-36 Revision 2 automation and network contracts"
+      ]
+    },
+    {
+      "id": "AUTO-02",
+      "name": "Required recorder coverage",
+      "inputs": "Per-source freshness, disk and durable checkpoint records",
+      "algorithm_requirement": "Start before arming and preserve gaps/restart evidence across source failures.",
+      "abstention_or_limit": "Do not claim historical RF recovery or continuous capture across sleep.",
+      "threshold_origin": "engineering_policy_or_protocol_evidence",
+      "implementation_status": "required_not_implemented",
+      "spec_sections": [
+        "27-36 Revision 2 automation and network contracts"
+      ]
+    },
+    {
+      "id": "AUTO-03",
+      "name": "GCS and transport capability",
+      "inputs": "MP/QGC process, path, socket and routing observations",
+      "algorithm_requirement": "Select proven adapter and observer/request capabilities; validate failsafe transparency.",
+      "abstention_or_limit": "QGC forward-only path cannot request params/logs; no spoofed control heartbeat.",
+      "threshold_origin": "engineering_policy_or_protocol_evidence",
+      "implementation_status": "required_not_implemented",
+      "spec_sections": [
+        "27-36 Revision 2 automation and network contracts"
+      ]
+    },
+    {
+      "id": "AUTO-04",
+      "name": "Postflight retrieval eligibility",
+      "inputs": "Fresh disarm, inventory, source identity, closure and throughput",
+      "algorithm_requirement": "Retrieve/resume verified completed sources; estimate SD fallback and pause on rearm.",
+      "abstention_or_limit": "Growing source/prefix remains partial; no invented ID-to-filename mapping.",
+      "threshold_origin": "engineering_policy_or_protocol_evidence",
+      "implementation_status": "required_not_implemented",
+      "spec_sections": [
+        "27-36 Revision 2 automation and network contracts"
+      ]
+    },
+    {
+      "id": "PAR-01",
+      "name": "Parameter capture completeness",
+      "inputs": "Component-scoped entries/count/type/raw transfer and firmware",
+      "algorithm_requirement": "Validate full exposed set, bounded missing-entry retries, table stability and EOF.",
+      "abstention_or_limit": "Complete collection is not atomic capture.",
+      "threshold_origin": "engineering_policy_or_protocol_evidence",
+      "implementation_status": "required_not_implemented",
+      "spec_sections": [
+        "27-36 Revision 2 automation and network contracts"
+      ]
+    },
+    {
+      "id": "PAR-02",
+      "name": "Parameter freshness at arm",
+      "inputs": "Preflight interval, changes, reboot/gap and postflight readback",
+      "algorithm_requirement": "Attach best eligible evidence; reconcile with matched onboard observations.",
+      "abstention_or_limit": "Stale/postflight-only data cannot be backdated to arming.",
+      "threshold_origin": "engineering_policy_or_protocol_evidence",
+      "implementation_status": "required_not_implemented",
+      "spec_sections": [
+        "27-36 Revision 2 automation and network contracts"
+      ]
+    },
+    {
+      "id": "PAR-03",
+      "name": "Effective configuration timeline",
+      "inputs": "PARM/PARAM observations, readback and reboot metadata",
+      "algorithm_requirement": "Separate observed/configured/effective state; bracket uncertain changes; segment metrics.",
+      "abstention_or_limit": "No exact causal timing when change activation is unobserved.",
+      "threshold_origin": "engineering_policy_or_protocol_evidence",
+      "implementation_status": "required_not_implemented",
+      "spec_sections": [
+        "27-36 Revision 2 automation and network contracts"
+      ]
+    },
+    {
+      "id": "ASSOC-01",
+      "name": "Flight-artifact match",
+      "inputs": "Hardware/provenance, boot/events, time-series anchors and contradictions",
+      "algorithm_requirement": "Evaluate deterministic many-to-many source-span association; preserve candidate evidence.",
+      "abstention_or_limit": "Hard contradiction or indistinguishable candidate prevents automatic verification.",
+      "threshold_origin": "engineering_policy_or_protocol_evidence",
+      "implementation_status": "required_not_implemented",
+      "spec_sections": [
+        "27-36 Revision 2 automation and network contracts"
+      ]
+    },
+    {
+      "id": "ASSOC-02",
+      "name": "Manual retrieval verification",
+      "inputs": "Observed remote inventory/path and imported content",
+      "algorithm_requirement": "Generate exact evidenced request or SD-folder scan; validate import before resolving.",
+      "abstention_or_limit": "Filename, date or sysid alone cannot resolve the request.",
+      "threshold_origin": "engineering_policy_or_protocol_evidence",
+      "implementation_status": "required_not_implemented",
+      "spec_sections": [
+        "27-36 Revision 2 automation and network contracts"
+      ]
+    },
+    {
+      "id": "PERF-01",
+      "name": "Comparable configuration change",
+      "inputs": "Matched phases, params, mass, battery, wind and calibration",
+      "algorithm_requirement": "Compute eligible effect sizes and uncertainty with trade-offs and confounders.",
+      "abstention_or_limit": "No single-flight causal claim or energy gain from sensor-scale changes.",
+      "threshold_origin": "engineering_policy_or_protocol_evidence",
+      "implementation_status": "required_not_implemented",
+      "spec_sections": [
+        "27-36 Revision 2 automation and network contracts"
+      ]
+    },
+    {
+      "id": "PERF-02",
+      "name": "Metric configuration provenance",
+      "inputs": "Metric scope, parameter interval, field/units and firmware",
+      "algorithm_requirement": "Link each metric to applicable settings and correct throttle/control quantity.",
+      "abstention_or_limit": "Unknown scale/effective interval blocks precise interpretation, not all descriptive analysis.",
+      "threshold_origin": "engineering_policy_or_protocol_evidence",
+      "implementation_status": "required_not_implemented",
+      "spec_sections": [
+        "27-36 Revision 2 automation and network contracts"
+      ]
     }
   ],
   "acceptance_families": [
@@ -666,38 +1207,78 @@
       "family": "Comparison",
       "scenarios": "Matched trials improve known synthetic metrics; confounded payload/wind/time scope blocks causal improvement claims.",
       "status": "not_executed_specification"
+    },
+    {
+      "family": "Dual-network access",
+      "scenarios": "Separate NIC, shared DHCP NIC, VPN overlap, wrong source/default route and Internet preservation.",
+      "status": "not_executed_specification"
+    },
+    {
+      "family": "Repair transaction",
+      "scenarios": "Declined elevation, stale plan, policy block, rollback, concurrent edits, crash and armed/unknown state.",
+      "status": "not_executed_specification"
+    },
+    {
+      "family": "Stream diagnosis",
+      "scenarios": "UDP socket contention, wrong codec, runtime shadowing, missing plugin, no ICMP and RTSP-media split.",
+      "status": "not_executed_specification"
+    },
+    {
+      "family": "Automatic sessions",
+      "scenarios": "Late start, arm/rearm, bench test, replay, reboot, heartbeat loss and same-sysid aircraft.",
+      "status": "not_executed_specification"
+    },
+    {
+      "family": "Parameter consistency",
+      "scenarios": "Non-atomic downloads, missing updates, changing counts, type/encoding/EOF, stale state and pending reboot.",
+      "status": "not_executed_specification"
+    },
+    {
+      "family": "Association recovery",
+      "scenarios": "Wrong2028 dates, reusedIDs, multiplefiles/flights, wrongmanualBIN, missingUID, SDfilename unknown.",
+      "status": "not_executed_specification"
+    },
+    {
+      "family": "GCS transport isolation",
+      "scenarios": "Both GCS active, switch midflight, one-way QGC, UI/recorder/router failure and real control-loss visibility.",
+      "status": "not_executed_specification"
+    },
+    {
+      "family": "Configuration effects",
+      "scenarios": "Current-sensor calibration, payload/wind/logging-rate confounders and typed/semantic hashes.",
+      "status": "not_executed_specification"
     }
   ],
   "milestones": [
     {
       "stage": "0 - Foundation",
-      "deliverable": "Repository, contracts, dependency/license review, installer/sidecar spike, fixture plan",
-      "exit_condition": "App/engine handshake and clean install on target OS; raw archive and migration design proven."
+      "deliverable": "Packaging/IPC and native inventory spike; schemas, license review, transport/recorder isolation.",
+      "exit_condition": "Clean install and fixture plan; control-path architecture and failure tests defined."
     },
     {
-      "stage": "1 - Useful collection and review",
-      "deliverable": "BIN/LOG/TLOG/params/CSV/JSONL import; local/SD discovery; RF recorder; manifests; basic coverage/health/power/vibration",
-      "exit_condition": "Identity/schema/units, per-source boot epochs and explicit scope validated before metrics. Real fixtures reproduce findings; missing/corrupt data never appears healthy."
+      "stage": "1 - Automatic evidence capture",
+      "deliverable": "Identity, own recorder, pre/post params, source readiness, session lifecycle and immutable manifests.",
+      "exit_condition": "Real-format normal/late/gap/reboot cycles retain correct identity and completeness."
     },
     {
-      "stage": "2 - Full evidence workspace",
-      "deliverable": "Cross-source alignment, advanced phase selection, comprehensive health/event channels, issue workflow, comparisons",
-      "exit_condition": "Correct instance/clock/unit handling and source-linked charts across representative Q22 bundles."
+      "stage": "2 - Reliable collection and association",
+      "deliverable": "MP/QGC adapters, BIN retrieval, many-to-many matching, SD requests and recovery.",
+      "exit_condition": "No silent misassociation across adversarial scenarios; partial data remains usable."
     },
     {
-      "stage": "3 - Control/filter/performance",
-      "deliverable": "Raw and batch gyro, spectra, filter modeling, PID response and actuator context, matched-condition energy analysis",
-      "exit_condition": "Parity fixtures versus pinned trusted tools; evidence-gated candidate proposals and regressions."
+      "stage": "3 - Deep diagnostics and effects",
+      "deliverable": "Original health/vibration/PID/notch/energy domains joined to effective configuration.",
+      "exit_condition": "Numerical parity fixtures and matched-condition attribution gates pass."
     },
     {
-      "stage": "4 - Native integration and live health",
-      "deliverable": "Validated USB/optional MAVFTP, forwarded telemetry, live alert lifecycle, supported camera/GCS adapters",
-      "exit_condition": "Device tests and failure recovery; no unauthorized flight/parameter messages; recorder isolation under load."
+      "stage": "4 - Network diagnosis and repair",
+      "deliverable": "Per-OS diagnostics, decoder checks, reviewed native repair transactions and rollback.",
+      "exit_condition": "Actual supported OS tests, permission failures, Internet preservation and grounded-only disruption pass."
     },
     {
       "stage": "5 - Release qualification",
-      "deliverable": "Installers, accessibility, large-log performance, migration/recovery, reports and operational guide",
-      "exit_condition": "All mandatory acceptance cases pass; unsupported device capabilities and outstanding limitations are explicit."
+      "deliverable": "Installers, accessibility, large logs, migration, reports and one-click field workflow.",
+      "exit_condition": "Mandatory tests pass with supported hardware/GCS/OS matrix and explicit unresolved capabilities."
     }
   ],
   "source_references": [
@@ -705,199 +1286,602 @@
       "id": "R01",
       "title": "Tauri 2: external binaries / sidecars",
       "url": "https://v2.tauri.app/develop/sidecar/",
-      "use": "Native shell and packaged engine capability; architecture choice is our recommendation."
+      "use": "Native shell and packaged engine capability; architecture choice is our recommendation.",
+      "reviewed_date": "2026-10-03"
     },
     {
       "id": "R02",
       "title": "DuckDB: Parquet overview",
       "url": "https://duckdb.org/docs/stable/data/parquet/overview",
-      "use": "Column and time-window query design."
+      "use": "Column and time-window query design.",
+      "reviewed_date": "2026-10-03"
     },
     {
       "id": "R03",
       "title": "Apache ECharts",
       "url": "https://echarts.apache.org/en/index.html",
-      "use": "Chart library capabilities; app performance must be measured."
+      "use": "Chart library capabilities; app performance must be measured.",
+      "reviewed_date": "2026-10-03"
     },
     {
       "id": "R04",
       "title": "ArduPilot: measuring vibration",
       "url": "https://ardupilot.org/copter/docs/common-measuring-vibration.html",
-      "use": "Vibration bands and clipping interpretation."
+      "use": "Vibration bands and clipping interpretation.",
+      "reviewed_date": "2026-10-03"
     },
     {
       "id": "R05",
       "title": "ArduPilot: raw IMU logging",
       "url": "https://ardupilot.org/copter/docs/common-raw-imu-logging.html",
-      "use": "Raw gyro/filter evidence requirements."
+      "use": "Raw gyro/filter evidence requirements.",
+      "reviewed_date": "2026-10-03"
     },
     {
       "id": "R06",
       "title": "ArduPilot: harmonic notch filtering",
       "url": "https://ardupilot.org/copter/docs/common-imu-notch-filtering.html",
-      "use": "Filter modes and trade-offs; exact masks remain firmware-specific."
+      "use": "Filter modes and trade-offs; exact masks remain firmware-specific.",
+      "reviewed_date": "2026-10-03"
     },
     {
       "id": "R07",
       "title": "ArduPilot WebTools repository / FilterReview",
       "url": "https://github.com/ArduPilot/WebTools",
-      "use": "Reference implementations and license review; pin commits before reuse."
+      "use": "Reference implementations and license review; pin commits before reuse.",
+      "reviewed_date": "2026-10-03"
     },
     {
       "id": "R08",
       "title": "ArduPilot PIDReview README",
       "url": "https://github.com/ArduPilot/WebTools/blob/main/PIDReview/Readme.md",
-      "use": "PID/response analysis prerequisites and rate-only limitations."
+      "use": "PID/response analysis prerequisites and rate-only limitations.",
+      "reviewed_date": "2026-10-03"
     },
     {
       "id": "R09",
       "title": "ArduPilot: ESC telemetry",
       "url": "https://ardupilot.org/copter/docs/common-esc-telemetry.html",
-      "use": "Telemetry capabilities differ by firmware and protocol."
+      "use": "Telemetry capabilities differ by firmware and protocol.",
+      "reviewed_date": "2026-10-03"
     },
     {
       "id": "R10",
-      "title": "DigiQ SkyPulse manual v1.2.0",
+      "title": "DigiQ SkyPulse manufacturer manual (version-sensitive URL)",
       "url": "https://digiq-rf.com/datasheets/DigiQ_RF_SkyPulse_User_Guide_Manual.pdf",
-      "use": "Sections 15.2.8-15.2.9; documented API and rolling histories, not hardware-tested here."
+      "use": "Rechecked 12 October: destination learning, rolling histories and API path/reboot caveats. Pin PDF/version and installed firmware before implementing.",
+      "reviewed_date": "2026-10-12"
     },
     {
       "id": "R11",
       "title": "MAVLink: log transfer protocol",
       "url": "https://mavlink.io/en/services/log.html",
-      "use": "Controller log retrieval protocol."
+      "use": "Controller log retrieval protocol.",
+      "reviewed_date": "2026-10-03"
     },
     {
       "id": "R12",
       "title": "ArduPilot: MAVLink log transfer",
       "url": "https://ardupilot.org/dev/docs/mavlink-log-download.html",
-      "use": "Version/capability differences for retrieval."
+      "use": "Version/capability differences for retrieval.",
+      "reviewed_date": "2026-10-03"
     },
     {
       "id": "R13",
       "title": "MAVLink common messages: SYSTEM_TIME",
       "url": "https://mavlink.io/en/messages/common.html#SYSTEM_TIME",
-      "use": "Unix and boot clock fields; validity must be checked."
+      "use": "Unix and boot clock fields; validity must be checked.",
+      "reviewed_date": "2026-10-03"
     },
     {
       "id": "R14",
       "title": "ArduPilot: onboard log message catalog",
       "url": "https://ardupilot.org/copter/docs/logmessages.html",
-      "use": "Representative field discovery; use matching source/FMT for exact build."
+      "use": "Representative field discovery; use matching source/FMT for exact build.",
+      "reviewed_date": "2026-10-03"
     },
     {
       "id": "R15",
       "title": "ArduPilot: log download and analysis",
       "url": "https://ardupilot.org/copter/docs/common-downloading-and-analyzing-data-logs-in-mission-planner.html",
-      "use": "Logging configuration and dropped-message diagnostics."
+      "use": "Logging configuration and dropped-message diagnostics.",
+      "reviewed_date": "2026-10-03"
     },
     {
       "id": "R16",
       "title": "ArduPilot pymavlink DFReader",
       "url": "https://github.com/ArduPilot/pymavlink/blob/master/DFReader.py",
-      "use": "Decoding/scaling/time behavior; pin parser revision."
+      "use": "Decoding/scaling/time behavior; pin parser revision.",
+      "reviewed_date": "2026-10-03"
     },
     {
       "id": "R17",
       "title": "ArduPilot: diagnosing problems using logs",
       "url": "https://ardupilot.org/copter/docs/common-diagnosing-problems-using-logs.html",
-      "use": "Health review context."
+      "use": "Health review context.",
+      "reviewed_date": "2026-10-03"
     },
     {
       "id": "R18",
       "title": "ArduPilot: tuning process",
       "url": "https://ardupilot.org/copter/docs/tuning-process-instructions.html",
-      "use": "Mechanical/filter/control tuning order."
+      "use": "Mechanical/filter/control tuning order.",
+      "reviewed_date": "2026-10-03"
     },
     {
       "id": "R19",
       "title": "ArduPilot: SIYI camera/gimbal integration",
       "url": "https://ardupilot.org/copter/docs/common-siyi-zr10-gimbal.html",
-      "use": "Model/firmware-dependent integration and media retrieval."
+      "use": "Model/firmware-dependent integration and media retrieval.",
+      "reviewed_date": "2026-10-03"
     },
     {
       "id": "R20",
       "title": "ArduPilot Copter-4.7.1 source tree",
       "url": "https://github.com/ArduPilot/ardupilot/tree/Copter-4.7.1",
-      "use": "Version-specific implementation authority when the aircraft matches this tag."
+      "use": "Version-specific implementation authority when the aircraft matches this tag.",
+      "reviewed_date": "2026-10-03"
     },
     {
       "id": "R21",
       "title": "Copter-4.7.1: logger structures",
       "url": "https://raw.githubusercontent.com/ArduPilot/ardupilot/Copter-4.7.1/libraries/AP_Logger/LogStructure.h",
-      "use": "Schema and event/command fields."
+      "use": "Schema and event/command fields.",
+      "reviewed_date": "2026-10-03"
     },
     {
       "id": "R22",
       "title": "Copter-4.7.1: IMU structures",
       "url": "https://raw.githubusercontent.com/ArduPilot/ardupilot/Copter-4.7.1/libraries/AP_InertialSensor/LogStructure.h",
-      "use": "Modern VIBE, raw and batch fields."
+      "use": "Modern VIBE, raw and batch fields.",
+      "reviewed_date": "2026-10-03"
     },
     {
       "id": "R23",
       "title": "Copter-4.7.1: EKF outputs",
       "url": "https://raw.githubusercontent.com/ArduPilot/ardupilot/Copter-4.7.1/libraries/AP_NavEKF3/AP_NavEKF3_Outputs.cpp",
-      "use": "Test metric transformations and meaning."
+      "use": "Test metric transformations and meaning.",
+      "reviewed_date": "2026-10-03"
     },
     {
       "id": "R24",
       "title": "Copter-4.7.1: EKF structures",
       "url": "https://raw.githubusercontent.com/ArduPilot/ardupilot/Copter-4.7.1/libraries/AP_NavEKF3/LogStructure.h",
-      "use": "Lane/source/innovation metadata."
+      "use": "Lane/source/innovation metadata.",
+      "reviewed_date": "2026-10-03"
     },
     {
       "id": "R25",
       "title": "Copter-4.7.1: battery logging",
       "url": "https://raw.githubusercontent.com/ArduPilot/ardupilot/Copter-4.7.1/libraries/AP_BattMonitor/AP_BattMonitor_Logging.cpp",
-      "use": "Consumption units and sentinel/encoding behavior."
+      "use": "Consumption units and sentinel/encoding behavior.",
+      "reviewed_date": "2026-10-03"
     },
     {
       "id": "R26",
       "title": "Copter-4.7.1: ESC structures",
       "url": "https://raw.githubusercontent.com/ArduPilot/ardupilot/Copter-4.7.1/libraries/AP_ESC_Telem/LogStructure.h",
-      "use": "ESC schemas; verify actual installed firmware."
+      "use": "ESC schemas; verify actual installed firmware.",
+      "reviewed_date": "2026-10-03"
     },
     {
       "id": "R27",
       "title": "Copter-4.7.1: scheduler",
       "url": "https://raw.githubusercontent.com/ArduPilot/ardupilot/Copter-4.7.1/libraries/AP_Scheduler/AP_Scheduler.cpp",
-      "use": "Scheduler metrics and load encoding."
+      "use": "Scheduler metrics and load encoding.",
+      "reviewed_date": "2026-10-03"
     },
     {
       "id": "R28",
       "title": "Copter-4.7.1: attitude/position structures",
       "url": "https://raw.githubusercontent.com/ArduPilot/ardupilot/Copter-4.7.1/libraries/AC_AttitudeControl/LogStructure.h",
-      "use": "Modern PSC, RATE and control units."
+      "use": "Modern PSC, RATE and control units.",
+      "reviewed_date": "2026-10-03"
     },
     {
       "id": "R29",
       "title": "Copter-4.7.1: mission structures",
       "url": "https://raw.githubusercontent.com/ArduPilot/ardupilot/Copter-4.7.1/libraries/AP_Mission/LogStructure.h",
-      "use": "Mission logging semantics."
+      "use": "Mission logging semantics.",
+      "reviewed_date": "2026-10-03"
     },
     {
       "id": "R30",
       "title": "ArduPilot: MAVFTP",
       "url": "https://ardupilot.org/dev/docs/mavlink-mavftp.html",
-      "use": "Optional transport and version-specific paths."
+      "use": "Optional transport and version-specific paths.",
+      "reviewed_date": "2026-10-03"
     },
     {
       "id": "R31",
       "title": "EdgeTX: special functions / SD Logs",
       "url": "https://manual.edgetx.org/color-radios/model-settings/special-functions",
-      "use": "Optional radio-side CSV when SD logging is enabled; available values depend on inputs."
+      "use": "Optional radio-side CSV when SD logging is enabled; available values depend on inputs.",
+      "reviewed_date": "2026-10-03"
     },
     {
       "id": "R32",
       "title": "ArduPilot batch sampler implementation",
       "url": "https://github.com/ArduPilot/ardupilot/blob/master/libraries/AP_InertialSensor/BatchSampler.cpp",
-      "use": "Batch scale/encoding reference; pin matching revision before implementation."
+      "use": "Batch scale/encoding reference; pin matching revision before implementation.",
+      "reviewed_date": "2026-10-03"
     },
     {
       "id": "R33",
       "title": "Copter-4.7.1: EKF failsafe logic",
       "url": "https://raw.githubusercontent.com/ArduPilot/ardupilot/Copter-4.7.1/ArduCopter/ekf_check.cpp",
-      "use": "Configured threshold and filtered/state-dependent failsafe behavior."
+      "use": "Configured threshold and filtered/state-dependent failsafe behavior.",
+      "reviewed_date": "2026-10-03"
+    },
+    {
+      "id": "R34",
+      "title": "MAVLink parameter protocol",
+      "url": "https://mavlink.io/en/services/parameter.html",
+      "use": "Completeness, type handling and limits of passive cache synchronization.",
+      "reviewed_date": "2026-10-12"
+    },
+    {
+      "id": "R35",
+      "title": "MAVLink packed parameter FTP",
+      "url": "https://mavlink.io/en/services/parameter_ftp.html",
+      "use": "Non-atomic live values, format, EOF and fallback requirements; validate installed implementation.",
+      "reviewed_date": "2026-10-12"
+    },
+    {
+      "id": "R36",
+      "title": "QGroundControl telemetry settings",
+      "url": "https://docs.qgroundcontrol.com/master/en/qgc-user-guide/settings_view/telemetry.html",
+      "use": "Documented one-way forwarding. Master documentation is discovery guidance; pin supported release.",
+      "reviewed_date": "2026-10-12"
+    },
+    {
+      "id": "R37",
+      "title": "Mission Planner forwarding tools",
+      "url": "https://ardupilot.org/planner/docs/common-mp-tools.html",
+      "use": "Local forwarding and separate remote-write/control option.",
+      "reviewed_date": "2026-10-12"
+    },
+    {
+      "id": "R38",
+      "title": "Microsoft New-NetIPAddress",
+      "url": "https://learn.microsoft.com/en-us/powershell/module/nettcpip/new-netipaddress",
+      "use": "DHCP-disable behavior and address configuration caveats.",
+      "reviewed_date": "2026-10-12"
+    },
+    {
+      "id": "R39",
+      "title": "QGroundControl video settings",
+      "url": "https://docs.qgroundcontrol.com/master/en/qgc-user-guide/settings_view/video.html",
+      "use": "Native QGC video configuration; validate installed release/runtime.",
+      "reviewed_date": "2026-10-12"
+    },
+    {
+      "id": "R40",
+      "title": "Apple firewall settings",
+      "url": "https://support.apple.com/guide/mac-help/change-firewall-settings-on-mac-mh11783/mac",
+      "use": "Application/service firewall behavior and policy differences.",
+      "reviewed_date": "2026-10-12"
+    },
+    {
+      "id": "R41",
+      "title": "NetworkManager D-Bus API",
+      "url": "https://networkmanager.dev/docs/api/latest/gdbus-org.freedesktop.NetworkManager.html",
+      "use": "Checkpoint and rollback support; target installed manager/version.",
+      "reviewed_date": "2026-10-12"
+    },
+    {
+      "id": "R42",
+      "title": "Microsoft firewall rules",
+      "url": "https://learn.microsoft.com/en-us/powershell/module/netsecurity/new-netfirewallrule",
+      "use": "Typed rule scope; effective policy still requires verification.",
+      "reviewed_date": "2026-10-12"
+    },
+    {
+      "id": "R43",
+      "title": "Microsoft UDP socket reuse",
+      "url": "https://learn.microsoft.com/en-us/windows/win32/winsock/using-so-reuseaddr-and-so-exclusiveaddruse",
+      "use": "Socket sharing is not a reliable unicast duplication mechanism.",
+      "reviewed_date": "2026-10-12"
+    },
+    {
+      "id": "R44",
+      "title": "GStreamer UDP source",
+      "url": "https://gstreamer.freedesktop.org/documentation/udp/udpsrc.html",
+      "use": "Receive-buffer semantics and source properties.",
+      "reviewed_date": "2026-10-12"
+    },
+    {
+      "id": "R45",
+      "title": "GStreamer D3D11 H.265 decoder",
+      "url": "https://gstreamer.freedesktop.org/documentation/d3d11/d3d11h265dec.html",
+      "use": "Windows decoder capability; installed GPU/runtime must be validated.",
+      "reviewed_date": "2026-10-12"
+    },
+    {
+      "id": "R46",
+      "title": "Apple Local Network privacy",
+      "url": "https://developer.apple.com/documentation/technotes/tn3179-understanding-local-network-privacy",
+      "use": "Separate OS permission boundary from firewall/network configuration.",
+      "reviewed_date": "2026-10-12"
+    },
+    {
+      "id": "R47",
+      "title": "QGroundControl general settings",
+      "url": "https://docs.qgroundcontrol.com/master/en/qgc-user-guide/settings_view/general.html",
+      "use": "Version-specific application save paths/settings.",
+      "reviewed_date": "2026-10-12"
+    },
+    {
+      "id": "R48",
+      "title": "Mission Planner telemetry logs",
+      "url": "https://ardupilot.org/planner/docs/mission-planner-telemetry-logs.html",
+      "use": "Native telemetry capture and log lifecycle discovery.",
+      "reviewed_date": "2026-10-12"
+    },
+    {
+      "id": "R49",
+      "title": "NetworkManager IPv4 profile",
+      "url": "https://networkmanager.dev/docs/api/latest/settings-ipv4.html",
+      "use": "Addresses, routes and never-default configuration.",
+      "reviewed_date": "2026-10-12"
+    },
+    {
+      "id": "R50",
+      "title": "firewalld rich language",
+      "url": "https://firewalld.org/documentation/man-pages/firewalld.richlanguage.html",
+      "use": "Zone/source/port rules; active policy must be identified.",
+      "reviewed_date": "2026-10-12"
+    },
+    {
+      "id": "R51",
+      "title": "Copter-4.7.1 parameter implementation",
+      "url": "https://github.com/ArduPilot/ardupilot/blob/Copter-4.7.1/libraries/GCS_MAVLink/GCS_Param.cpp",
+      "use": "Tagged-source check: parameter write/readback/logging behavior is not a reliable universal broadcast contract.",
+      "reviewed_date": "2026-10-12"
+    },
+    {
+      "id": "R52",
+      "title": "Copter-4.7.1 parameter logging",
+      "url": "https://github.com/ArduPilot/ardupilot/blob/Copter-4.7.1/libraries/AP_Logger/LogFile.cpp",
+      "use": "PARM observation timestamp semantics; pin matching firmware source.",
+      "reviewed_date": "2026-10-12"
+    },
+    {
+      "id": "R53",
+      "title": "Apple SystemConfiguration",
+      "url": "https://developer.apple.com/documentation/systemconfiguration",
+      "use": "Native network service inspection/configuration APIs.",
+      "reviewed_date": "2026-10-12"
     }
-  ]
+  ],
+  "revision_summary": "Adds network/stream diagnosis and reversible repairs, automatic session recording, full parameter evidence, MP/QGC integration, verified BIN/TLOG linking and configuration-to-performance insights.",
+  "repository_scope": "flight-insights app repository; Q22 aircraft documents remain separate",
+  "baseline_alias_policy": "Preserve earlier Brian-named files/bytes and aliases; display FACt names; never synthesize missing baseline.",
+  "main_action": "Prepare & watch",
+  "session_orchestration": {
+    "states": [
+      "DISCOVERING",
+      "PREPARING",
+      "WATCHING_READY",
+      "WATCHING_DEGRADED",
+      "ARMED_RECORDING",
+      "LINK_UNCERTAIN",
+      "DISARM_SETTLING",
+      "COLLECTING",
+      "RECONCILING",
+      "COMPLETE",
+      "AWAITING_EVIDENCE"
+    ],
+    "identity": "Random persistent UUID independent of time; local aircraft-scoped number for display only.",
+    "capture_session_relation": "One capture session has many armed intervals; armed interval has zero or more airborne segments; files associate many-to-many via source spans.",
+    "normal_flow": [
+      "prepare_and_watch",
+      "start_reachable_recorders",
+      "identify_enrolled_aircraft",
+      "network_and_readiness_checks",
+      "full_preflight_parameter_capture",
+      "watch_fresh_autopilot_arming",
+      "assign_armed_interval",
+      "continue_capture",
+      "fresh_disarm_and_postroll",
+      "postflight_capture_and_inventory",
+      "collect_and_match",
+      "freeze_manifest_revision_and_analyze"
+    ],
+    "unknown_state_policy": "Keep recording; do not infer disarm from silence, transfer bulk logs, or apply disruptive repair.",
+    "rearm_policy": "Create distinct armed interval; suspend existing bulk transfer; keep prior collection queued.",
+    "late_start_policy": "Mark unknown start and missing preflight evidence; reconcile later without fabricating prior capture.",
+    "engineering_defaults_to_validate": {
+      "parameter_freshness_seconds": 60,
+      "skypulse_poll_seconds": 5,
+      "postroll_seconds": 30
+    },
+    "controls": [
+      "prepare_and_watch",
+      "manual_start",
+      "manual_stop",
+      "collect_now",
+      "manual_import",
+      "pause_optional_capture"
+    ],
+    "watcher_states": [
+      "DISCOVERING",
+      "PREPARING",
+      "WATCHING_READY",
+      "WATCHING_DEGRADED",
+      "ARMED_RECORDING",
+      "LINK_UNCERTAIN"
+    ],
+    "per_interval_processing_states": [
+      "RECORDING",
+      "DISARM_SETTLING",
+      "COLLECTING",
+      "RECONCILING",
+      "COMPLETE",
+      "AWAITING_EVIDENCE"
+    ],
+    "concurrency": "Watcher remains active while prior intervals settle/collect/reconcile/await SD. normal_flow is one interval lifecycle, not a global blocking loop. Shared bulk transfers pause on current arming or unknown state."
+  },
+  "parameter_evidence_contract": {
+    "completeness": [
+      "complete_for_scope",
+      "partial",
+      "unknown"
+    ],
+    "consistency": [
+      "no_observed_conflict",
+      "concurrent_change",
+      "conflict",
+      "unknown"
+    ],
+    "freshness": [
+      "fresh_for_policy",
+      "stale",
+      "gap_since_capture",
+      "unknown"
+    ],
+    "flight_time_applicability": [
+      "corroborated",
+      "provisional",
+      "reconstructed_from_bin",
+      "conflict",
+      "unknown"
+    ],
+    "atomicity": "Not guaranteed by parameter protocol or packed FTP; preserve capture interval.",
+    "hashes": [
+      "raw_bytes_sha256",
+      "lossless_typed_values_sha256",
+      "scope_and_completeness_hash",
+      "versioned_functional_group_fingerprints"
+    ],
+    "capture_policy": "Full preflight and postflight reads while disarmed; passive observations and BIN reconciliation; bounded retries; no flight-time full bulk read.",
+    "effective_boundary": "Observed variable value is distinct from subsystem activation; preserve pending reboot and uncertain change intervals.",
+    "typed_value_policy": "Lossless numeric representation with observed/inferred type provenance; do not hash rounded UI text.",
+    "duplicate_policy": "Accept and deduplicate identical retransmissions; reject conflicting values/key-index mappings; unresolved gaps stay partial."
+  },
+  "association_contract": {
+    "states": [
+      "verified",
+      "provisional",
+      "ambiguous",
+      "rejected",
+      "missing",
+      "unrecoverable"
+    ],
+    "hard_rejects": [
+      "conflicting_strong_hardware_identity",
+      "incompatible_supported_boot_or_event_sequence",
+      "nonoverlapping_supported_interval"
+    ],
+    "insufficient_alone": [
+      "filename",
+      "mtime_or_wall_date",
+      "sysid",
+      "parameter_hash",
+      "newest_or_largest_file",
+      "same_folder"
+    ],
+    "verification_requirement": "Identity and interval checks plus corroboration under a versioned rule; no competing indistinguishable candidate or unresolved contradiction.",
+    "manual_sd_policy": "Exact filename only from observed listing/validated mapping; otherwise select SD folder and content-match candidates.",
+    "revisions": "Append association/manifest history; never overwrite raw bytes or prior report provenance."
+  },
+  "network_contract": {
+    "layers": [
+      "interface",
+      "address_and_route",
+      "service",
+      "packet_arrival",
+      "protocol_decode",
+      "receiving_application",
+      "freshness_and_quality"
+    ],
+    "capability_states": [
+      "supported_automatic",
+      "diagnosis_only",
+      "needs_permission",
+      "policy_blocked",
+      "unsupported",
+      "unknown"
+    ],
+    "repair_states": [
+      "planned",
+      "awaiting_user_apply",
+      "revalidating",
+      "applying",
+      "verifying",
+      "committed",
+      "rolling_back",
+      "rolled_back",
+      "rollback_failed",
+      "blocked",
+      "expired"
+    ],
+    "repair_scope": "Host interface addresses, verified destination routes, narrowly scoped firewall and supported GCS settings only; radio writes separate explicit grounded workflow.",
+    "q22_profile": {
+      "host_drone_ipv4": "10.0.0.5",
+      "prefix_length": 24,
+      "ground_radio_ipv4": "10.0.0.2",
+      "configured_stream_destination": "10.0.0.5",
+      "video_udp_destination_port": 5600,
+      "mavlink_udp_destination_port": 14550,
+      "camera_ip": null,
+      "camera": "SIYI A8 Mini",
+      "gstreamer_mp_baseline": "System-wide MinGW; inspect actual loaded path/version",
+      "firewall_policy": "Wired interfaces, Any profiles, local address unrestricted, confirmed remote10.0.0.2; scope destination UDP ports/actual receiver."
+    },
+    "dual_nic_policy": "Keep Internet gateway/DNS; no drone default gateway; no bridging/NAT needed for directly attached non-overlapping subnets.",
+    "unknown_udp_policy": "No expected packets is inconclusive until discriminating evidence; socket or allow rule alone not proof.",
+    "safety_precondition": "Fresh known disarmed state or explicit grounded commissioning evidence for the selected topology; never silence==disarmed.",
+    "rollback_policy": "Owned objects only, concurrency-safe, local timed rollback for severing host operations; remote radio recovery not guaranteed."
+  },
+  "gcs_contract": {
+    "detection_evidence": [
+      "process_version",
+      "socket_ownership",
+      "configured_paths",
+      "live_identity",
+      "new_log_activity"
+    ],
+    "both_running": "Select proven intended connection or ask once; never arbitrary ownership.",
+    "qgc_forwarding": "one_way_observer_only",
+    "mp_forwarding": "Version/settings-specific; no blanket remote-write enablement.",
+    "app_recorder": "Separate provenance; forward-only stream cannot claim full duplex GCS command coverage.",
+    "active_file": "Prefix only until closure/content stability proven; do not force GCS disconnect."
+  },
+  "comparison_contract": {
+    "required_context": [
+      "effective_configuration_interval",
+      "firmware",
+      "hardware_revision",
+      "mass_payload_CG",
+      "battery_identity_state_temperature_calibration",
+      "prop_motor_revision",
+      "flight_mode_and_phase",
+      "wind_evidence",
+      "logging_and_data_coverage",
+      "metric_algorithm_version"
+    ],
+    "outcomes": [
+      "improvement_with_supported_tradeoffs",
+      "regression",
+      "inconclusive"
+    ],
+    "causality_policy": "Observation and association distinct from controlled replicated support; no current-only PID advice.",
+    "throttle_quantities": [
+      "pilot_input",
+      "collective_demand",
+      "learned_hover_reference",
+      "per_motor_output"
+    ],
+    "retained_hidden_fields": "All calibration/learned/device-state values retained; only default focused view may collapse them."
+  },
+  "identity_relationships": {
+    "CaptureSession": "contains many ArmedIntervals and concurrent background jobs",
+    "FlightRecord": "exactly one per ArmedInterval; FlightSession is legacy alias",
+    "ParameterCapture": "acquisition generation -> immutable ParameterSnapshot via snapshot_id",
+    "ParameterProposal": "unapplied candidate -> baseline snapshot; not actual-flight evidence",
+    "ArtifactAssociation": "many-to-many file spans attached to specific FlightRecord/ArmedInterval",
+    "RetrievalRequest": "missing source for a specific FlightRecord/ArmedInterval",
+    "MetricResult_Finding": "must retain manifest revision and effective-configuration interval links or explicit unknown eligibility"
+  }
 }

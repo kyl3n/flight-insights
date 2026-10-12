@@ -19,11 +19,12 @@ The Linux CI baseline is Ubuntu 22.04. The managed cloud is Debian 13; its local
 | --- | --- | --- | --- |
 | Desktop UI, native file picker, local packaged engine | Implemented; see recorded CI results; installed-GUI qualification pending | Implemented; build/runtime checks passed; installed-GUI qualification pending | Implemented; see recorded CI results; installed-GUI qualification pending |
 | Immutable files, parameter and BIN/LOG/TLOG imports, scoped metrics and comparisons | Shared engine | Shared engine | Shared engine |
+| Passive UDP recorder, armed-interval records, provisional associations and manifest history | Shared worker/engine; native qualification required | Shared worker/engine; native qualification required | Shared worker/engine; native qualification required |
 | IPv4 adapter/subnet/route inspection | PowerShell NetTCPIP and psutil | iproute2 and psutil | netstat/route and psutil |
 | Configured SkyPulse HTTP, RTSP and UDP checks | Shared bounded socket probes | Shared bounded socket probes | Shared bounded socket probes |
-| Reviewed automatic network repair | Selected host routes and Windows Firewall rules | Selected host routes, address aliases and active firewalld rules | Selected device host routes and /32 address aliases; firewall changes unsupported |
+| Repair previews; production automatic execution disabled | Selected host routes and Windows Firewall rules | Selected host routes, address aliases and active firewalld rules | Selected device host routes and /32 address aliases; firewall changes unsupported |
 
-Core app compatibility does not make every administrator operation interchangeable across operating systems. Unsupported repairs must be clearly shown with manual recovery guidance, while diagnostics and flight analysis remain available. Durable repair receipts support reviewed recovery across restarts; they never authorize automatic replay or removal of a changed setting. Native repair execution on each target remains a release gate. See [network capabilities and limitations](network-diagnostics.md).
+Core app compatibility does not make every administrator operation interchangeable across operating systems. Automatic repair is diagnosis-only on every production target until the native helper, narrow privileges, manager-aware writes and supervised rollback are qualified. Durable repair receipts retain manual recovery guidance across restarts; they never authorize automatic replay or removal of a changed setting. See [network capabilities and limitations](network-diagnostics.md).
 
 On macOS versions with Local Network privacy controls, allow Q22 Flight Lab access under **System Settings → Privacy & Security → Local Network** when using configured LAN devices. A denied permission can prevent camera/telemetry access even when routing is correct. The application's privacy description explains the configured-device access; this permission prompt still needs native verification.
 

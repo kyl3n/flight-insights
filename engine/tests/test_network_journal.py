@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 from q22_engine.network import NetworkService
 from q22_engine.network_journal import RepairJournal
-from test_network import FakeHost, SOURCE, UDP, INTERFACES
+from test_network import FakeHost, SOURCE, UDP, INTERFACES, qualify_fake
 
 
 class MacHost(FakeHost):
@@ -54,7 +54,7 @@ class JournalTests(unittest.TestCase):
             # The Darwin routing source socket is tested separately. Never use
             # this Linux machine's routing to model a different operating system.
             service._route_to = lambda _: {"interface": "eth0", "local_address": "10.0.0.10"}
-        return service
+        return qualify_fake(service)
 
     def route_plan(self, service=None, **extra):
         return (service or self.service).plan({"kind": "host_route", "source": SOURCE, "interface": "eth0", **extra})
@@ -267,6 +267,7 @@ class JournalTests(unittest.TestCase):
                 return json.dumps(active[0]) if active[0] else ""
             raise AssertionError(script)
         service = NetworkService(self.directory, system="Windows", runner=runner, interface_provider=lambda: INTERFACES, elevated=lambda: True)
+        qualify_fake(service)
         plan = service.plan({"kind": "firewall_udp", "source": UDP, "interface": "eth0", "local_address": "10.0.0.10"})
         candidate[0] = {"rule": {"Name": "Q22-" + plan["plan_id"], "Direction": 1, "Action": 2, "Enabled": 1, "Profile": 0},
                         "port": {"Protocol": "UDP", "LocalPort": "14551", "RemotePort": "Any"},
@@ -276,6 +277,7 @@ class JournalTests(unittest.TestCase):
         result = service.apply(self.confirm(plan))
         self.assertEqual(result["state"], "verification_failed")
         restarted = NetworkService(self.directory, system="Windows", runner=runner, interface_provider=lambda: INTERFACES, elevated=lambda: True)
+        qualify_fake(restarted)
         self.assertEqual(restarted.recovery({})["repairs"][0]["ownership"], "changed")
         self.assertEqual(restarted.rollback(self.confirm(plan))["state"], "ownership_lost")
 

@@ -1,25 +1,20 @@
-CODEX IMPLEMENTATION HANDOFF - Q22 FLIGHT LAB
+CODEX IMPLEMENTATION HANDOFF - FLIGHT INSIGHTS / Q22 PROFILE
+Revision 2.0 | 12 October 2026 | Specification only, not a working application
 
-Build the actual application described in the attached Q22 specification and implementation contract.
-The user requested this architecture and research handoff for subsequent implementation in Codex. This package contains design and research, not application source.
+This package supersedes the 3 October revision. The user requested these design additions; implement them in the separate flight-insights application repository. Preserve existing repository instructions and implemented work; inspect the current app before making changes. Do not mix app source into Q22 build documentation.
 
-Read these files first:
-1. Q22_Codex_Specification.txt (complete human-readable specification)
-2. Q22_Implementation_Contract.json (architecture, entities, collector/IPC contracts, 28 diagnostic rules and acceptance families)
-3. Q22_Architecture_and_Analysis_Specification.pdf (the same design in a reviewable format)
+Read Q22_Codex_Specification.txt and Q22_Implementation_Contract.json first. Sections 27-36 define the new one-click collection/network workflow. The PDF contains the same integrated specification for human review. Original diagnostic coverage remains mandatory; this is not a replacement with a network-only utility.
 
-Implement an installed, offline-first desktop app: Tauri 2 + React/TypeScript + a packaged Python analysis engine. Keep original logs local and immutable. Bundle runtimes so the user does not need Python or Node.
+Build an offline-first installed desktop app: Tauri2/Rust + React/TypeScript + bundled Python analysis. Default action: Prepare & watch. Begin live capture before arming; obtain identity and full parameter evidence while disarmed; create persistent armed-interval IDs automatically; continue short-lived radio capture; collect/reconcile BIN/TLOG/params after disarm. Preserve native Mission Planner and QGC logs as complementary evidence to the app-owned recorder.
 
-The product needs both live recording/health observation and deep post-flight analysis. Configure sources once, then provide Start flight recording and Collect flight logs. Cover the controller, GCS, both SkyPulse radios, available ESC/GPS/IMU/control/power/system data, and supported camera/host diagnostics. Make every missing/unsupported/stale source explicit with recovery instructions.
+Add Network & devices: OS-specific interface/route/firewall/socket/stream diagnostics and concrete reviewed repairs with narrow privileges, verification and rollback. For the Q22 dual-network topology preserve Internet routing, set the correct drone-interface address and receiver destination; do not bridge/NAT or disable the firewall. Repairs must not disrupt armed or unknown-state aircraft links. MP's MinGW/H265 runtime profile and QGC's own runtime require separate adapters.
 
-Keep Q22 original-before-Brian and Q22-with-Brian as separate immutable baselines. Resolve the actual files before seeding them; do not invent a missing baseline. Profiles for Cube Orange+ and DEF H7 remain separate, including motor/output/ESC mappings and firmware-specific metadata.
+Critical protocol constraints: QGC MAVLink forwarding is one-way. Automatic parameter/log requests need a tested bidirectional path. Any router must preserve control traffic/failsafe behavior and never keep a dead GCS alive by sending substitute heartbeats. Parameter downloads are not atomic; capture completeness is distinct from flight-time applicability. Full pre/post readback plus observed changes and matched BIN evidence form the configuration timeline.
 
-Work through the numbered implementation stages and their exit criteria. Start with a cross-platform packaging/engine handshake spike, contracts and real-format fixtures. Then build vertical slices with working collection, decoding, evidence-linked findings and UI. Record important architecture deviations for review.
+Never link by filename/date/sysid alone. Files and flights are many-to-many with source spans. Ask for an exact SD filename only when a listing or validated mapping established it; otherwise scan the chosen SD folder and verify contents. Unknown, partial and conflicting evidence must remain visible. No workflow can guarantee recovery of data that was never recorded; the enforceable requirement is no silent wrong association or false completeness.
 
-Do not implement a mock dashboard and call it complete. Do not use exploratory partial code from the prior Work conversation as an approved implementation. Never silently invent vendor schemas, units, timestamps, parameter masks or numerical tuning recommendations. Use deterministic calculations and exact firmware metadata, with abstention when evidence is insufficient. No aircraft parameter writes, arming, mode commands, mission changes or log deletion are part of the initial product.
+Connect every eligible metric to its effective parameter interval, firmware/hardware and comparable conditions. Preserve original and FACt-based baselines with legacy aliases and original bytes. Do not claim PID changes caused endurance gains from current data alone. Proposed numerical tuning remains firmware/evidence gated; aircraft parameter writes and flight commands are outside this release.
 
-Use a streaming/out-of-core data path for large logs. Preserve boot epochs, MAVLink source IDs, timestamps, parameter changes and units. Validate raw/batch gyro, PSD/filter and PID methods against pinned trusted implementations and golden fixtures, including license review before code reuse. Separate measured results from modeled predictions and causal hypotheses.
+Use the revised milestones and acceptance cases. Convert the design JSON into validated runtime schemas and executable tests. Example JSON files are illustrative contracts, never real flight evidence or permissions to change this computer. Pin external source versions and validate actual OS/GCS/radio/firmware behavior. No hardware testing has been performed by this handoff.
 
-Hardware validation will need one matched Q22 flight bundle, exact Cube/H7 firmware and parameters, raw SkyPulse samples, verified ESC mapping and battery/calibration information. Continue independent implementation using labeled fixtures and explicit capability states; request only the specific sample needed to unblock a real adapter. Do not claim hardware testing without actual hardware evidence.
-
-For every completed stage, report what works, how it was tested, remaining limitations and the next concrete step. Deliver source, reproducible builds, installers, tests and user instructions after the full required acceptance plan passes. A clearly labeled milestone build is acceptable for review; do not describe it as the complete product while mandatory functionality remains unimplemented.
+Deliver usable vertical slices and report what works, tested evidence and remaining gaps. Do not call a mock dashboard complete. Continue independent implementation when a hardware sample is missing; request only the specific evidence needed to validate that adapter. Preserve source hashes, migrations and earlier report/manifest revisions.

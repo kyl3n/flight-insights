@@ -1,4 +1,25 @@
-# Validation record — flight-log preview
+# Validation record
+
+## Revision 2 passive collection — 12 October 2026
+
+The new slice adds a real receive-only UDP worker, managed capture/armed-interval records, source-span associations, passive parameter evidence, archive recovery, and Q22 reference/capability reporting. Automatic host repair is now diagnosis-only in production. The complete Revision 2 acceptance plan remains open.
+
+Local validation includes real loopback capture through the production coordinator and UI, operation replay/conflict handling, occupied UDP ports, no outbound packets, CRC/source filtering, actual receive timestamps, raw/TLOG/journal hashes, chunk spans, unknown end after shutdown, explicit archive recovery, queued cancellation, disk/fsync failures, source ambiguity, boot boundaries, unsupported parameter observations, and preservation of old manifests. Synthetic data stays in isolated catalogs and is not Q22 hardware evidence.
+
+The frozen-runtime smoke also launches the actual separate worker from the relocated packaged executable, requires journal delivery without callback errors, validates exact archived artifact digests/roles/lengths, reimports its TLOG, verifies socket/worker cleanup, and checks restart plus explicit recovery. The native transport allowlist includes only the new typed session/association/profile operations; event injection and aircraft controls are not renderer methods.
+
+| Final local check | Result |
+| --- | --- |
+| Python engine | 274 tests and 29 subtests passed |
+| UI integration | All 9 Playwright tests passed, including real isolated loopback collection and retained bundles |
+| React/TypeScript | Production build passed |
+| Frozen engine | Expanded worker, archive, restart and EOF recovery smoke passed |
+| Native Rust | 5 tests passed; rustfmt and Clippy with warnings denied passed against the final packaged engine |
+| Handoff provenance | All 11 canonical/archived source-file hashes matched; both revisions' document bytes preserved |
+
+The new cross-platform run will be recorded after completion. Earlier run links belong to the earlier source commits and do not validate these changes. Installed-GUI close confirmation, real GCS coexistence/failsafes, actual dual-NIC hardware, complete readbacks, automatic matched BIN retrieval, radio/video adapters and qualified repair helpers remain unpassed.
+
+## Earlier flight-log preview — 5 October 2026
 
 Local checks ran in the managed Debian 13 x86-64 environment on 5 October 2026. Native GitHub Actions results are recorded separately below. These checks establish this milestone's automated development and packaging capabilities; they do not qualify the complete handoff or real aircraft hardware.
 
@@ -60,6 +81,6 @@ The separately built Debian 13 preview also passed packaged-runtime verification
 - Full native WebView rendering is blocked in this cloud: the workspace-extracted Debian WebKit library expects its renderer subprocess in the system `/usr/lib` location. No package binary or browser sandbox was weakened to bypass this. See [cloud prerequisites](cloud-native-prerequisites.md).
 - The `.deb` was built and inspected, not installed and launched on a clean desktop. This local artifact requires the declared Debian/glibc runtime dependencies. Native CI execution is recorded below; publisher signing, notarization and clean-machine GUI qualification remain open.
 - No real Q22 BIN/TLOG/RF bundle, accepted original/Brian parameter baselines, device stream, matched flight experiment or physical ESC mapping was supplied. No hardware-readiness, video-decoding, parameter-tuning or causal-performance claim is made.
-- Live recording, complete verified parameter-state reconstruction, spectrum/filter/PID parity, full migrations, completed 2 GiB decoding on a reference laptop and the rest of the handoff's acceptance families remain pending.
+- Full managed collection beyond the passive recorder, complete verified parameter-state reconstruction, spectrum/filter/PID parity, full migrations, completed 2 GiB decoding on a reference laptop and the rest of the handoff's acceptance families remain pending.
 
 Source and artifact provenance are recorded separately from environment publication. A saved cloud configuration, published filesystem snapshot, Git commit and native build are distinct actions; none establishes the others.

@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main",
-  "description": "Only the local app window may open native file selection dialogs. No shell, filesystem, HTTP or process plugin is exposed.",
+  "description": "Only the local app window may open file dialogs and confirm closing an active capture. No shell, filesystem, HTTP or process plugin is exposed.",
   "windows": ["main"],
-  "permissions": ["core:default", "dialog:allow-open"]
+  "permissions": ["core:default", "core:window:allow-destroy", "dialog:allow-open", "dialog:allow-confirm"]
 }

@@ -11,6 +11,7 @@ import http.client
 import ipaddress
 import io
 import json
+import math
 import os
 from pathlib import Path
 import platform
@@ -23,6 +24,7 @@ import uuid
 from typing import Any, Callable
 
 from .network_journal import RepairJournal
+from .network_profiles import capability_matrix, compare_reference, reference_profile
 
 
 def _executable(name: str) -> str | None:
@@ -122,11 +124,16 @@ class NetworkService:
     """One instance per engine session; injectable host boundaries aid testing."""
 
     def __init__(self, data_dir: Path | None = None, *, system: str | None = None, runner: Callable = _run,
-                 interface_provider: Callable | None = None, elevated: Callable | None = None):
+                 interface_provider: Callable | None = None, elevated: Callable | None = None,
+                 safety_state: Callable | None = None, repair_backend: Any = None):
         self.system = system or platform.system()
         self.run = runner
         self.interface_provider = interface_provider
         self.elevated = elevated or self._is_elevated
+        # These boundaries are engine-owned and never accepted through RPC.
+        self.safety_state = safety_state
+        self.repair_backend = repair_backend
+        self.max_heartbeat_age_s = 3.0
         self.plans: dict[str, dict] = {}
         self.journal = None
         self.journal_error = None
@@ -141,10 +148,120 @@ class NetworkService:
             raise ValueError("Network parameters must be an object.")
         handler = {"network.inspect": self.inspect, "network.probe": self.probe,
                    "network.plan": self.plan, "network.apply": self.apply,
-                   "network.rollback": self.rollback, "network.recovery": self.recovery}.get(method)
+                   "network.rollback": self.rollback, "network.recovery": self.recovery,
+                   "network.profile": self.profile, "network.capabilities": self.capabilities}.get(method)
         if handler is None:
             raise ValueError("Unknown network method.")
         return handler(params)
+
+    def profile(self, params: dict) -> dict:
+        if set(params) - {"profile_id"}:
+            raise ValueError("Profile lookup only accepts profile_id; it does not enroll or change a profile.")
+        return reference_profile(params.get("profile_id", "q22"))
+
+    def _safety_snapshot(self) -> dict:
+        if self.safety_state is None:
+            return {"flight_state": "unknown", "heartbeat_age_s": None, "identity_verified": False,
+                    "recording_active": None, "owned_udp": [], "ownership_available": False}
+        try:
+            value = self.safety_state()
+            if not isinstance(value, dict):
+                raise ValueError("Invalid safety observer response")
+            value = copy.deepcopy(value)
+            value["ownership_available"] = isinstance(value.get("owned_udp"), list)
+            return value
+        except Exception:
+            # Observer failure cannot turn silence into disarmed or a free socket.
+            return {"flight_state": "unknown", "heartbeat_age_s": None, "identity_verified": False,
+                    "recording_active": None, "owned_udp": [], "ownership_available": False}
+
+    def _repair_safety(self) -> dict:
+        observed = self._safety_snapshot()
+        flight_state = observed.get("flight_state", "unknown")
+        if not isinstance(flight_state, str) or flight_state not in {"armed", "disarmed", "unknown"}:
+            flight_state = "unknown"
+        age = observed.get("heartbeat_age_s")
+        try:
+            age = age if type(age) in {int, float} and math.isfinite(age) else None
+        except (OverflowError, ValueError):
+            age = None
+        fresh = age is not None and 0 <= age <= self.max_heartbeat_age_s
+        reasons = []
+        if flight_state != "disarmed":
+            reasons.append("A current disarmed observation is required; armed or unknown state blocks host changes.")
+        if not fresh:
+            reasons.append("The selected aircraft heartbeat is missing or older than three seconds.")
+        if observed.get("identity_verified") is not True:
+            reasons.append("The engine has not verified the selected aircraft identity.")
+        if observed.get("recording_active") is not False:
+            reasons.append("Managed recording must be confirmed inactive before a disruptive host change.")
+        return {"allowed": not reasons, "state": "allowed" if not reasons else "blocked", "reasons": reasons,
+                "flight_state": flight_state, "heartbeat_age_s": age,
+                "identity_verified": observed.get("identity_verified") is True,
+                "recording_active": observed.get("recording_active") if type(observed.get("recording_active")) is bool else None,
+                "max_heartbeat_age_s": self.max_heartbeat_age_s}
+
+    def _execution_capability(self) -> dict:
+        fallback = capability_matrix(self.system)["platforms"].get(self.system, {}).get("repair", {
+            "state": "unsupported", "automatic_apply": False, "reason": "No repair implementation exists for this operating system."})
+        backend = self.repair_backend
+        if backend is None:
+            return fallback
+        try:
+            flags = backend.capabilities()
+            qualified = (isinstance(flags, dict) and flags.get("platform") == self.system
+                         and flags.get("state") == "supported_automatic"
+                         and all(flags.get(k) is True for k in ("qualified", "signed_helper", "manager_aware", "supervised_rollback"))
+                         and callable(getattr(backend, "execute", None)))
+            if qualified:
+                return {"state": "supported_automatic", "automatic_apply": True,
+                        "reason": "Engine-configured backend declares signed helper, manager-aware writes and supervised rollback; current safety and host-state checks still apply."}
+        except Exception:
+            pass
+        return {**fallback, "reason": "The configured repair backend has not established all required native qualification capabilities."}
+
+    def capabilities(self, params: dict) -> dict:
+        if params:
+            raise ValueError("Capability lookup accepts no parameters.")
+        result = capability_matrix(self.system)
+        if self.system in result["platforms"]:
+            result["platforms"][self.system]["repair"] = self._execution_capability()
+        result["repair_safety"] = self._repair_safety()
+        result["repair_safety"]["atomic_revocation"] = False
+        result["limitations"].append("Engine observations are rechecked around operations without locking the recorder. Python alone cannot atomically revoke an OS command after an aircraft-state transition; production automatic repair remains disabled without a qualified broker.")
+        return result
+
+    def _mutation_gate(self, plan: dict) -> dict | None:
+        capability = self._execution_capability()
+        safety = self._repair_safety()
+        if not capability["automatic_apply"]:
+            return {"plan_id": plan["plan_id"], "state": "diagnosis_only", "may_have_applied": plan["applied"],
+                    "message": capability["reason"], "execution_capability": capability, "repair_safety": safety}
+        if not safety["allowed"]:
+            return {"plan_id": plan["plan_id"], "state": "safety_blocked", "may_have_applied": plan["applied"],
+                    "message": " ".join(safety["reasons"]), "repair_safety": safety}
+        return None
+
+    def _udp_ownership(self, local: str, port: int) -> dict | None:
+        observed = self._safety_snapshot()
+        if not observed.get("ownership_available"):
+            return {"state": "recorder_state_unknown", "checks": [],
+                    "details": "Recorder socket ownership is unavailable; this UDP probe was deferred.",
+                    "recovery_action": "Read session.status and restore recorder status before probing a dedicated observer endpoint."}
+        for binding in observed["owned_udp"]:
+            if (not isinstance(binding, dict) or type(binding.get("port")) is not int
+                    or not 1 <= binding["port"] <= 65535 or not isinstance(binding.get("local_address"), str)):
+                return {"state": "recorder_state_unknown", "checks": [], "details": "Recorder ownership information is incomplete; no diagnostic socket was opened."}
+            try:
+                address = ipaddress.ip_address(binding["local_address"])
+                owned_address = str(getattr(address, "ipv4_mapped", None) or address)
+            except ValueError:
+                return {"state": "recorder_state_unknown", "checks": [], "details": "Recorder ownership information is incomplete; no diagnostic socket was opened."}
+            if binding["port"] == port and (owned_address in {local, "0.0.0.0", "::"} or local in {"0.0.0.0", "::"}):
+                return {"state": "recorder_owned", "checks": [],
+                        "details": "The managed recorder owns or has reserved this UDP endpoint. Diagnostics use its counters and readiness instead of competing for its socket.",
+                        "recovery_action": "Read session.status for recorder counters, heartbeat freshness and source readiness."}
+        return None
 
     def _sources(self, params: dict) -> list[dict]:
         values = params.get("sources", [])
@@ -294,10 +411,13 @@ class NetworkService:
             except (OSError, ValueError, IndexError, subprocess.SubprocessError) as exc:
                 target["issues"].append("Route lookup unavailable: " + str(exc))
             targets.append(target)
-        return {"status": "inspected" if interfaces and routes and not interface_warnings else "partial", "platform": self.system,
+        result = {"status": "inspected" if interfaces and routes and not interface_warnings else "partial", "platform": self.system,
                 "interfaces": interfaces, "routes": routes, "default_routes": [r for r in routes if r["destination"] == "0.0.0.0/0"],
                 "targets": targets, "firewall": {"state": "unknown", "reason": "Effective firewall policy depends on OS, permissions, active profile and other security software."},
                 "limitations": limitations}
+        if "profile_id" in params:
+            result["profile_evidence"] = compare_reference(reference_profile(params["profile_id"]), result)
+        return result
 
     def probe(self, params: dict) -> dict:
         sources = self._sources(params)
@@ -322,7 +442,7 @@ class NetworkService:
                     if not local or not any(a["address"] == local for i in result["interfaces"] for a in i["ipv4"]):
                         probe = {"state": "needs_configuration", "checks": [], "details": "Select a local interface IPv4 address for the dedicated forwarded UDP port."}
                     else:
-                        probe = self._udp_probe(source, local, source_timeout)
+                        probe = self._udp_ownership(local, source["port"]) or self._udp_probe(source, local, source_timeout)
             except (OSError, ValueError, http.client.HTTPException) as exc:
                 probe = {"state": "failed", "checks": [], "details": str(exc)[:1000]}
             probe.update(source_id=source["id"], recovery_action=probe.get("recovery_action", "Check device power/address, cable, configured source and return destination; compare routes before proposing a scoped repair."))
@@ -633,9 +753,13 @@ class NetworkService:
         self.plans[plan_id] = plan
         return self._public_plan(plan)
 
-    @staticmethod
-    def _public_plan(plan: dict) -> dict:
-        return copy.deepcopy({k: v for k, v in plan.items() if k not in {"snapshot", "created", "guard", "expected", "applied", "post_guard", "post_routes", "post_interfaces", "descriptor", "baseline", "post_state"}})
+    def _public_plan(self, plan: dict) -> dict:
+        result = copy.deepcopy({k: v for k, v in plan.items() if k not in {"snapshot", "created", "guard", "expected", "applied", "post_guard", "post_routes", "post_interfaces", "descriptor", "baseline", "post_state"}})
+        result["execution_capability"] = self._execution_capability()
+        result["automatic_apply"] = result["execution_capability"]["automatic_apply"]
+        result["repair_safety"] = self._repair_safety()
+        result.setdefault("warnings", []).append("Command previews are for operator review, not automatic authorization. Re-establish current disarmed identity evidence and review the impact before any manual host change.")
+        return result
 
     def _unavailable(self, plan: dict, state: str, message: str) -> dict:
         plan.update(state=state, message=message)
@@ -887,6 +1011,9 @@ class NetworkService:
             return {"plan_id": plan_id, "state": "already_applied", "message": "This plan was already applied; re-probe or roll it back."}
         if time.monotonic() - plan["created"] > 600:
             return {"plan_id": plan_id, "state": "expired", "message": "Host state may have changed. Generate and review a fresh plan."}
+        blocked = self._mutation_gate(plan)
+        if blocked:
+            return blocked
         if not self.elevated():
             return {"plan_id": plan_id, "state": "permission_required", "message": "Administrator privileges are required. No command ran. Use the exact reviewed command in an elevated OS terminal, or restart an administrator session and create a fresh plan. External changes cannot be tracked by this session's rollback."}
         try:
@@ -902,14 +1029,21 @@ class NetworkService:
             # A timeout/error after dispatch leaves outcome uncertain. Retain
             # rollback access and verify exact ownership before any deletion.
             self._save(plan, "apply_intent")
+            blocked = self._mutation_gate(plan)
+            if blocked:
+                return blocked
             plan["applied"] = True
-            for command in plan["commands"]:
-                self.run(command)
+            self.repair_backend.execute("apply", plan_id, copy.deepcopy(plan["descriptor"]))
             observed = self._current_addition(plan)
             if not self._matches_addition(plan, observed):
                 self._save(plan, "uncertain")
                 return {"plan_id": plan_id, "state": "verification_failed", "may_have_applied": True, "message": "The OS command returned success but the exact change was not observed. Inspect manually; success is not established."}
             plan["post_state"] = observed
+            safety = self._repair_safety()
+            if not safety["allowed"]:
+                self._save(plan, "uncertain")
+                return {"plan_id": plan_id, "state": "safety_changed", "may_have_applied": True,
+                        "repair_safety": safety, "message": "The host addition was observed, but aircraft/recording safety changed during execution. No automatic rollback was attempted; retain this receipt for reviewed recovery."}
             self._save(plan, "applied")
             plan["state"] = "applied"
             return {"plan_id": plan_id, "state": "applied", "may_have_applied": True, "message": "The exact host change was observed. Re-run the configured probe to check connectivity; device return-path settings remain independent."}
@@ -926,21 +1060,29 @@ class NetworkService:
         plan_id = plan["plan_id"]
         if not plan["applied"]:
             return {"plan_id": plan_id, "state": "not_applied", "message": "This session has no applied change to roll back."}
+        blocked = self._mutation_gate(plan)
+        if blocked:
+            return blocked
         if not self.elevated():
             return {"plan_id": plan_id, "state": "permission_required", "message": "Administrator privileges are required; no rollback command ran."}
         try:
             if not self._owned(plan):
                 return {"plan_id": plan_id, "state": "ownership_lost", "message": "The exact addition is absent or changed. Rollback refuses to remove a different route, address or rule."}
             self._save(plan, "rollback_intent")
-            for command in plan["rollback_commands"]:
-                self.run(command)
+            blocked = self._mutation_gate(plan)
+            if blocked:
+                return blocked
+            self.repair_backend.execute("rollback", plan_id, copy.deepcopy(plan["descriptor"]))
             if self._current_addition(plan):
                 self._save(plan, "rollback_uncertain")
                 return {"plan_id": plan_id, "state": "verification_failed", "may_have_applied": True, "message": "Rollback command completed but the narrow target is still present or changed; inspect manually."}
             plan["applied"] = False
             plan["state"] = "rolled_back"
             self._save(plan, "rolled_back")
-            return {"plan_id": plan_id, "state": "rolled_back", "message": "Only the exact change made by this plan was removed."}
+            safety = self._repair_safety()
+            return {"plan_id": plan_id, "state": "rolled_back", "may_have_applied": False,
+                    "repair_safety": safety, "safety_changed": not safety["allowed"],
+                    "message": "Only the exact change made by this plan was removed." + (" Aircraft/recording safety changed during verification; further host changes are blocked." if not safety["allowed"] else "")}
         except (OSError, ValueError, subprocess.SubprocessError) as exc:
             try:
                 self._save(plan, "rollback_uncertain")

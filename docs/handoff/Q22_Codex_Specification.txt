@@ -1,6 +1,6 @@
 Q22 FLIGHT LAB - ARCHITECTURE, DIAGNOSTICS AND CODEX HANDOFF
 
-Revision 1.0 | 3 October 2026 | Design specification, not an application release
+Revision 2.0 | 12 October 2026 | Design specification, not an application release
 
 This document incorporates the user's earlier Q22 logging, hardware and baseline-comparison requirements.
 
@@ -11,7 +11,7 @@ Build Q22 Flight Lab as an offline-first native desktop application for Windows,
 
 The product has two linked workflows: record and monitor available health signals during a flight; collect and deeply analyze the complete flight evidence after landing. The ground station remains responsible for flight control. The app explains measurements, identifies problems and proposes controlled investigations or tuning candidates. It does not replace ArduPilot failsafes or directly control the aircraft.
 
-Make collection simple after initial setup: Start flight recording preserves short-lived sources; Collect flight logs finds local/SD-card logs, retrieves accessible completed controller logs, matches the records to a flight, and explains every unavailable source. A post-flight button cannot recreate telemetry or radio history that was never recorded.
+Make collection automatic after initial setup: Prepare & watch starts live capture, obtains parameter evidence, detects arming and creates the flight record; post-flight collection follows when disarmed. Manual recording/import/Collect now remain fallbacks. A post-flight action cannot recreate telemetry or radio history that was never recorded. Sections 27-36 specify the full automation, network diagnostics and association contract.
 
 The preferred user experience is an installed app with its runtime bundled. Users should not need Python, Node, a terminal, an API key or a cloud account. Tauri supports packaged external binaries; platform-specific building and validation are required [R01]. A hosted-only website is a poor primary fit for unrestricted log sizes, unattended local collection and native device access.
 
@@ -28,8 +28,8 @@ Selection: Windows x64 first; Linux x64 and macOS next within the same architect
 Reason / boundary: Matches the Mission Planner ground station; cross-platform installers remain a release requirement.
 
 Decision: Main action
-Selection: Collect flight logs
-Reason / boundary: A configured collection job with per-source outcomes, not an indiscriminate disk/network scan.
+Selection: Prepare & watch
+Reason / boundary: Automatic recording, flight detection and post-flight collection under an enrolled profile; manual collection remains available.
 
 Decision: Tuning authority
 Selection: Review and export proposals only
@@ -44,11 +44,11 @@ Reason / boundary: No mandatory cloud upload, account or live internet dependenc
 
 Preserve the following project facts as profile inputs. Values reported in earlier work are not substitutes for current firmware readback or measurements.
 
-Name the protected baselines “Q22 original - before Brian settings” and “Q22 with Brian tune”. Preserve Brian's original source file separately as provenance. Never manufacture the missing pre-Brian baseline from a guessed inverse diff. Resolve the exact accepted files before implementation seeds those labels.
+Name the protected baselines “Q22 original - pre-FACt” and “Q22 with FACt tune”. Preserve FACt's original source file separately as provenance. Never manufacture the missing pre-FACt baseline from a guessed inverse diff. Resolve the exact accepted files before implementation seeds those labels.
 
 Reported target firmware includes Cube 4.7.1-era work and a separate H7 custom build. Identify each flight from logged version/board information, AUTOPILOT_VERSION where available and the actual parameter snapshot. Pin matching metadata and source revision. A filename containing a version is a hint, not verified firmware identity.
 
-Carry unresolved hardware commissioning items from the existing manual into a hardware-evidence register. Logs cannot establish connector polarity, capacitor voltage suitability, power-rail ripple or correct physical motor direction. Record the observation, measurement, instrument, photo/document reference and closure evidence separately.
+Maintain a hardware-evidence register from the current Q22 documentation. Preserve later recorded closures of power/insulation/rail issues and confirmed Cube/Here4 yaw-180 mounting; do not resurrect old commissioning warnings automatically. Logs alone cannot prove physical motor direction or electrical assembly. Store current evidence and hardware revisions separately from flight diagnostics.
 
 Area: Primary aircraft
 Known context: Cube Orange+; Airbot Mini Carrier PRO v2 / PDB Pro v2; ArduCopter; AUX2-AUX5 / SERVO10-13
@@ -79,7 +79,7 @@ Known context: DigiQ SkyPulse air and ground; SIYI A8 mini; 5.8 GHz RHCP/LHCP in
 Required handling: Record actual radio/camera versions, antenna/cable changes, interfaces, codec and stream measurements. Do not assume a codec or undocumented metric.
 
 Area: Tune history
-Known context: Keep original Q22 settings and the Q22 configuration incorporating Brian's tune
+Known context: Keep original Q22 settings and the Q22 configuration incorporating FACt's tune
 Required handling: Maintain immutable named baselines and actual per-flight readback snapshots, plus independent candidate versions.
 
 
@@ -221,7 +221,7 @@ SQLite is the catalog and issue history; Parquet holds large numeric arrays. Duc
 Entity: AircraftProfileVersion
 Required contents: Aircraft ID; board/firmware identity; physical motor map; ESC instance mapping evidence; motors/props/battery; calibration status; hardware changes; limits and their provenance.
 
-Entity: FlightSession
+Entity: FlightRecord
 Required contents: UUID; aircraft profile version; operator/test notes; mass/payload/battery/weather; actual parameter snapshots; source IDs; proposed and confirmed flight intervals.
 
 Entity: SourceManifest
@@ -242,8 +242,11 @@ Required contents: Algorithm/version; interval and phase; value/unit; count and 
 Entity: Finding
 Required contents: Rule/version; severity; evidence quality; confidence; observation; competing hypotheses; evidence intervals; next action; expected result; parameter applicability; retest criteria.
 
-Entity: ParameterSnapshot / proposal
-Required contents: Immutable original; parsed values; firmware metadata; before/after diff; reason; target aircraft; validation status; rollback snapshot; no implicit application.
+Entity: ParameterSnapshot
+Required contents: Immutable captured/reconstructed values; scope, completeness, firmware and aircraft identity; acquisition/observation provenance. Reference-only imports remain unverified for flight use.
+
+Entity: ParameterProposal
+Required contents: Separate unapplied candidate; baseline snapshot, proposed diff, reason, target firmware/aircraft, validation status and rollback reference. Never substitute for observed flight configuration.
 
 Entity: Experiment / issue
 Required contents: Baseline and candidate; one functional change; confounders; planned success criteria; repetitions; results; open/investigating/retest/resolved history.
@@ -254,7 +257,7 @@ Required contents: Per-adapter state/progress; resumable transfer position; retr
 
 07  COLLECTION EXPERIENCE AND RECOVERY
 
-Configure once, then use two clear buttons: Start flight recording and Collect flight logs. Collection is a coordinated job whose partial results remain useful.
+Configure once, then use Prepare & watch, optionally entered automatically on app launch. Arming creates an interval and disarming schedules collection. The following manual start/collect functions remain available for recovery; sections 27-33 govern the automatic workflow. Partial results remain useful.
 
 - First use: select aircraft/profile; choose approved Mission Planner/QGC and camera folders; identify controller USB device; enter radio addresses; confirm optional forwarded telemetry. Each optional source may be skipped.
 
@@ -298,7 +301,7 @@ Implement adapters as capability-driven integrations. “The model supports a fe
 
 For SkyPulse, the documented read-only GET endpoints are /scatter_data.json and /events.json, with about 50 seconds of history. Preserve every poll and failure. Dataset windows overlap; derive deduplicated samples only after validating the exact sample identity/time schema. Collection time bounds when the reply was observed, not when every point inside it occurred. A five-second poll interval is a proposed starting point to bench-test, not a guaranteed vendor requirement [R10].
 
-Do not compete with Mission Planner/QGC for a serial connection or silently alter MAVLink stream rates. Prefer the existing GCS TLOG for post-flight review; use explicitly configured forwarding/router duplication for the app's live monitor. Record router configuration and traffic counters. Log download should be deferred while airborne and should not saturate the control radio link.
+Do not compete with Mission Planner/QGC for a serial connection or silently alter MAVLink stream rates. Maintain an app-owned recorder where a validated feed is configured, and preserve native MP/QGC TLOGs as complementary evidence. Use explicitly configured forwarding/router duplication; one-way forwarding does not provide a read-request return path. Record router configuration and traffic counters. Log download should be deferred while airborne and should not saturate the control radio link.
 
 No automatic flight command, parameter write, log deletion or firmware update belongs in the collector API. Read-only parameter/version requests and log transfers must be explicit capabilities with tests that inspect all outbound MAVLink messages.
 
@@ -557,7 +560,7 @@ The persistent header shows aircraft, selected flight/session, live/post-flight 
 
 Default charts show a few related channels with compatible units, not every field on one axis. Provide saved workspaces for vibration, control, power, navigation and link troubleshooting. Selected windows are visible and can be reset; every derived value carries its scope.
 
-An issue follows Open -> Investigating -> Change planned -> Retest needed -> Resolved, with reopen and evidence history. A recommendation is not a one-click “fix”. User notes, accepted/rejected hypotheses and attachments belong alongside the finding.
+An issue follows Open -> Investigating -> Change planned -> Retest needed -> Resolved, with reopen and evidence history. Aircraft tuning recommendations remain evidence-gated proposals. Host-network issues can offer a reviewed Apply repair operation with validation and rollback, as defined in sections 28-29. User notes, hypotheses and attachments belong alongside the finding.
 
 Parameter comparison must show changed/added/removed values, functional groups, units, bitmask labels, firmware compatibility and calibration/device-specific fields. Never silently apply a snapshot to the connected aircraft.
 
@@ -576,12 +579,12 @@ Primary content: Observation, evidence, hypotheses, action, expected result and 
 Essential behavior: Click evidence to open the exact chart interval. Filter by subsystem, severity, confidence, phase and workflow state.
 
 Screen: Collect
-Primary content: Source setup, Start recording, Collect flight logs, per-source progress and recovery
+Primary content: Prepare & watch, automatic session/collection progress, source setup and targeted recovery; manual controls remain available
 Essential behavior: Useful partial completion; manual import always available; ambiguous flight matches require review.
 
 Screen: Compare
 Primary content: Flight/phase metrics and conditions; parameter snapshots and proposed changes
-Essential behavior: Protected Q22 original/Brian-based baselines, confounder warnings and actual per-flight readback.
+Essential behavior: Protected pre-FACt/FACt baselines, effective parameter timelines, configuration-to-metric links and matched-condition comparisons.
 
 Screen: Aircraft
 Primary content: Versioned hardware, firmware, mappings, calibration, limits and test notes
@@ -594,7 +597,7 @@ The app should help the user improve Q22 systematically while preserving a known
 
 Each candidate change references the actual source snapshot, target aircraft and exact firmware metadata. Resolve parameter availability, range, enum/bitmask meaning, dependencies and reboot requirements. Separate relevant parameters from proposed edits. Reject incompatible boards, unknown fields, mixed firmware assumptions or a stale pre-change snapshot.
 
-Preserve original Q22, Q22-with-Brian and later accepted tunes as immutable versions. A candidate is a branch with a purpose, hypothesis and rollback reference. Same frame/motors/weight/orientation supports considering Brian's tuning as a starting point; it does not eliminate aircraft-specific validation or authorize copying calibration.
+Preserve original Q22, Q22-with-FACt and later accepted tunes as immutable versions. A candidate is a branch with a purpose, hypothesis and rollback reference. Same frame/motors/weight/orientation supports considering FACt's tuning as a starting point; it does not eliminate aircraft-specific validation or authorize copying calibration.
 
 Before a test, record the functional group changed, expected metric effect and regression constraints. Capture actual all-up mass, payload/CG, battery ID/state/temperature, hardware/prop changes, wind, flight phase/mode and operator notes. Prefer repeated comparable trials; show missing/confounded conditions rather than normalizing them away.
 
@@ -616,6 +619,8 @@ Record architecture decisions and deviations. If a format/capability cannot be v
 Performance targets are proposed engineering acceptance targets, not measured claims: responsive UI during a 2 GiB import; cancellation acknowledged within two seconds; bounded memory rather than proportional dictionary growth; cached-window chart queries normally under 300 ms on an agreed reference laptop. Select the laptop/fixture benchmark before using these as release gates.
 
 Package the Python runtime and native dependencies. Validate Windows USB/GCS interactions, macOS signing/notarization and architecture builds, and Linux serial permissions/webview dependencies. Updates must migrate data safely, preserve raw logs and allow recovery from interrupted installation. Offline use must work after installation.
+
+The revision-2 stage sequence in section 35 and the JSON contract is authoritative. The following domain deliverables remain mandatory but can be implemented in that revised sequence.
 
 Stage: 0 - Foundation
 Deliverable: Repository, contracts, dependency/license review, installer/sidecar spike, fixture plan
@@ -715,7 +720,7 @@ Needed input: Verified ESC output/instance/pole and telemetry capability mapping
 Why it matters: Avoid double RPM scaling or masking absent ESC channels
 Default until available: Use declared profile mapping, clearly marked pending confirmation.
 
-Needed input: Accepted original and Brian-based Q22 snapshot files
+Needed input: Accepted original and FACt-based Q22 snapshot files
 Why it matters: Preserve the requested baseline pair precisely
 Default until available: Do not synthesize a baseline or overwrite existing files.
 
@@ -871,7 +876,338 @@ Inspect together: Source identity, units/sentinels, clocks/reboots, parser warni
 Next discriminating step: Correct the observation pipeline before drawing aircraft conclusions.
 
 
-PRIMARY REFERENCES - reviewed 3 October 2026
+27  ONE-CLICK OPERATING CONTRACT
+
+Revision 2 adds automatic session orchestration, a Network & devices workspace, controlled network repair and parameter-to-performance attribution. The app remains an offline-first desktop analysis companion. Keep its implementation in the separate flight-insights repository; do not mix app source into the Q22 aircraft documentation repository. Q22 is a configured aircraft profile, not a hardcoded limitation on other vehicles.
+
+The main action is Prepare & watch. On first setup, the user enrolls the aircraft, selects the drone interface and GCS integration, authorizes local folders, configures radio/camera endpoints, and enables automatic capture and post-flight collection. Subsequent launches can enter this mode automatically according to the saved preference. Normal successful flights require no repeated file selection or recording button. Manual import, manual start/stop and Collect now remain available.
+
+Prepare & watch begins useful capture before arming. It checks disk space, power/sleep state, network paths, live telemetry and source freshness; obtains current parameters and identity; and arms the app's watcher, not the aircraft. Start timestamps and failures are durably journaled immediately. Short-lived radio records must not wait for the aircraft to arm. Auto-start at OS login is optional and visible; show a persistent tray indicator while recording.
+
+Every configured source has a required/optional policy for the chosen experiment. Ready for recording means the required evidence checks passed. It is not an airworthiness approval and does not block or permit aircraft arming. If the aircraft arms before readiness, start or continue capture, assign a provisional flight and report exactly what is missing. Do not discard that flight or interrupt the pilot to run setup.
+
+Automatic actions under the saved profile include passive inspection, read-only identity/parameter requests when permitted, append-only recording, matching high-confidence evidence, and retrieving closed logs after disarming. Network changes are offered through a concrete repair preview. Applying a repair is one user action plus any OS elevation; it is not silently included in every Prepare & watch run. Recorded settings and reviewed proposals are separate from permissions to write aircraft parameters.
+
+Provide three completion dimensions: capture lifecycle, file-association confidence and analysis coverage. A flight can be finished while awaiting BIN, and its basic telemetry report may already be useful. Do not collapse these into a green Completed label. Mandatory evidence gaps remain visible until resolved, explicitly waived with a reason, or marked unrecoverable.
+
+
+28  NETWORK AND STREAM DIAGNOSTICS
+
+Diagnose the actual data path in layers: selected interface and addressing; route and source-address selection; neighbor/device reachability; service reachability; packet arrival; valid protocol decoding; receiving application consumption; freshness and quality. Success at one layer never proves the later layers. A radio web page opening does not establish working video, and an unanswered ping does not prove a device is unreachable.
+
+Model endpoints with role, device/profile identity, expected interface, IP/prefix or hostname, protocol, local and remote ports, unicast/multicast mode, allowed sources, credentials reference, receiving process and capability evidence. Learn observed endpoints without silently replacing the approved profile. Port numbers are configurable. For the current Q22 profile, UDP 5600 video and UDP 14550 telemetry are established starting values, not universal constants.
+
+For the user's two-network example, Internet Wi-Fi may use a DHCP address on 192.168.0.0/24 with gateway 192.168.0.1, while the dedicated wired drone interface uses 10.0.0.5/24 to reach SkyPulse 10.0.0.2. The address 192.168.0.1 may be a gateway rather than the computer's own address; inspect it. With both devices directly reachable on their respective interfaces, no bridging, NAT or forwarding between these networks is needed. Do not add a default gateway or DNS server to the isolated drone interface. Preserve the Internet default route and DNS.
+
+If both subnets genuinely share one physical Ethernet segment, a supported secondary address may be appropriate. It does not connect physically separate networks. If a device is behind a real router, add only a destination-specific route using a verified next hop and verify the return path. Do not invent 10.0.0.2 as a gateway. Detect overlapping VPN routes, duplicate subnets on multiple interfaces, stale persistent routes, DHCP/APIPA addresses, duplicate-IP indications and an incorrectly selected source IP. A failed ARP duplicate probe is not proof an address is unused.
+
+Network check: Interface and route
+Evidence / result: Adapter stable ID, link state, addresses/prefixes, DHCP, gateways, metrics, selected route/source address to each endpoint, VPN context and neighbor resolution.
+Recovery: Select the correct wired interface; repair its address or a proven route; preserve unrelated networks. A route table alone cannot establish device reachability.
+
+Network check: Firewall and permissions
+Evidence / result: Effective rules when readable, active profile/zone, interface, receiving executable, direction, protocol and allowed source. Distinguish permission denied or policy-managed rules from a detected block.
+Recovery: Propose a narrowly scoped rule for the actual receiving program/port/interface/source. Never disable the firewall or open an unrestricted port range.
+
+Network check: UDP socket ownership
+Evidence / result: Local bind address/port and owning process, competing GCS instances, unexpected interface binding and recent receive counters.
+Recovery: Resolve the intended owner through the configured integration. Do not kill the process, seize its socket or rely on SO_REUSEPORT/SO_REUSEADDR to duplicate unicast traffic.
+
+Network check: Telemetry reception
+Evidence / result: Decode MAVLink frames/CRC, source system/component, signed status where available, autopilot identity, heartbeat age and per-source message cadence. Separate raw UDP arrival from valid aircraft telemetry.
+Recovery: Check radio destination, GCS binding, forwarding and router return path. Do not send flight-control messages as a connectivity test.
+
+Network check: Video transport and decode
+Evidence / result: Packet/source/cadence counters; RTP sequence/reordering where applicable; codec detection or session description; fresh decoded frames; parser/decoder availability; consumer process and queue/drop metrics where exposed.
+Recovery: Distinguish wrong destination, no packets, wrong codec, port occupied, missing plugin, decoder failure and excessive buffering. A file/stream URL suffix is not codec proof.
+
+Network check: Radio and camera services
+Evidence / result: Bounded authenticated/read-only requests to configured management endpoints, roles/versions and capability states. Test the actual radio-to-camera path when exposed.
+Recovery: Diagnose endpoint/authentication/proxy limitations. A SkyPulse video proxy does not prove transparent IP reachability from the PC to the airborne camera.
+
+UDP has no TCP-style connection handshake. A configured allow rule, an open socket, or a probe with no reply does not prove incoming UDP works or fails. Verification requires expected live packets and, for usable video, fresh decoded frames. Source ports need not equal destination ports. Passive packet observation may need an additional driver or privilege; if unavailable, report the specific blind spot and use receiver counters/logs. Never diagnose Firewall blocked solely from silence. Inspect RTSP negotiation and the chosen RTP transport separately; RTSP TCP success does not establish its media path, and broad UDP ranges are not a default repair.
+
+Inspect the stream without taking it away from Mission Planner or QGC. Preferred evidence is their receiver diagnostics or an already configured fan-out. A direct test on an occupied port is offered only on the ground with a clear handover. If video duplication is needed, provide an explicit, separately qualified local fan-out with bounded queues; do not assume multiple UDP receivers all see every packet. Do not transcode merely to observe quality. Expensive media capture/decoding is optional and lower priority than control traffic and telemetry recording.
+
+True camera-to-display latency requires an independent timing experiment or validated source/display timestamps. Jitter-buffer setting, ping round-trip time and receive-to-decode delay are distinct measurements. Report them separately; a 60 ms jitter buffer is not proof of 60 ms end-to-end latency. Kernel UDP buffer-size is measured in bytes and is separate from jitterbuffer latency in milliseconds [R44]. Preserve video freeze/drop intervals and correlate them with radio/host evidence only within known clock uncertainty.
+
+
+29  CROSS-PLATFORM REPAIR AND Q22 COMPATIBILITY
+
+Use a small signed native helper for privileged host-network operations. The UI and Python parsers remain unprivileged. The helper accepts typed operations and allowlisted arguments tied to a repair-plan ID; it is not a shell-command runner. A plan contains evidence, exact before/after values, affected interface/program/endpoints, required privilege, expected interruption, rollback operations, verification steps, expiry and applicability fingerprint.
+
+Repair lifecycle: inspect -> classify -> prepare plan -> user applies -> recheck preconditions -> make changes -> verify drone and Internet paths -> commit or roll back -> record outcome. Before modifying, recheck the selected adapter, effective policy and recent disarmed state. If flight state is unknown, do not assume it is safe to interrupt the link. Defer disruptive work until grounded status is established. Read-only monitoring continues.
+
+Snapshot only what the plan may change and give each owned rule/address/route a stable identifier. Apply idempotently. Rollback removes or restores this plan's changes, not the entire firewall or network configuration. If another administrator changes the same object, show a conflict rather than overwrite it. For reachability-changing host edits, use a locally supervised timed rollback that survives UI exit. Persistent changes and temporary test changes must be distinguishable. A failed rollback remains an explicit unresolved result with saved recovery steps.
+
+Platform: Windows
+Inspection / implementation: Native IP Helper/NetTCPIP and NetSecurity APIs or structured PowerShell results; interface GUIDs, adapter/address/route state, UDP endpoints and effective firewall policy. Store/compare typed data, not localized command output.
+Repair boundary: New-NetIPAddress can disable DHCP on the target interface [R38]. Never add an alias to the shared DHCP Internet interface with a naive command. Prefer the dedicated drone NIC; support a DHCP-preserving mixed configuration only after OS-specific testing, otherwise provide guided setup. Preserve enterprise policy and third-party firewall unknowns.
+
+Platform: Linux
+Inspection / implementation: Netlink plus NetworkManager D-Bus where active; inspect the actual manager and effective firewalld/nftables/UFW arrangement. Include route policy tables and interface/zone membership.
+Repair boundary: Change the active connection profile through its owner, not transient ip commands that the manager later overwrites. Use NetworkManager checkpoints where supported [R41]. On unmanaged/systemd-networkd or unsupported policies, permit inspection and guided steps until a tested writer exists. Do not run competing firewall managers.
+
+Platform: macOS
+Inspection / implementation: SystemConfiguration network services/preferences, interface and route state; inspect available application-firewall and packet-filter evidence separately. Identify local-network privacy permission separately from routing/firewall failures.
+Repair boundary: Use a signed privileged helper and supported network-service changes with backup/rollback. Application firewall authorization is not equivalent to a Linux-style per-port rule. Local Network privacy must follow normal OS authorization and cannot be bypassed with elevation. Do not overwrite global PF rules; unsupported managed/VPN/security policy receives a guided fix [R40, R46].
+
+Cross-platform support means tested capability reporting, not identical privileged features everywhere. The capability matrix must distinguish automatic repair, diagnosis only, needs permission, policy blocked and unsupported. Release qualification must demonstrate basic inspection and recording on all declared OS targets; never show Fix automatically if the adapter has no validated apply/rollback implementation.
+
+Carry these Q22 decisions forward as an enrolled profile, with current observations taking precedence over stale assumptions: ground-computer drone address 10.0.0.5/24; SkyPulse ground endpoint 10.0.0.2; configured stream destination 10.0.0.5; H.265 over UDP 5600; MAVLink UDP 14550; SIYI A8 Mini on the 10.0.0.x side. Do not invent the unconfirmed A8 host address or credentials. A2 Mini belongs to a different project.
+
+The selected Windows firewall policy from the prior Q22 work allows the relevant UDP ports on wired interfaces, from remote 10.0.0.2, across profiles, without pinning the local address. Preserve that selected policy as a named profile. Observe source addresses before suggesting an adjustment: a router/proxy can alter them. Explain any narrower per-program proposal and preserve the working rule until the replacement is verified. Do not silently switch the whole Ethernet network to Private or delete unrelated prior rules.
+
+Mission Planner's confirmed Q22 installation uses system-wide MinGW GStreamer after the bundled installation was removed, with H.265 AutoConnect and HUD video. Inspect the library path/version actually loaded by MP, process architecture, PATH resolution, plugin registry, RTP H.265 depayloader/parser and d3d11 decoder availability. A successful gst-launch in a different environment is not proof MP uses the same runtime. Earlier curl_url/plugin/decoder failures belong in the diagnostic catalog, not as assumed current faults.
+
+Preserve the verified pipeline structure: udpsrc -> rtpjitterbuffer -> rtph265depay -> h265parse -> d3d11h265dec -> d3d11download -> bounded leaky queue -> videoconvert -> BGRA -> appsink. Keep the recorded 50/60 ms buffer choices as versioned historical configurations; do not select either as universally optimal. Provide separate Mission Planner XML and command-line exporters with syntax fixtures, including typed caps where used, buffer-size when configured, and XML escaping only where syntactically required. Parse/round-trip the XML rather than blindly replacing quotes or omitting properties. Use QGC's own video/runtime settings; do not force MP's plugin path or XML pipeline onto QGC [R39].
+
+SkyPulse's current documentation notes that received MAVLink traffic can determine the destination instead of the configured fallback [R10]. Observe the actual GCS source interface and incoming stream destination. A diagnostic probe must not accidentally teach the radio a new destination. Management API paths and effects vary by firmware; the manual itself uses inconsistent get_config/get_config.sh names. Probe documented read-only variants carefully and pin the supported adapter. Configuration writes can reboot the radio, so any future radio-destination repair is a distinct grounded, explicitly reviewed operation with backup and manual recovery, not a silently reversible host fix.
+
+
+30  SESSION ORCHESTRATOR AND LIVE CAPTURE
+
+Create one durable CaptureSession when Prepare & watch starts, with a random UUID independent of wall time. It can contain several ArmedIntervals and FlightSegments. Give each armed interval an immutable UUID immediately, a monotonically allocated display number scoped to the enrolled aircraft, and recorded start/end clock evidence. An armed bench test remains an armed session; classify it as a flight only when airborne evidence supports that. The date label is useful presentation, not identity.
+
+Separate the live watcher's state from each interval's collection state. The states below describe related activities, not one blocking global state machine. After a disarm, the watcher returns to ready/degraded monitoring while a separate per-interval CollectionJob settles, downloads or awaits SD evidence. Several prior intervals can be collecting/reconciling/awaiting evidence while the current interval records. Persist and recover each job independently; schedule shared-link bulk work only while freshly disarmed.
+
+Use FlightRecord as the canonical analysis record for exactly one ArmedInterval, including bench/unknown classifications; it references its parent CaptureSession and zero or more airborne segments. The original term FlightSession is a deprecated design alias for FlightRecord, not a second grouping. ArtifactAssociation and RetrievalRequest reference the specific FlightRecord/ArmedInterval as well as the CaptureSession. Optional sortie groups may link several records but never erase interval identity.
+
+State: DISCOVERING
+Transition / action: Load the approved profile, identify the aircraft/GCS/endpoints, open the recorder journal and begin reachable short-lived-source recording.
+Failure behavior: Stay inspectable/offline with specific recovery; never bind the first unknown aircraft automatically.
+
+State: PREPARING
+Transition / action: Inspect network, establish the approved telemetry path, fetch identity and full parameters, check logging capabilities and disk budget; baseline available remote log inventory while disarmed.
+Failure behavior: Report missing requirements while recording whatever is available. A complete parameter cache from yesterday is not a fresh readback.
+
+State: WATCHING_READY or WATCHING_DEGRADED
+Transition / action: Continuously record with per-source freshness; observe arming and parameter changes; revalidate readiness after reboot, link gap, GCS/profile/interface change or updated parameters.
+Failure behavior: Degrade individual evidence states without stopping other collectors. Readiness is not permission to fly.
+
+State: ARMED_RECORDING
+Transition / action: On fresh autopilot heartbeat armed transition, attach the best parameter evidence and snapshot interval, assign armed-interval UUID/display number, record arming evidence and continue sources. Mark airborne segments separately.
+Failure behavior: If the app starts already armed, mark unknown start/preflight evidence and capture from now. Never create a fabricated preflight snapshot by reading parameters in flight.
+
+State: LINK_UNCERTAIN
+Transition / action: Missing heartbeats, connection loss or stale state preserves the open interval and last known state; record the gap and retry passive connection within the configured policy.
+Failure behavior: Silence is not disarming. No bulk download or disruptive repair while armed state is stale/unknown. Reboot detection splits boot epochs without assuming a normal landing.
+
+State: DISARM_SETTLING
+Transition / action: A fresh, valid disarmed indication closes the armed interval provisionally; retain a configurable post-roll and confirm logger closure/availability. Record subsequent rearming as a new armed interval.
+Failure behavior: Do not merge distinct arm cycles to simplify filenames. One physical sortie may group intervals only with explicit evidence/review; no takeoff means bench/test.
+
+State: COLLECTING
+Transition / action: Fetch postflight parameters and log inventory; select candidate onboard records; collect stable GCS logs and background artifacts; estimate transfer time; download only while the known aircraft is freshly disarmed.
+Failure behavior: Pause bulk transfers promptly if arming occurs or state becomes unknown. Preserve checkpoints; do not saturate the control link. Continue the watcher for the next flight.
+
+State: RECONCILING
+Transition / action: Parse identity, parameter timelines, boot/arming intervals and source overlaps; validate checksums/structure/completeness; assign evidence with recorded reasons.
+Failure behavior: Contradictory or ambiguous evidence stays quarantined from the confirmed flight bundle; offer a narrow recovery task.
+
+State: COMPLETE or AWAITING_EVIDENCE
+Transition / action: Freeze a manifest revision and run eligible analyses. Late files create a new manifest/report revision while preserving prior provenance.
+Failure behavior: The readiness of the next flight is independent of unfinished collection for the previous one. Permanent missing evidence remains visible.
+
+Use fresh autopilot HEARTBEAT state and correct source identity, not any component heartbeat or replay stream. Detect reconnect/boot boundaries using available boot counters/timestamps and identity; never use MAVLink packet sequence alone as a boot ID. Ignore replay-fed arming transitions for live orchestration. Maintain per-vehicle state and explicitly block enrollment ambiguity when two aircraft reuse a system ID.
+
+The recording supervisor runs independently of chart/FFT jobs. Persist append-only chunks plus monotonic/UTC receipt times, raw bytes and offsets; checkpoint frequently enough to bound crash loss. Recover unfinished sessions after restart. Disk admission uses measured write rates, required-source budget and reserve. Low storage first stops optional media/verbose capture, alerts visibly and preserves essential small records where possible; never delete raw flight files automatically. PC sleep or collector crashes create explicit coverage gaps.
+
+Record: app-owned timestamped MAVLink stream when a validated feed exists; GCS log references; raw SkyPulse statistics/events from both reachable units; network/route/socket changes; relevant receiver diagnostics; host CPU/memory/disk and collector health; parameter observations and configuration snapshots. Capture optional compressed video only under a selected storage policy. Lack of an air-unit management path must not hide the ground-unit recording or claim both sides were captured.
+
+Radio polling starts before arming and continues through post-roll. Five seconds is an initial testable poll interval for the documented roughly 50-second rolling history, not a guaranteed device limit. Persist raw replies and transport failures before normalization; deduplicate overlapping history only after validating timestamps/identity. Backoff and jitter must remain visible, with an irrecoverable-gap event when retention may have been exceeded. A live source without a durable export is a required recorder adapter when its metrics are needed for the experiment.
+
+
+31  PARAMETER SNAPSHOTS AND CONFIGURATION TIMELINE
+
+Associate measurements with what the aircraft reported, not the parameter file most recently opened on the computer. Each snapshot records target aircraft identity, system/component, firmware/build, board, boot epoch, transport, start/end monotonic and UTC times, names/types/raw values, expected/received counts, parser version, completeness, consistency observations and raw/canonical hashes. Save a human-readable .param export plus the richer manifest; .param alone cannot carry the evidence contract.
+
+Read parameters during preflight while disarmed. Prefer a supported read-only packed-parameter MAVFTP download, with standard PARAM_REQUEST_LIST / targeted retry fallback. Capability-probe the installed firmware. Count, decode and validate types; accept and deduplicate identical retransmissions, but reject conflicting duplicate values/index mappings or unresolved missing entries. Treat each MAVLink component separately; complete autopilot parameters does not mean complete camera or every component. Monitor count/schema changes and restart affected downloads, with bounded retry and backoff [R34, R35].
+
+For the packed adapter, validate the format magic and entry count, distinguish its internal type codes from MAV_PARAM_TYPE, and read through protocol EOF rather than trusting ArduPilot's estimated open-file length. Implement the documented fixed read-block/padding semantics with fixtures. For the message adapter, validate count/index coverage by component and resolve names/types using the installed firmware's encoding. A GCS cache may substitute for another transfer only when its completeness, capture interval and identity evidence are exposed. Serialize large readbacks against other bulk transactions; avoid an endless refresh loop caused by continuously learned values.
+
+MAVLink readback is not atomic. Packed FTP fixes the parameter set at open but reads values as blocks are generated; individual PARAM_VALUE synchronization can also miss updates [R34, R35]. A full, count-complete download therefore proves collection completeness over an interval, not an instantaneous configuration exactly at arming. Represent complete, consistent over observed interval, fresh, and corroborated at flight time as distinct properties.
+
+A configurable initial freshness budget can be 60 seconds before arming, explicitly an engineering policy to validate. Refresh after known edits, firmware/profile change, reboot or coverage gap regardless of age. During the preflight quiet period, detect conflicting duplicate values or observed edits; retry the affected/full snapshot. A second matching read increases confidence but is not an atomic guarantee. Never block recording or claim the aircraft was prevented from arming when the snapshot is incomplete.
+
+At arming, attach the newest eligible preflight snapshot and its age/coverage. Preserve all incoming parameter observations with timestamps during the flight; use observed changes as positive evidence only, not proof every change was broadcast. Avoid a bulk parameter read while armed. After disarming, fetch a full readback before the next configuration change where possible. If pre/post differ without a reliable change event, create an unknown-change interval; do not assign the postflight value retroactively to the whole flight.
+
+Reconcile decoded BIN startup PARM and later PARM observations, captured MAVLink observations and pre/post readbacks under firmware-specific semantics. Startup dumping itself takes time; reading a PARM record does not by itself establish when a value became effective. Some settings take effect only after reboot or subsystem restart. Store observed_at and effective_from separately, with unknown boundaries allowed. Do not imply that a new parameter value immediately changed the active controller.
+
+Build ParameterTimeline segments with an immutable snapshot/observation lineage, effective-time uncertainty and diagnostic eligibility. If AutoTune/learning or a user change alters relevant gains, split the analysis at the supported boundary and exclude uncertain transition windows. If the BIN supplies enough configuration evidence when the preflight read is missing, permit the supported analyses with a provenance label; do not retroactively claim a full preflight snapshot existed.
+
+ParameterCapture is an acquisition-generation record whose output snapshot_id references an immutable ParameterSnapshot, complete or partial for its declared scope. ParameterObservation carries aircraft/component/boot identity and a source pointer; capture_id may be null for independent BIN observations. ParameterProposal is a separate unapplied candidate record referencing a baseline snapshot. EffectiveConfigurationInterval.base_snapshot_id can reference captured/reconstructed evidence only, never an unapplied proposal. Imported reference files remain reference evidence until verified against an actual flight.
+
+Use a content hash of the exact original export/bytes, a canonical typed-value hash, and versioned semantic fingerprints by functional group. Canonicalization is explicit about sorting, component ID, parameter name/type and lossless numeric representation; never hash rounded display text. Include scope/completeness in the snapshot identity so a subset cannot masquerade as a full set. Types absent from a text export remain unknown or explicitly inferred, not falsely observed. Firmware/build and hardware-profile identity are separate required comparison keys. A changed raw file order can leave the semantic fingerprint unchanged.
+
+Keep all values, including learned/calibration/device fields, in the authoritative snapshot. Default comparisons group PID/control, filters, motor/output, navigation, battery/failsafe, logging and device-specific/learned state. Joystick calibration, learned hover and device state may be collapsed by default per user preference, but their presence and exclusions remain visible. Learned hover, mass-related adaptation and calibration still matter to relevant performance models. Never delete them to make two flights appear equivalent.
+
+Rename the protected display baselines to Q22 original - pre-FACt and Q22 with FACt tune, following the later project decision. Preserve original source filenames/bytes and aliases for older Brian references. Never synthesize a missing pre-FACt baseline. Parameter proposals remain reviewed exports for the GCS; host-network repair permission does not grant aircraft-parameter write permission.
+
+
+32  AUTOMATIC BIN, TLOG AND FLIGHT ASSOCIATION
+
+Use a many-to-many evidence model. One BIN may span several armed intervals; a flight may span multiple source files or boot epochs; a TLOG may contain multiple vehicles and flights. Store the complete original once and attach vehicle/boot/time/byte-range selections to sessions. Do not trim or rename away its provenance. Byte-hash equality proves duplicate content, not the same flight.
+
+Association evidence has independent dimensions: enrolled hardware UID when available; board/firmware and parameter fingerprint; endpoint/GCS provenance; boot-time mapping; armed/event sequence; overlapping movement/altitude/voltage patterns; validated UTC; onboard log inventory and transfer identity. AUTOPILOT_VERSION UID fields can be absent; system ID and VER firmware/board information are not unique physical identity. Missing UID lowers evidence, rather than causing fallback to filename as proof.
+
+Use deterministic matching rules with hard contradiction checks before confidence ranking. Strong UID mismatch, incompatible boot/event sequence or non-overlapping supported intervals rejects automatic assignment. Prefer a direct recorded transfer from the known controller with a compatible onboard interval, or content corroboration across several independent anchors with no competing candidate. Time labels, directory names, largest/newest file and matching parameter hash alone are insufficient. Maintain reasons, rejected alternatives, algorithm version and a user-override audit trail.
+
+Association state: Verified
+Meaning: Required identity/interval evidence and corroboration pass the selected rule, with no unresolved contradiction or indistinguishable candidate.
+Product behavior: Attach automatically and display the evidence summary. Verified means verified by that documented rule, not a universal proof of device identity.
+
+Association state: Provisional
+Meaning: Likely match with an explicit weak/missing dimension, such as no UID or uncertain clock and insufficient corroboration.
+Product behavior: Retain for review/basic exploration; withhold comparisons that depend on the missing evidence. Do not silently promote by elapsed time.
+
+Association state: Ambiguous or Rejected
+Meaning: Multiple plausible candidates or contradictory identity/content.
+Product behavior: Ask only for the specific unresolved choice or additional evidence; explain the distinguishing fields. Preserve rejected files outside confirmed bundles.
+
+Association state: Missing or Unrecoverable
+Meaning: Expected source is absent, not yet transferred, never recorded or confirmed lost.
+Product behavior: Show its consequence and exact recovery route; never substitute another flight's log.
+
+While disarmed before flight, store an available onboard log inventory. After disarm, refresh and examine new/changed candidates. Directory timestamps can be wrong, including the earlier 2028 problem; raw source dates are retained but cannot overwrite an existing flight. Use internal monotonic/boot/event anchors and UTC-quality checks. Never treat the maximum log ID as permanently unique: counters/files can roll over or be reused after erase/reformat. Include aircraft, inventory generation and content evidence.
+
+A logger may keep a file open after disarm depending on settings. Stable size alone does not prove closure. Use known logger lifecycle, repeated inventory/content checks and firmware-supported closure evidence; otherwise mark the download as a provisional prefix and reconcile later. Do not silently change logging parameters or reboot the aircraft to close a file. Desired per-flight log rotation is a profile recommendation to verify separately.
+
+After disarm, choose the fastest validated route: stable local GCS download, native file/SD access, or read-only MAVLink log transfer/MAVFTP. Show measured throughput, estimated remaining time and a profile-configured SD suggestion threshold. Capability/path differences remain version-specific. Resume by verified byte ranges/source identity; detect a growing/replaced remote file and invalidate unsafe checkpoints. Completion requires transfer integrity and parse/content checks, not simply reaching an estimated size.
+
+For SD fallback, create a RetrievalRequest tied to the session: exact controller identity; observed remote path or protocol log ID; known mapping between ID and SD path; candidate size/stability; timestamp with quality label; boot/arming intervals; required bytes/segments; and matching rationale. Display a path/filename only if actually observed or derived by a validated firmware adapter. A protocol log ID is not automatically the SD filename.
+
+If the mapping is known, say which exact file to copy and show size plus flight identity. If unknown, say so and offer Select the SD log folder; scan its candidates automatically and attach the matching content. The user should not need to guess which date-named file belongs to the flight. Reject a wrong import with the identity/interval mismatch and retain the outstanding request. Duplicate import is idempotent. A later correct file resolves the request and recomputes affected findings without erasing prior report history.
+
+Build a per-flight bundle manifest referencing pre/post parameters, parameter timeline, app recorder, MP/QGC artifacts, BIN selections, RF captures, host/network/video diagnostics and hardware/test notes. Each entry records hash, bytes, origin, acquisition times, coverage, association rule/state and a recovery action. Export a portable flight bundle for support without requiring the original folder layout; redact credentials and offer location redaction separately from the local originals.
+
+
+33  MISSION PLANNER AND QGROUNDCONTROL INTEGRATION
+
+Detect installed/running GCS applications through allowed process/executable/version information, native settings and approved log directories. Corroborate the active GCS using socket ownership, observed connection and newly written logs. A running process or a MAV_TYPE_GCS heartbeat alone does not prove the application controlled this flight. Store process start/version/path and integration-profile revision; distinguish detected, connected, controlling and logging states.
+
+With exactly one compatible active GCS, select its enrolled adapter automatically. With both MP and QGC active, do not choose whichever launched last. Identify the intended control connection and ask once if it remains ambiguous; remember the choice for that topology. An in-flight GCS switch is a recorded session event and may add a second GCS artifact without creating a new flight. Never terminate the other program or rewrite its settings while flying.
+
+The preferred zero-touch telemetry architecture is a separately supervised, bounded local connection service with explicit fan-out and read-only app requests. Where possible preserve a direct GCS control connection and obtain duplication through a supported independent endpoint. Where a single UDP/serial owner is unavoidable, an explicitly commissioned router owns it and passes the unchanged GCS traffic while feeding the recorder and narrowly filtered app request channel. The recording UI/analysis process must not be the transport's lifetime owner.
+
+This routing service is a critical dependency requiring bench validation before flight use. It must not fabricate, cache/replay or continue GCS heartbeats/manual control after the GCS dies, nor hide RC/GCS failsafe loss by impersonation. Keep system/component IDs and signing behavior correct, prevent routing loops and duplicate commands, and never forward arbitrary renderer-generated MAVLink. A recorder backlog or UI crash must not block the live transport. Test router failure and provide a documented direct-GCS fallback that is established on the ground; do not promise seamless failover over an exclusive serial port.
+
+Read-only collection still sends messages. Allow specific identity/parameter/log-read operations with exact target checks and bounded rates; inspect MAVFTP opcodes, not only FILE_TRANSFER_PROTOCOL message IDs. Deny upload/write/delete/reset/format/parameter-set/arm/mode/mission/control operations from the app. Do not use FTP ResetSessions indiscriminately because it may interrupt another client's transfer. Coordinate one bulk transaction owner with the GCS. Respect signed links and credential boundaries; never disable signing to make collection work.
+
+Integration: Mission Planner
+Automatic behavior: Discover the actual configured log directory, watch stable TLOGs and related diagnostic logs, record loaded GStreamer/config versions, and collect relevant file ranges after flight.
+Connection limitation: Forwarding behavior depends on settings/version. A remote-write/control option is not automatically safe; use an explicit topology and app-side read-only filter, not blanket remote control enablement [R37].
+
+Integration: QGroundControl
+Automatic behavior: Discover its version-specific save/logging settings and authorized data directory, watch saved TLOGs and appropriate application logs, and inspect its own video settings.
+Connection limitation: Documented MAVLink forwarding is one-way to the destination; it cannot carry the app's parameter/log requests back [R36]. Use an approved bidirectional router/independent path or mark automatic requests unavailable. PX4 log streaming/upload settings are not ArduPilot BIN capture.
+
+Integration: App-owned recorder
+Automatic behavior: Start when the feed is ready; persist compatible timestamped MAVLink plus richer origin/direction/clock metadata, and segment by session without losing originals.
+Connection limitation: A receive-only forwarded feed may omit GCS-sent messages. Do not label it a full duplex GCS TLOG or claim it contains every command. Preserve native GCS TLOGs as complementary artifacts.
+
+Default folders are discovery hints, not a hardcoded contract. Handle portable installs, moved Documents directories, per-user profiles, sandbox/package permissions and custom paths. Ask once for an inaccessible folder. QGC save prompts/settings and GCS file handles can delay finalization until disconnect or exit; do not disconnect a control link to obtain a file. Display Awaiting GCS file close while using the app's recorder. Treat a copied open file as a partial prefix until reconciled.
+
+For setup errors, show the failed capability, current evidence and a single relevant action: enable the supported log-save setting, grant a folder, choose the intended GCS, repair the endpoint, install/repair a verified decoder, or select an approved router profile. Back up GCS configuration and validate a version-specific patch before offering an automatic edit; otherwise provide precise guided steps. Verify actual saved files and fresh packets after setup, not only checkbox state.
+
+
+34  CONFIGURATION-TO-PERFORMANCE INSIGHTS
+
+Every finding and metric selection links to a ParameterTimeline segment and evidence manifest revision. Show the actual configuration during that selected interval alongside the data. Do not compare against a stale profile default or whichever .param the operator happened to upload last. An unknown effective-change boundary blocks attribution across that boundary but does not block descriptive metrics within supported scopes.
+
+MetricResult and Finding require flight_record_id, armed_interval_id, capture_session_id, evidence_manifest_revision, effective_configuration_interval_ids and configuration_eligibility with reasons. If configuration evidence is unavailable, retain the explicit unknown state and empty interval references; permit descriptive measurements that do not need it and withhold unsupported parameter attribution. A metric spanning different effective configurations must be partitioned or explicitly marked mixed, not silently assigned one snapshot.
+
+Provide a Changes & effects view: previous comparable flight, current flight, firmware/hardware identity, changed parameter groups, relevant metrics, absolute/relative differences, coverage/uncertainty and competing explanations. Clicking a parameter highlights affected signal workspaces and its firmware-specific meaning, units, reboot behavior and dependencies. Clicking a performance regression opens both aligned, phase-matched chart selections.
+
+Parameter group: PID / attitude / rate
+Relevant outcomes: Rate tracking error, response delay/overshoot, oscillatory content, actuator authority/saturation, PID term behavior and noise.
+Interpretation gate: Representative excitation and comparable mode/phase; resolve vibration/filter/estimator confounders first. No gain prescription from RMSE or power alone.
+
+Parameter group: Gyro / notch / filter
+Relevant outcomes: Pre/post gyro spectra, tracked motor harmonics, modeled attenuation/phase delay, tracking and CPU cost.
+Interpretation gate: Correct sample timing, pre/post provenance, actual RPM source and firmware algorithm. Modeled effects are not measured flight improvement.
+
+Parameter group: Motor / hover / payload
+Relevant outcomes: Hover demand, output distribution, RPM/load balance, authority, climb response and thermal behavior across actual all-up mass/CG.
+Interpretation gate: Store battery/payload/prop changes; distinguish normalized control demand from physical thrust. Do not assume a displayed throttle percentage is motor duty cycle or thrust percentage.
+
+Parameter group: Battery / energy
+Relevant outcomes: W, Wh, hover W/kg when actual mass is known, distance-normalized energy for an appropriate phase, voltage sag and consistent capacity use.
+Interpretation gate: Calibration/sign/monitor identity and matched conditions; changing a current sensor scale can change reported energy without changing real consumption.
+
+Parameter group: Navigation / estimator / failsafe
+Relevant outcomes: Tracking, drift/heading consistency, innovations, mode transitions and observed trigger/response behavior.
+Interpretation gate: Firmware-specific semantics and navigation quality; a changed failsafe threshold is configuration evidence, not proof the failsafe works.
+
+Parameter group: Logging / network / video
+Relevant outcomes: Sample completeness, transfer/decoder statistics, freshness, drop/freeze intervals and host load.
+Interpretation gate: A new logging rate can change observed extrema or spectra. A different radio/camera/GCS/network profile can explain apparent control/video changes independently of ArduPilot tuning.
+
+Track multiple throttle quantities explicitly: pilot input, collective/control demand, learned hover reference and per-motor output, with actual field, scale and units. Display percent only when the source range and normalization are known. Preserve raw DShot/PWM/output units and do not average incompatible quantities into one throttle number.
+
+Require a comparison eligibility checklist computed from actual data: aircraft/hardware revision; firmware; effective parameter interval; mass/payload/CG; battery ID, state, temperature and calibration; prop/motor changes; mode and motion phase; wind evidence; sensor/logging coverage. Missing conditions are visible. Nearby weather/API data is environmental context, not measured wind at the aircraft. Use repeated trials and uncertainty at the flight/block level, not millions of correlated samples as independent trials.
+
+Recommendations progress from observed difference to plausible explanation to proposed experiment. Example wording may say Lower hover power was observed after the filter change, but payload and wind also changed; retest under matched conditions. It must not say The filter caused the endurance gain without appropriate evidence. Keep successful response/thermal/authority constraints beside energy goals. Parameter suggestions need exact firmware applicability, prerequisites, evidence, trade-offs and a rollback snapshot; when insufficient, recommend the next measurement instead of a guessed value.
+
+Support variable-payload cohorts and regression history across accepted tunes. Store payload/mass as first-class fields and compare light/heavy configurations within validated envelopes. Preserve pre-FACt, FACt-derived and later validated configurations; never relabel an unvalidated inherited notch tune as accepted merely because its source aircraft was similar.
+
+
+35  IMPLEMENTATION CONTRACT EXTENSIONS
+
+Add native NetworkInspector and RepairBroker adapters, a SessionOrchestrator, ParameterCaptureService, EvidenceMatcher, GCS adapters, a separately supervised ConnectionService, and a configuration-performance index. Keep them separate from numerical diagnostics. The renderer receives structured findings/plans and cannot execute arbitrary commands. A network repair has a different permission boundary from a data collector and from aircraft tuning proposals.
+
+New persisted entities: NetworkProfileVersion, NetworkObservation, RepairPlan/RepairTransaction, CaptureSession, ArmedInterval, GcsObservation, ParameterCapture, ParameterObservation, EffectiveConfigurationInterval, ArtifactAssociation, RetrievalRequest and RecorderCoverage. Each records version, origin and immutable evidence references. Store IP addresses as typed addresses/prefixes; stable interface IDs separately from user-editable names; UTC/monotonic times separately; 64-bit JSON times as decimal strings.
+
+Extend IPC with network.inspect, network.plan_repair, network.apply_repair, network.rollback, session.prepare_and_watch, session.status, parameters.capture, parameters.reconcile, associations.evaluate, associations.review and retrieval.resolve. Every mutation requires an operation ID, target profile version and applicability fingerprint; repair apply additionally requires the reviewed plan token and current preconditions. Events include source freshness, flight state, parameter readiness, association status, missing artifact, repair progress/outcome and disk pressure.
+
+The bundled JSON contract is normative for required fields/state names/rule IDs, with this text explaining behavior. Codex should turn these design contracts into versioned runtime schemas, not assume the handoff JSON is already a working API or executable test suite. Treat all acceptance cases here as required tests not yet executed.
+
+Revise the implementation order so automatic capture/identity is foundational. Stage 0 proves packaging plus transport/process isolation and a network inventory spike. Stage 1 implements append-only recording, aircraft identity, pre/post parameter capture, session state and evidence manifests using real fixtures. Stage 2 implements MP/QGC adapters, verified file association, BIN retrieval/SD requests and crash/reconnect behavior. Stage 3 integrates the original health, vibration, filter, PID and energy analysis with effective configuration intervals. Stage 4 qualifies OS repair adapters and cross-platform stream diagnostics; stage 5 qualifies installers, operational behavior, regressions and one-click complete workflows. Native repair is not required to run the early read-only analyzer.
+
+Add a persistent readiness strip with aircraft, network, telemetry, parameters, radio recorder, disk and GCS states. Each badge opens an actionable finding. Network & devices shows the selected Internet/drone interfaces, route/source decisions, receiving apps and transport/decode status. Keep technical details collapsed by default. A repair card states the concrete change and interruption before Apply; a collection card shows the exact missing artifact and fastest recovery. Avoid repeated success dialogs and repeated confirmation for already configured read-only collection.
+
+Commission once with bench evidence: both GCS versions; installed firmware/UID availability; verified topology and source IPs; sample SkyPulse responses; actual BIN/TLOG/log paths and lifecycle; OS permission model; decoder runtime; link bandwidth; rearm/reboot/log rollover cases; and documented control-loss behavior with the recorder running. These are implementation validation inputs, not blockers to completing this design.
+
+
+36  REQUIRED SCENARIOS AND RELEASE GATES
+
+Acceptance: Simultaneous Internet and drone network
+Required result: Wi-Fi Internet remains working while Ethernet 10.0.0.5/24 receives from 10.0.0.2. No added drone default gateway, bridge or NAT. Same-NIC DHCP and VPN overlap cases produce a tested plan or guided limitation, not a damaging generic fix.
+
+Acceptance: Network repair lifecycle
+Required result: Preview, declined elevation, managed-policy block, duplicate request, stale plan, concurrent settings change, UI crash and failed verification all preserve an audit trail. Rollback changes only owned objects. Armed/unknown state blocks disruptive repair.
+
+Acceptance: UDP and video diagnosis
+Required result: Distinguish firewall suspicion from a proven block; packet arrival from decode; wrong H.264/H.265 from missing plugins; port conflict from bad route; RTSP authentication from ICMP silence. MP wrong-runtime and QGC independent-runtime cases are covered.
+
+Acceptance: GCS coexistence and transport
+Required result: MP and QGC both running do not cause arbitrary owner selection or double bind. QGC one-way forwarding cannot falsely report readback/download capability. App UI/FFT/recorder crashes do not spoof GCS heartbeat or commands; loss of controlling GCS remains visible to the aircraft under the actual failsafe configuration.
+
+Acceptance: Automatic session boundaries
+Required result: Capture begins before arm; normal arm/disarm produces one interval; rapid rearm remains distinct; armed bench test is not a flight; app starts midflight as partial; heartbeat loss never means landed; replay cannot open a live flight; reboot and two same-sysid aircraft do not merge.
+
+Acceptance: Parameter capture correctness
+Required result: Missing indexes, changing counts, duplicate conflicts, wrong encoding, FTP fallback, live value changes during download, absent update messages, reboot-required settings and stale cache all receive correct completeness/freshness/effective-time states. No count-complete download is claimed atomic.
+
+Acceptance: File association and recovery
+Required result: Wrong 2028 timestamps, same filenames with different bytes, reused log IDs, overlapping flights, one BIN with many arm cycles, one flight with multiple files, missing UID and contradictory parameter evidence cannot silently misassociate. Known manual SD requests name the observed file; unknown names trigger content scanning, not a guessed filename.
+
+Acceptance: Post-flight collection
+Required result: Open/growing BIN/TLOG stays provisional; GCS holds a file until exit without forced disconnect; slow transfer offers measured ETA and SD option; interruption resumes only after identity validation; rearming pauses transfer; a late correct import resolves only the appropriate RetrievalRequest.
+
+Acceptance: Short-lived and incomplete data
+Required result: RF polling starts preflight, retention overruns and auth/endpoint errors are recorded, unreachable air radio is explicit, sleep/crash/disk-pressure gaps remain visible. Optional video cannot starve the essential recorder or control transport.
+
+Acceptance: Performance comparison
+Required result: Relevant parameter changes split eligible intervals, unknown boundaries withhold attribution, mass/battery/wind/logging-rate changes flag confounding, current-scale edits cannot masquerade as energy savings, and no high-current-only PID recommendation appears. Pre-FACt/FACt baselines retain original bytes and alias history.
+
+Acceptance: Cross-platform qualification
+Required result: Publish a tested OS/GCS/version/capability matrix. Permissions, install/signing, access to local-network/packet observations and rollback behavior are exercised on actual supported OS installations. Mocks are used for fault injection, not claimed as hardware validation.
+
+Acceptance: User-facing completion
+Required result: An ordinary commissioned flight runs Prepare & watch -> automatic capture -> postflight collection -> evidence-linked report without manual file pairing. A degraded flight shows one precise recovery task per gap and preserves useful results; it never reports complete coverage merely to avoid asking a question.
+
+PRIMARY REFERENCES - original research 3 October; additions checked 12 October 2026
 
 [R01] Tauri 2: external binaries / sidecars
 https://v2.tauri.app/develop/sidecar/
@@ -909,9 +1245,9 @@ PID/response analysis prerequisites and rate-only limitations.
 https://ardupilot.org/copter/docs/common-esc-telemetry.html
 Telemetry capabilities differ by firmware and protocol.
 
-[R10] DigiQ SkyPulse manual v1.2.0
+[R10] DigiQ SkyPulse manufacturer manual (version-sensitive URL)
 https://digiq-rf.com/datasheets/DigiQ_RF_SkyPulse_User_Guide_Manual.pdf
-Sections 15.2.8-15.2.9; documented API and rolling histories, not hardware-tested here.
+Rechecked 12 October: destination learning, rolling histories and API path/reboot caveats. Pin PDF/version and installed firmware before implementing.
 
 [R11] MAVLink: log transfer protocol
 https://mavlink.io/en/services/log.html
@@ -1004,3 +1340,83 @@ Batch scale/encoding reference; pin matching revision before implementation.
 [R33] Copter-4.7.1: EKF failsafe logic
 https://raw.githubusercontent.com/ArduPilot/ardupilot/Copter-4.7.1/ArduCopter/ekf_check.cpp
 Configured threshold and filtered/state-dependent failsafe behavior.
+
+[R34] MAVLink parameter protocol
+https://mavlink.io/en/services/parameter.html
+Completeness, type handling and limits of passive cache synchronization.
+
+[R35] MAVLink packed parameter FTP
+https://mavlink.io/en/services/parameter_ftp.html
+Non-atomic live values, format, EOF and fallback requirements; validate installed implementation.
+
+[R36] QGroundControl telemetry settings
+https://docs.qgroundcontrol.com/master/en/qgc-user-guide/settings_view/telemetry.html
+Documented one-way forwarding. Master documentation is discovery guidance; pin supported release.
+
+[R37] Mission Planner forwarding tools
+https://ardupilot.org/planner/docs/common-mp-tools.html
+Local forwarding and separate remote-write/control option.
+
+[R38] Microsoft New-NetIPAddress
+https://learn.microsoft.com/en-us/powershell/module/nettcpip/new-netipaddress
+DHCP-disable behavior and address configuration caveats.
+
+[R39] QGroundControl video settings
+https://docs.qgroundcontrol.com/master/en/qgc-user-guide/settings_view/video.html
+Native QGC video configuration; validate installed release/runtime.
+
+[R40] Apple firewall settings
+https://support.apple.com/guide/mac-help/change-firewall-settings-on-mac-mh11783/mac
+Application/service firewall behavior and policy differences.
+
+[R41] NetworkManager D-Bus API
+https://networkmanager.dev/docs/api/latest/gdbus-org.freedesktop.NetworkManager.html
+Checkpoint and rollback support; target installed manager/version.
+
+[R42] Microsoft firewall rules
+https://learn.microsoft.com/en-us/powershell/module/netsecurity/new-netfirewallrule
+Typed rule scope; effective policy still requires verification.
+
+[R43] Microsoft UDP socket reuse
+https://learn.microsoft.com/en-us/windows/win32/winsock/using-so-reuseaddr-and-so-exclusiveaddruse
+Socket sharing is not a reliable unicast duplication mechanism.
+
+[R44] GStreamer UDP source
+https://gstreamer.freedesktop.org/documentation/udp/udpsrc.html
+Receive-buffer semantics and source properties.
+
+[R45] GStreamer D3D11 H.265 decoder
+https://gstreamer.freedesktop.org/documentation/d3d11/d3d11h265dec.html
+Windows decoder capability; installed GPU/runtime must be validated.
+
+[R46] Apple Local Network privacy
+https://developer.apple.com/documentation/technotes/tn3179-understanding-local-network-privacy
+Separate OS permission boundary from firewall/network configuration.
+
+[R47] QGroundControl general settings
+https://docs.qgroundcontrol.com/master/en/qgc-user-guide/settings_view/general.html
+Version-specific application save paths/settings.
+
+[R48] Mission Planner telemetry logs
+https://ardupilot.org/planner/docs/mission-planner-telemetry-logs.html
+Native telemetry capture and log lifecycle discovery.
+
+[R49] NetworkManager IPv4 profile
+https://networkmanager.dev/docs/api/latest/settings-ipv4.html
+Addresses, routes and never-default configuration.
+
+[R50] firewalld rich language
+https://firewalld.org/documentation/man-pages/firewalld.richlanguage.html
+Zone/source/port rules; active policy must be identified.
+
+[R51] Copter-4.7.1 parameter implementation
+https://github.com/ArduPilot/ardupilot/blob/Copter-4.7.1/libraries/GCS_MAVLink/GCS_Param.cpp
+Tagged-source check: parameter write/readback/logging behavior is not a reliable universal broadcast contract.
+
+[R52] Copter-4.7.1 parameter logging
+https://github.com/ArduPilot/ardupilot/blob/Copter-4.7.1/libraries/AP_Logger/LogFile.cpp
+PARM observation timestamp semantics; pin matching firmware source.
+
+[R53] Apple SystemConfiguration
+https://developer.apple.com/documentation/systemconfiguration
+Native network service inspection/configuration APIs.

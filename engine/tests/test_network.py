@@ -19,6 +19,37 @@ SOURCE = {"id": "ground", "kind": "skypulse", "host": "10.0.0.2", "interface": "
 UDP = {"id": "telemetry", "kind": "udp", "host": "10.0.0.2", "port": 14551, "local_address": "10.0.0.10", "expected_format": "mavlink"}
 
 
+def safe_observer():
+    return {"flight_state": "disarmed", "heartbeat_age_s": 0.1, "identity_verified": True,
+            "recording_active": False, "owned_udp": []}
+
+
+class FakeQualifiedBackend:
+    """Explicit qualification is test-only; never invokes the real OS runner."""
+    def __init__(self, service):
+        self.service = service
+        self.operations = []
+
+    def capabilities(self):
+        return {"state": "supported_automatic", "qualified": True, "platform": self.service.system,
+                "signed_helper": True, "manager_aware": True, "supervised_rollback": True}
+
+    def execute(self, operation, plan_id, descriptor):
+        assert self.service.run is not _run, "Test backend must not execute real host commands"
+        self.operations.append((operation, plan_id, copy.deepcopy(descriptor)))
+        # Emulate a typed native compiler, never trust plan/journal command arrays.
+        plan = {"plan_id": plan_id, "descriptor": copy.deepcopy(descriptor)}
+        self.service._compile_descriptor(plan)
+        for command in plan["commands" if operation == "apply" else "rollback_commands"]:
+            self.service.run(command)
+
+
+def qualify_fake(service):
+    service.repair_backend = FakeQualifiedBackend(service)
+    service.safety_state = safe_observer
+    return service
+
+
 class FakeHost:
     def __init__(self):
         self.interfaces = copy.deepcopy(INTERFACES)
@@ -69,7 +100,7 @@ class FakeHost:
         raise AssertionError("Unexpected host command: " + repr(argv))
 
     def service(self, **kwargs):
-        return NetworkService(system="Linux", runner=self.run, interface_provider=lambda: self.interfaces, elevated=lambda: True, **kwargs)
+        return qualify_fake(NetworkService(system="Linux", runner=self.run, interface_provider=lambda: self.interfaces, elevated=lambda: True, **kwargs))
 
 
 class NetworkTests(unittest.TestCase):

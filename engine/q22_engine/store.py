@@ -67,7 +67,10 @@ class Store:
     def _now():
         return datetime.now(timezone.utc).isoformat()
 
-    def archive_file(self, path: Path | str, *, cancel_check=None, progress=None) -> dict:
+    def archive_file(self, path: Path | str, *, cancel_check=None, progress=None,
+                     acquisition_method="manual_file_import") -> dict:
+        if acquisition_method not in {"manual_file_import", "app_owned_passive_udp_capture"}:
+            raise ValueError("Unsupported evidence acquisition method.")
         source = Path(path).expanduser().resolve(strict=True)
         if not stat.S_ISREG(source.stat().st_mode):
             raise ValueError("Import requires a regular completed file.")
@@ -141,7 +144,7 @@ class Store:
             manifest = {
                 "id": str(uuid4()), "sha256": sha256, "byte_size": size,
                 "original_name": source.name, "original_path": str(source),
-                "acquisition_method": "manual_file_import", "created_at": self._now(),
+                "acquisition_method": acquisition_method, "created_at": self._now(),
                 "status": "archived", "schema_version": 1,
             }
             with self._connect() as db:

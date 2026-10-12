@@ -6,7 +6,7 @@ The supplied [handoff](handoff/CODEX_START_HERE.txt) and [implementation contrac
 
 Tauri 2 supervises a packaged Python executable. React invokes a narrow native command; newline-delimited JSON-RPC 2.0 carries request IDs and a protocol-version handshake. stdout contains protocol messages only. Requests and replies have size limits. No production HTTP API or remote service is required. Python/Node are development tools, not installed-user prerequisites.
 
-The coordinator serializes short protocol requests. Log imports and scoped session construction run in a single background worker, with a bounded queue, cooperative cancellation and a durable job journal. A restart marks unfinished jobs interrupted and never replays an import or repair. Live recorders still require independent process isolation before flight recording is exposed. Bounded network probes are explicit user actions.
+The coordinator serializes short protocol requests. Log imports, scoped session construction and finalized capture archival run in a single background worker, with a bounded queue, cooperative cancellation and a durable job journal. A restart marks unfinished jobs interrupted and never replays an import or repair. The passive UDP recorder runs in a separate supervised process and persists raw UDP, TLOG chunks and an event journal independently of analysis. Closing the app ends its engine and recorder; no background lifetime is promised. Bounded network probes are explicit user actions and respect recorder socket ownership.
 
 ## Evidence and comparisons
 

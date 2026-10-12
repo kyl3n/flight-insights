@@ -1,0 +1,32 @@
+{
+  "schema_version": "2.0-design-example",
+  "example_only": true,
+  "plan_id": "example-repair",
+  "state": "planned",
+  "target_interface": "enrolled-dedicated-drone-interface",
+  "baseline_fingerprint": null,
+  "requires_user_apply": true,
+  "requires_os_elevation": true,
+  "preconditions": [
+    "Confirmed dedicated interface; no DHCP Internet connection on this interface",
+    "Fresh disarmed state or explicit grounded commissioning evidence",
+    "10.0.0.5 availability and current route profile checked",
+    "Concrete before-state and rollback captured"
+  ],
+  "operations": [
+    {
+      "kind": "ensure_ipv4_address",
+      "address": "10.0.0.5",
+      "prefix": 24,
+      "default_gateway": null,
+      "dns": null
+    }
+  ],
+  "verification": [
+    "Reach configured radio10.0.0.2 using selected interface/source",
+    "Observe expected video/telemetry without taking GCS socket",
+    "Confirm Internet default route and DNS unchanged"
+  ],
+  "rollback": "Remove only address added by this transaction; do not replace unrelated settings.",
+  "executable": false
+}

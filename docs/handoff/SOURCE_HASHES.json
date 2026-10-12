@@ -1,0 +1,97 @@
+{
+  "schema_version": 1,
+  "purpose": "Design-handoff provenance; not flight evidence or an executable repair plan",
+  "canonical_revision": "2.0",
+  "archives": [
+    {
+      "revision": "1.0",
+      "revision_date": "2026-10-03",
+      "filename": "Q22_Codex_Handoff.zip",
+      "sha256": "4cf22de7fc5472ccfbb5c33a44db288c2ec4a80ca8487136ec6fa8475798eb93",
+      "verification": "SHA-256 calculated from uploaded archive; preserved files byte-equal archive members",
+      "preserved_directory": "revisions/2026-10-03"
+    },
+    {
+      "revision": "2.0",
+      "revision_date": "2026-10-12",
+      "filename": "Q22_Codex_Handoff.zip",
+      "sha256": "c8869f1337af20508426fae4797eadcf83c9da5a3e003aa8c491b6d405040604",
+      "verification": "SHA-256 calculated from uploaded archive and matched intake digest; canonical files byte-equal archive members",
+      "canonical_directory": "."
+    }
+  ],
+  "example_files": {
+    "FLIGHT_MANIFEST_EXAMPLE.json": "Synthetic illustrative contract; example_only=true; no real flight evidence",
+    "NETWORK_REPAIR_PLAN_EXAMPLE.json": "Synthetic illustrative contract; example_only=true; executable=false; no permission to change host networking"
+  },
+  "physical_baseline_files_supplied": false,
+  "baseline_note": "No accepted original/pre-FACt or FACt/Brian physical parameter-baseline files are supplied by either handoff archive; names and aliases are requirements only.",
+  "files": [
+    {
+      "path": "CODEX_START_HERE.txt",
+      "revision": "2.0",
+      "bytes": 3770,
+      "sha256": "3deb6bf9e2d7438ed4153e3d85f55e127e0087f21fece7984e1129332ae3bbfb"
+    },
+    {
+      "path": "FLIGHT_MANIFEST_EXAMPLE.json",
+      "revision": "2.0",
+      "bytes": 1465,
+      "sha256": "fc1b074920321a08fe8995abce221551043b7bfb77ee23b94b8941cb953f9090"
+    },
+    {
+      "path": "NETWORK_REPAIR_PLAN_EXAMPLE.json",
+      "revision": "2.0",
+      "bytes": 1081,
+      "sha256": "c571751d22f94503d5b937f2767a41a630fcb88e7bb8a5ccb2756222bfafab8a"
+    },
+    {
+      "path": "Q22_Architecture_and_Analysis_Specification.pdf",
+      "revision": "2.0",
+      "bytes": 220691,
+      "sha256": "aa3cbd384db1c52bc6af9108227e0ab23e6a066900d1ef018608402ad81d6817"
+    },
+    {
+      "path": "Q22_Codex_Specification.txt",
+      "revision": "2.0",
+      "bytes": 140018,
+      "sha256": "18d79f51d98435a5e359f07557a44c607504a9297739260255dbe104cfd495cf"
+    },
+    {
+      "path": "Q22_Implementation_Contract.json",
+      "revision": "2.0",
+      "bytes": 77853,
+      "sha256": "b23d82753dbb2a06d1205de975fad39645f2dbcdc46b6a94e8c3abe090307550"
+    },
+    {
+      "path": "REVISION_2_CHANGES.txt",
+      "revision": "2.0",
+      "bytes": 1017,
+      "sha256": "c65e27f7aebfbdd3dd4da1064dde2917a5d7bb039f226c89db1ccf97083e5e67"
+    },
+    {
+      "path": "revisions/2026-10-03/CODEX_START_HERE.txt",
+      "revision": "1.0",
+      "bytes": 3505,
+      "sha256": "9b0280c1abce7fd76fc78fbf03edaa98b9cef9653509e1a13258c9ba0332a528"
+    },
+    {
+      "path": "revisions/2026-10-03/Q22_Architecture_and_Analysis_Specification.pdf",
+      "revision": "1.0",
+      "bytes": 148617,
+      "sha256": "313a6406779f3ca8383aeecf54105412ecf3af8fdbeed3ba5631cd48b98bddd9"
+    },
+    {
+      "path": "revisions/2026-10-03/Q22_Codex_Specification.txt",
+      "revision": "1.0",
+      "bytes": 81735,
+      "sha256": "c0dbc99a978ac11907c02de7d454e00502e99abdac348b55684b773fb1b16040"
+    },
+    {
+      "path": "revisions/2026-10-03/Q22_Implementation_Contract.json",
+      "revision": "1.0",
+      "bytes": 39465,
+      "sha256": "fdd53a505e808cc69adc30c57276d6d078c35b3d8c2329177848f54652a6ff18"
+    }
+  ]
+}

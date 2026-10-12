@@ -1,0 +1,25 @@
+CODEX IMPLEMENTATION HANDOFF - Q22 FLIGHT LAB
+
+Build the actual application described in the attached Q22 specification and implementation contract.
+The user requested this architecture and research handoff for subsequent implementation in Codex. This package contains design and research, not application source.
+
+Read these files first:
+1. Q22_Codex_Specification.txt (complete human-readable specification)
+2. Q22_Implementation_Contract.json (architecture, entities, collector/IPC contracts, 28 diagnostic rules and acceptance families)
+3. Q22_Architecture_and_Analysis_Specification.pdf (the same design in a reviewable format)
+
+Implement an installed, offline-first desktop app: Tauri 2 + React/TypeScript + a packaged Python analysis engine. Keep original logs local and immutable. Bundle runtimes so the user does not need Python or Node.
+
+The product needs both live recording/health observation and deep post-flight analysis. Configure sources once, then provide Start flight recording and Collect flight logs. Cover the controller, GCS, both SkyPulse radios, available ESC/GPS/IMU/control/power/system data, and supported camera/host diagnostics. Make every missing/unsupported/stale source explicit with recovery instructions.
+
+Keep Q22 original-before-Brian and Q22-with-Brian as separate immutable baselines. Resolve the actual files before seeding them; do not invent a missing baseline. Profiles for Cube Orange+ and DEF H7 remain separate, including motor/output/ESC mappings and firmware-specific metadata.
+
+Work through the numbered implementation stages and their exit criteria. Start with a cross-platform packaging/engine handshake spike, contracts and real-format fixtures. Then build vertical slices with working collection, decoding, evidence-linked findings and UI. Record important architecture deviations for review.
+
+Do not implement a mock dashboard and call it complete. Do not use exploratory partial code from the prior Work conversation as an approved implementation. Never silently invent vendor schemas, units, timestamps, parameter masks or numerical tuning recommendations. Use deterministic calculations and exact firmware metadata, with abstention when evidence is insufficient. No aircraft parameter writes, arming, mode commands, mission changes or log deletion are part of the initial product.
+
+Use a streaming/out-of-core data path for large logs. Preserve boot epochs, MAVLink source IDs, timestamps, parameter changes and units. Validate raw/batch gyro, PSD/filter and PID methods against pinned trusted implementations and golden fixtures, including license review before code reuse. Separate measured results from modeled predictions and causal hypotheses.
+
+Hardware validation will need one matched Q22 flight bundle, exact Cube/H7 firmware and parameters, raw SkyPulse samples, verified ESC mapping and battery/calibration information. Continue independent implementation using labeled fixtures and explicit capability states; request only the specific sample needed to unblock a real adapter. Do not claim hardware testing without actual hardware evidence.
+
+For every completed stage, report what works, how it was tested, remaining limitations and the next concrete step. Deliver source, reproducible builds, installers, tests and user instructions after the full required acceptance plan passes. A clearly labeled milestone build is acceptable for review; do not describe it as the complete product while mandatory functionality remains unimplemented.

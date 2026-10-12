@@ -1,0 +1,45 @@
+{
+  "schema_version": "2.0-design-example",
+  "example_only": true,
+  "capture_session_id": "example-capture-session",
+  "armed_interval_id": "example-armed-interval",
+  "flight_record_id": "example-flight-record",
+  "aircraft_id": "example-enrolled-q22",
+  "display_number": 42,
+  "interval_processing_state": "AWAITING_EVIDENCE",
+  "watcher_state": "WATCHING_READY",
+  "clock_evidence": {
+    "utc_start": null,
+    "boot_epoch": "example-boot",
+    "utc_quality": "unknown"
+  },
+  "parameter_evidence": {
+    "preflight_capture_id": "example-capture",
+    "snapshot_id": "example-captured-snapshot",
+    "completeness": "complete_for_scope",
+    "flight_time_applicability": "provisional",
+    "atomic": false
+  },
+  "artifacts": [
+    {
+      "role": "app_mavlink_capture",
+      "sha256": null,
+      "coverage": "observed_interval_only",
+      "association_state": "provisional"
+    },
+    {
+      "role": "onboard_bin",
+      "sha256": null,
+      "association_state": "missing"
+    }
+  ],
+  "retrieval_request": {
+    "flight_record_id": "example-flight-record",
+    "armed_interval_id": "example-armed-interval",
+    "observed_log_id": null,
+    "observed_sd_path": null,
+    "action": "select_sd_log_folder_and_content_match",
+    "reason": "No observed ID-to-path mapping; do not guess filename."
+  },
+  "note": "Illustrative only; nulls are unknown, not evidence of a real flight. Watcher can record the next interval while this one awaits evidence."
+}
