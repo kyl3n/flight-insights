@@ -1,0 +1,109 @@
+{
+  "alloc-stdlib@0.3.0": {
+    "crate_vcs_commit": "0a81fd6928ea3b33c8cd484aa4575d50ffb98012",
+    "files": [
+      {
+        "path": "alloc-stdlib-0.3.0/LICENSE",
+        "sha256": "c0c56f26d9c051cac4d200c34c84e7ae9aaa853e01a982a1df08b09931e518ae",
+        "upstream_git_blob": "cd496ba72eb37e83a44958358d1f89a8a28cbc15",
+        "source_url": "https://github.com/dropbox/rust-alloc-no-stdlib/blob/0a81fd6928ea3b33c8cd484aa4575d50ffb98012/LICENSE",
+        "retrieved_at_utc": "2026-10-13T06:27:32.525796+00:00"
+      }
+    ]
+  },
+  "defmt-parser@1.0.0": {
+    "crate_vcs_commit": "4a8cdb44891ed57b8ff5a023b6bec7137c48708f",
+    "files": [
+      {
+        "path": "defmt-parser-1.0.0/LICENSE-APACHE",
+        "sha256": "8173d5c29b4f956d532781d2b86e4e30f83e6b7878dce18c919451d6ba707c90",
+        "upstream_git_blob": "11069edd79019f7dafbe3138841cf289209270dd",
+        "source_url": "https://github.com/knurling-rs/defmt/blob/4a8cdb44891ed57b8ff5a023b6bec7137c48708f/LICENSE-APACHE",
+        "retrieved_at_utc": "2026-10-13T06:27:32.968711+00:00"
+      },
+      {
+        "path": "defmt-parser-1.0.0/LICENSE-MIT",
+        "sha256": "2710a622a896bba67356913d4d0492cab5465f61b2ecce6d880aeb483834fb50",
+        "upstream_git_blob": "e68a7ab37c8accca023db5f1505d48e4375d4324",
+        "source_url": "https://github.com/knurling-rs/defmt/blob/4a8cdb44891ed57b8ff5a023b6bec7137c48708f/LICENSE-MIT",
+        "retrieved_at_utc": "2026-10-13T06:27:33.210451+00:00"
+      }
+    ]
+  },
+  "dlopen2@0.8.2": {
+    "crate_vcs_commit": "cc80e4a0a90d499b677fdf7743699b4b3a43a989",
+    "files": [
+      {
+        "path": "dlopen2-0.8.2/LICENSE",
+        "sha256": "39fa265207450e77c62e90c5594a06c085b655d8374c7ced4bf7894b6bd95dd2",
+        "upstream_git_blob": "d38093a7a564c64ad15e459f2e0a1f86a443c8b3",
+        "source_url": "https://github.com/OpenByteDev/dlopen2/blob/cc80e4a0a90d499b677fdf7743699b4b3a43a989/LICENSE",
+        "retrieved_at_utc": "2026-10-13T06:27:33.548677+00:00"
+      }
+    ]
+  },
+  "dlopen2_derive@0.4.3": {
+    "crate_vcs_commit": "cc80e4a0a90d499b677fdf7743699b4b3a43a989",
+    "files": [
+      {
+        "path": "dlopen2_derive-0.4.3/LICENSE",
+        "sha256": "39fa265207450e77c62e90c5594a06c085b655d8374c7ced4bf7894b6bd95dd2",
+        "upstream_git_blob": "d38093a7a564c64ad15e459f2e0a1f86a443c8b3",
+        "source_url": "https://github.com/OpenByteDev/dlopen2/blob/cc80e4a0a90d499b677fdf7743699b4b3a43a989/LICENSE",
+        "retrieved_at_utc": "2026-10-13T06:27:33.891892+00:00"
+      }
+    ]
+  },
+  "libappindicator-sys@0.9.0": {
+    "crate_vcs_commit": "eafd1e3682a1247f595410266091e9684021cb6f",
+    "files": [
+      {
+        "path": "libappindicator-sys-0.9.0/LICENSE-APACHE",
+        "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
+        "upstream_git_blob": "16fe87b06e802f094b3fbb0894b137bca2b16ef1",
+        "source_url": "https://github.com/tauri-apps/libappindicator-rs/blob/eafd1e3682a1247f595410266091e9684021cb6f/LICENSE-APACHE",
+        "retrieved_at_utc": "2026-10-13T06:27:34.253162+00:00"
+      },
+      {
+        "path": "libappindicator-sys-0.9.0/LICENSE-MIT",
+        "sha256": "eb227437252b2a7a9c1fc342c93ade1f3d7ce38cc6dd754f613db07d53ceff0b",
+        "upstream_git_blob": "50e79e21ccd1454f00695108ae01eaff9569689a",
+        "source_url": "https://github.com/tauri-apps/libappindicator-rs/blob/eafd1e3682a1247f595410266091e9684021cb6f/LICENSE-MIT",
+        "retrieved_at_utc": "2026-10-13T06:27:34.571613+00:00"
+      }
+    ]
+  },
+  "tauri-plugin@2.7.1": {
+    "crate_vcs_commit": "30da1fd6e17de6107ecc850c95dfb16b5729f2dd",
+    "files": [
+      {
+        "path": "tauri-plugin-2.7.1/LICENSE-APACHE-2.0",
+        "sha256": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594",
+        "upstream_git_blob": "f433b1a53f5b830a205fd2df78e2b34974656c7b",
+        "source_url": "https://github.com/tauri-apps/tauri/blob/30da1fd6e17de6107ecc850c95dfb16b5729f2dd/LICENSE-APACHE-2.0",
+        "retrieved_at_utc": "2026-10-13T06:27:34.933556+00:00"
+      },
+      {
+        "path": "tauri-plugin-2.7.1/LICENSE-MIT",
+        "sha256": "9dd42ea92cff2ede5cd477cbfcce051b2d0115c0ac7f368ee88cb545055dff1d",
+        "upstream_git_blob": "b08530d59433b3060f4fad8751ac2610c0b0aff3",
+        "source_url": "https://github.com/tauri-apps/tauri/blob/30da1fd6e17de6107ecc850c95dfb16b5729f2dd/LICENSE-MIT",
+        "retrieved_at_utc": "2026-10-13T06:27:35.264541+00:00"
+      }
+    ]
+  },
+  "selectors@0.38.0": {
+    "crate_vcs_commit": "572ecba2d1600e7c3d490586692a209faf703baa",
+    "files": [
+      {
+        "path": "selectors-0.38.0/MPL-2.0.txt",
+        "sha256": "fab3dd6bdab226f1c08630b1dd917e11fcb4ec5e1e020e2c16f83a0a13863e85",
+        "source_url": "https://mozilla.org/MPL/2.0/",
+        "local_source": "Debian base-files /usr/share/common-licenses/MPL-2.0",
+        "base_files_version": "13.8+deb13u6",
+        "retrieved_at_utc": "2026-10-13T06:27:35.278062+00:00"
+      }
+    ],
+    "applicability": "selectors crate license metadata and source headers declare MPL-2.0; exact upstream crate source is retained separately for this target build graph."
+  }
+}

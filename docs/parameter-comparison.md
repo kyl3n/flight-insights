@@ -9,8 +9,10 @@ conditions. It does not infer historical settings from a
 currently connected aircraft, produce causal conclusions, or recommend/write
 parameter values.
 
-No Q22 baselines are supplied or invented. Import the actual accepted original
-and Brian files before using those baseline labels. All snapshots are immutable;
+No Q22 baselines are supplied or invented. Import the actual accepted files before
+using **Q22 original - pre-FACt** and **Q22 with FACt tune** as display aliases.
+Preserve original bytes, filenames and legacy Brian labels; an alias does not
+rename or replace evidence. All snapshots are immutable;
 aircraft and exact board/firmware identity are entered explicitly. Their identity
 is marked **operator declared**, not independently verified. Cube Orange+ and DEF
 H7 snapshots remain separate because sessions must match their snapshot identity

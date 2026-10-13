@@ -213,3 +213,84 @@ def test_unknown_fields_and_narratives_cannot_bypass_projection():
     assert packet["metrics"]["mean_power_w"]["value"] is None
     assert packet["parameter_evidence"]["state"] == "uncertain"
     assert packet["parameter_evidence"]["attribution_allowed"] is False
+
+
+def test_deep_analysis_packet_preserves_numerical_evidence_and_exact_export(tmp_path):
+    from q22_engine.logs import LogService
+
+    store = Store(tmp_path / "store")
+    service = InsightReports(store)
+    log = LogService(store).import_log({"path": str(Path(__file__).resolve().parents[2] /
+        "fixtures/logs/synthetic-control-batch.log"), "label": "private-flight-label", "synthetic": True})["log"]
+    report = service.dispatch("insights.report", {"log_id": log["id"], "source_key": "dataflash", "boot_epoch": 0,
+        "interval_start_s": 0, "interval_end_s": 4,
+        "operating_profile": {"declared_firmware": "Copter-4.7.1", "flight_phase": "hover"},
+        "control": {"axis": "roll", "step": {"time_s": 2, "pre_s": .5, "post_s": 2}},
+        "spectrum": {"source": "batch_imu", "sensor_instance": "0", "axis": "x", "filter_stage": "pre",
+            "sample_rate_hz": 400, "window_samples": 256, "anti_alias_cutoff_hz": 100,
+            "anti_alias_evidence": "private-hardware-note"},
+        "filter_model": {"sample_rate_hz": 400, "stages": [{"kind": "ardupilot_static_notch",
+            "center_hz": 50, "bandwidth_hz": 20, "attenuation_db": 30}]}})["report"]
+    preview = service.dispatch("insights.review_packet", {"report_id": report["id"]})
+    packet = preview["packet"]
+    assert packet["scope"]["synthetic"] is True
+    assert packet["control"]["step"]["rise_time_s"] == pytest.approx(.44)
+    assert packet["control"]["tracking"]["rmse_deg_s"] == report["control"]["tracking"]["rmse_deg_s"]
+    assert packet["control"]["pid_terms"]["statistics"]
+    assert packet["spectrum"]["source"] == "batch_imu"
+    assert "ISBH.SampleUS" in packet["spectrum"]["measurement_clock_field"]
+    assert packet["spectrum"]["spectrogram"]["windows"] == report["spectrum"]["spectrogram"]["windows"]
+    center = next(row for row in packet["filter_model"]["response"] if row["frequency_hz"] == 50)
+    assert center["attenuation_db"] == pytest.approx(30)
+    assert packet["filter_model"]["qualification"]["exact_firmware_parity"] is False
+    modeled = next(row for row in packet["modeled_spectrum"]["bins"] if row["frequency_hz"] == 50)
+    assert modeled["modeled_psd"] / modeled["observed_psd"] == pytest.approx(.001)
+    assert "hypothetical" in packet["modeled_spectrum"]["interpretation"]
+    exported = service.dispatch("insights.export_review", {"report_id": report["id"], "folder": str(tmp_path)})
+    payload = Path(exported["path"]).read_bytes()
+    assert json.loads(payload) == packet
+    assert len(payload) == preview["byte_size"] < 2 * 1024 * 1024
+    assert not any(secret in payload.decode() for secret in ("private-flight-label", "private-hardware-note", str(tmp_path), log["id"]))
+
+
+def test_deep_analysis_projection_bounds_and_rejects_private_prose_and_forged_qualification():
+    from q22_engine.filter_models import MODEL_VERSION
+
+    raw = {"control": {"status": "observed", "axis": "roll", "reason": "private-reason",
+        "tracking": {"rmse_deg_s": 2, "GPS": "private-position"},
+        "step": {"status": "observed_response", "rise_time_s": "private-position"},
+        "pid_terms": {"statistics": {"D": {"rms": 3, "unit": "private-uid"}, "UID": {"mean": 42}}},
+        "series": [{"time_s": .2, "desired_deg_s": 12, "uid": "private-uid"}] * 600,
+        "references": ["https://private-host.example"]},
+        "filter_model": {"model_version": MODEL_VERSION, "status": "modeled_static",
+            "references": [{"url": "https://private-host.example"}],
+            "qualification": {"exact_firmware_parity": True, "parameter_application_allowed": True},
+            "response": [{"frequency_hz": 50, "gain": float("inf"), "undefined_reason": "private-reason"}] * 1100},
+        "modeled_spectrum": {"status": "hypothetical_static_application", "interpretation": "private-reason",
+            "bins": [{"frequency_hz": 50, "observed_psd": 2, "modeled_psd": .02, "uid": "private-uid"}]},
+        "spectrum": {"spectrogram": {"windows": [{"center_time_s": 1, "psd": [1] * 1100,
+            "absolute_timestamp": "private-timestamp"}] * 20}},
+        "vibration": {"distributions": [{"instance_id": "0", "axis": "x", "p95_mps2": 42,
+            "distribution_approximate": True, "distribution_method": "private-method"}]}}
+    packet = InsightReports.review_packet(raw)
+    text = json.dumps(packet, allow_nan=False)
+    assert "private-" not in text
+    assert packet["control"]["step"]["rise_time_s"] is None
+    assert packet["control"]["tracking"]["rmse_deg_s"] == 2
+    assert len(packet["control"]["series"]) == 512
+    assert len(packet["filter_model"]["response"]) == 1025
+    assert packet["filter_model"]["response"][0]["gain"] is None
+    assert packet["filter_model"]["qualification"]["exact_firmware_parity"] is False
+    assert packet["filter_model"]["qualification"]["parameter_application_allowed"] is False
+    assert len(packet["spectrum"]["spectrogram"]["windows"]) == 16
+    assert len(packet["spectrum"]["spectrogram"]["windows"][0]["psd"]) == 1025
+    assert packet["vibration"]["distributions"][0]["p95_mps2"] == 42
+    assert packet["vibration"]["distributions"][0]["distribution_approximate"] is True
+    raw["filter_model"]["model_version"] = "private-unrecognized-version"
+    assert InsightReports.review_packet(raw)["filter_model"]["references"] == []
+
+
+def test_historical_report_retains_algorithm_version_without_new_control_claims():
+    packet = InsightReports.review_packet({"algorithm_version": "q22-offline-insights/1"})
+    assert packet["algorithm_version"] == "q22-offline-insights/1"
+    assert packet["control"]["references"] == []

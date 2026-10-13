@@ -6,11 +6,15 @@ from contextlib import closing
 from datetime import datetime, timezone
 import json
 import logging
+import math
+import os
 from pathlib import Path
 import sqlite3
 import threading
 import time
 from uuid import uuid4
+
+import psutil
 
 
 TERMINAL = frozenset({"succeeded", "failed", "cancelled", "interrupted"})
@@ -22,8 +26,32 @@ def now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _owner_alive(owner: dict) -> bool | None:
+    """False means known-ended ownership; uncertainty never authorizes recovery."""
+    if (not isinstance(owner, dict) or type(owner.get("pid")) is not int or owner["pid"] <= 0
+            or type(owner.get("created_at")) not in (int, float)
+            or not math.isfinite(owner["created_at"]) or owner["created_at"] <= 0):
+        return None
+    try:
+        process = psutil.Process(owner["pid"])
+        # A reused PID belongs to a different process, not the journal owner.
+        if abs(process.create_time() - owner["created_at"]) >= .01:
+            return False
+        return process.status() != psutil.STATUS_ZOMBIE
+    except psutil.NoSuchProcess:
+        return False
+    except psutil.AccessDenied:
+        return None
+
+
 class JobService:
-    """One engine owns this journal; a restart never replays imports or repairs."""
+    """Each job has a process owner; restart recovery never replays operations.
+
+    Legacy ownerless rows retain the prior interrupted-on-open behavior. New
+    rows are recovered only when their recorded owner is known to have ended.
+    This protects status if another engine opens the same data directory; it
+    does not qualify simultaneous application instances for ordinary use.
+    """
 
     def __init__(self, data_dir: Path):
         self.database = Path(data_dir) / "jobs.sqlite3"
@@ -31,12 +59,22 @@ class JobService:
         self._lock = threading.RLock()
         self._events: dict[str, threading.Event] = {}
         self._closed = False
+        self._owner = {"pid": os.getpid(), "created_at": psutil.Process().create_time(),
+                       "instance_id": str(uuid4())}
+        self.recovery_warnings = []
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="q22-import")
         with closing(self._connect()) as db, db:
             db.execute("CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, created_at TEXT NOT NULL, data TEXT NOT NULL)")
             pending = db.execute("SELECT id, data FROM jobs WHERE json_extract(data, '$.state') IN ('queued','running')").fetchall()
             for job_id, payload in pending:
                 job = json.loads(payload)
+                if "owner" in job:
+                    alive = _owner_alive(job["owner"])
+                    if alive is not False:
+                        if alive is None and len(self.recovery_warnings) < 32:
+                            self.recovery_warnings.append({"job_id": job_id,
+                                "reason": "Owner liveness is unknown; status was preserved and no operation was replayed."})
+                        continue
                 job.update(state="interrupted", finished_at=now(), error={"message": "The engine stopped before completion. Review retained evidence and recovery guidance before starting a new operation."})
                 db.execute("UPDATE jobs SET data=? WHERE id=?", (json.dumps(job), job_id))
 
@@ -71,6 +109,7 @@ class JobService:
             if len(self._events) >= MAX_PENDING:
                 raise ValueError("Operation queue is full. Wait for a job or cancel a queued operation.")
             job = {"id": str(uuid4()), "method": method, "state": "queued", "created_at": now(),
+                   "owner": self._owner.copy(),
                    "cancel_requested": False,
                    "progress": {"stage": "queued", "completed": 0, "total": None, "fraction": None}}
             with closing(self._connect()) as db, db:
@@ -131,16 +170,20 @@ class JobService:
             jobs = [json.loads(row[0]) for row in rows[:limit]]
             for job in jobs:
                 job.pop("result", None)
-            return {"jobs": jobs, "next_offset": offset + limit if len(rows) > limit else None}
+            return {"jobs": jobs, "next_offset": offset + limit if len(rows) > limit else None,
+                    "recovery_warnings": self.recovery_warnings}
         if method == "jobs.cancel":
             with self._lock:
                 job = self._read(params.get("job_id"))
-                if job["state"] not in TERMINAL:
-                    event = self._events.get(job["id"])
-                    if event is not None:
-                        event.set()
-                        job = self._update(job["id"], cancel_requested=True)
-                return {"job": job}
+                if job["state"] in TERMINAL:
+                    return {"job": job, "cancellation": "already_terminal"}
+                event = self._events.get(job["id"])
+                if event is None:
+                    return {"job": job, "cancellation": "not_owned_by_this_engine",
+                            "reason": "No cancellation was delivered. This engine does not own the job's worker."}
+                event.set()
+                job = self._update(job["id"], cancel_requested=True)
+                return {"job": job, "cancellation": "requested"}
         raise ValueError("Unsupported job method.")
 
     def close(self):

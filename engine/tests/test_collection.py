@@ -8,6 +8,7 @@ from uuid import uuid4
 import pytest
 
 from q22_engine.collection import CollectionService
+from q22_engine.catalog import CATALOG_VERSION
 from q22_engine.store import Store
 
 
@@ -68,6 +69,21 @@ def test_prepare_fingerprint_and_idempotency_payload_bound(service):
         service.prepare(dict(params, applicability_fingerprint='stale'))
     with pytest.raises(ValueError, match='profile version'):
         service.prepare(dict(params, target_profile_version='old'))
+
+
+def test_future_collection_schema_is_rejected_without_appending_or_changing_rows(tmp_path):
+    store = Store(tmp_path / 'future-catalog')
+    with store._connect() as db:
+        db.execute('CREATE TABLE collection_schema (version INTEGER PRIMARY KEY)')
+        db.execute('INSERT INTO collection_schema VALUES (99)')
+        db.execute('CREATE TABLE future_evidence (value TEXT)')
+        db.execute("INSERT INTO future_evidence VALUES ('preserve-original')")
+    with pytest.raises(ValueError, match='Unsupported collection schema'):
+        CollectionService(store)
+    with store._connect() as db:
+        assert [row[0] for row in db.execute('SELECT version FROM collection_schema')] == [99]
+        assert db.execute('SELECT value FROM future_evidence').fetchone()[0] == 'preserve-original'
+        assert db.execute("SELECT 1 FROM sqlite_master WHERE name='collection_heads'").fetchone() is None
 
 
 def test_rapid_rearm_creates_exactly_one_record_each_while_prior_incomplete(service):
@@ -200,7 +216,7 @@ def test_manifest_and_operation_evidence_cannot_be_mutated(service):
     with service.store._connect() as db:
         with pytest.raises(sqlite3.IntegrityError, match='immutable'):
             db.execute("UPDATE collection_versions SET data='{}' WHERE kind='manifest'")
-        assert db.execute('PRAGMA user_version').fetchone()[0] == 1
+        assert db.execute('PRAGMA user_version').fetchone()[0] == CATALOG_VERSION
 
 
 def test_legacy_metric_session_does_not_become_flight_record(service):

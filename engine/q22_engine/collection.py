@@ -22,7 +22,7 @@ LIMITATIONS = [
     "UDP receipt and CRC do not authenticate a vehicle or universally detect replay; signatures are not verified.",
     "Aircraft/profile identity is operator-declared; source IDs and capture UUIDs alone do not prove physical identity.",
     "Passive parameter observations are not an active full readback or an atomic configuration snapshot.",
-    "Onboard log retrieval and independently corroborated interval matching remain unavailable; manual matches stay provisional.",
+    "Explicit acquisition and reported-clock corroboration are separate workflows; manual matches stay provisional and missing evidence remains visible.",
     "Arming is observed activity, not proof of airborne flight. Missing heartbeats never establish disarm.",
 ]
 RULE_VERSION = "q22-managed-capture-v1"
@@ -65,6 +65,10 @@ class CollectionService:
         self._lock = threading.RLock()
         self._parameters = {}
         with store._connect() as db:
+            if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='collection_schema'").fetchone():
+                versions = [row[0] for row in db.execute("SELECT version FROM collection_schema")]
+                if versions != [1]:
+                    raise ValueError("Unsupported collection schema; open this catalog with a compatible application.")
             db.executescript("""
                 CREATE TABLE IF NOT EXISTS collection_schema (version INTEGER PRIMARY KEY);
                 INSERT OR IGNORE INTO collection_schema VALUES (1);
@@ -161,7 +165,8 @@ class CollectionService:
 
     @staticmethod
     def readiness(capture=None):
-        reasons = ["Full pre/post parameter readbacks are not implemented.", "Exact onboard BIN retrieval/matching is not implemented."]
+        reasons = ["This observer alone does not establish complete pre/post readbacks or effective flight-time configuration.",
+                   "Downloaded/imported evidence needs the separate identity, clock and armed-boundary association rule; missing evidence remains partial."]
         if capture is None or not capture.get("recorder_started"):
             reasons.append("A recorder is not currently confirmed running.")
         if capture and capture.get("watcher_state") == "LINK_UNCERTAIN":
@@ -205,7 +210,7 @@ class CollectionService:
         return {"profile": profile, "applicability_fingerprint": _hash(profile),
                 "capabilities": {"managed_observation": True, "automatic_armed_intervals": True,
                                  "active_parameter_readback": False, "onboard_log_retrieval": False,
-                                 "verified_retrospective_match": False},
+                                 "verified_retrospective_match": True},
                 "readiness": self.readiness(), "limitations": LIMITATIONS}
 
     def _operation(self, db, method, params, profile):
@@ -711,6 +716,94 @@ class CollectionService:
             manifest = self._manifest(db, self._get(db, "interval", association["armed_interval_id"]), "operator_candidate_review")
             return self._complete(db, operation, {"association": association, "manifest": manifest, "operation_replayed": False})
 
+    def attach_alignment(self, params, report, report_id, catalog_reader):
+        """Internal machine-rule path; renderer evidence/state is never accepted."""
+        with self._lock, self.store._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            record = self._get(db, "flight_record", params.get("flight_record_id"))
+            capture = self._get(db, "capture", record["capture_session_id"])
+            operation = self._operation(db, "alignment.attach", params, capture["profile"])
+            if operation[2]:
+                return operation[2]
+            interval = self._get(db, "interval", record["armed_interval_id"])
+            if interval["start_status"] != "observed_transition" or not interval["disarm_evidence"] or interval["coverage_warnings"]:
+                raise ValueError("Automatic association requires complete, uninterrupted managed arm/disarm evidence.")
+            if catalog_reader()[2] != report["candidate_universe"]["signature"] or report["candidate_universe"]["truncated"]:
+                raise ValueError("Imported candidate universe changed or is incomplete; analyze again.")
+            reference = report["reference"]
+            if reference["synthetic"] and not capture["profile"]["connection"].get("synthetic"):
+                raise ValueError("Synthetic alignment cannot be attached to a declared-live flight record.")
+            connection = capture["profile"]["connection"]
+            expected_uid = connection.get("expected_uid") or (interval.get("identity_evidence") or {}).get("uid")
+            if not expected_uid or reference["uids"] != [str(expected_uid)]:
+                raise ValueError("Aligned reference identity does not match the managed interval's observed/declared UID.")
+            if reference["selection"]["source_key"] != f"{connection['system_id']}:{connection['component_id']}":
+                raise ValueError("Aligned reference source does not match the managed recorder's zero-link source.")
+            archived = [item for item in capture["artifact_sources"] if item["role"] == "app_mavlink_capture"
+                        and item["source"]["sha256"] == reference["artifact_sha256"]
+                        and item.get("coverage", {}).get("complete_chunk") is True and item.get("coverage", {}).get("record_scope") == "capture_global"
+                        and item.get("record_start") is not None and item.get("record_end") is not None]
+            if len(archived) != 1:
+                raise ValueError("Reference must be one complete original TLOG chunk archived by this managed capture.")
+            archive = archived[0]
+            log = json.loads(db.execute("SELECT data FROM documents WHERE kind='log' AND id=?", (reference["selection"]["log_id"],)).fetchone()[0])
+            if log["record_count"] != archive["record_end"] - archive["record_start"] + 1:
+                raise ValueError("Decoded/reference recorder record ranges are inconsistent.")
+            expected_span = {"kind": "records", "start": interval["arm_evidence"]["record_index"] - archive["record_start"],
+                             "end": interval["disarm_evidence"]["record_index"] - archive["record_start"]}
+            relevant = []
+            for candidate in report["candidates"]:
+                if candidate["state"] != "verified":
+                    continue
+                if candidate["evidence"]["synthetic"] and not connection.get("synthetic"):
+                    continue
+                spans = [match["candidate_record_span"] for match in candidate["matches"] if match["reference_record_span"] == expected_span]
+                role = {"bin": "onboard_bin", "tlog": "gcs_tlog", "log": "onboard_text_log"}.get(candidate["format"])
+                if spans and role:
+                    relevant.append((candidate, spans, role))
+            if not relevant:
+                raise ValueError("No freshly verified candidate has exact reference membership in this managed armed interval.")
+            associations = []
+            for candidate, spans, role in relevant:
+                candidate_log = json.loads(db.execute("SELECT data FROM documents WHERE kind='log' AND id=?", (candidate["selection"]["log_id"],)).fetchone()[0])
+                duplicate = None
+                for identity in record["association_ids"]:
+                    existing = self._get(db, "association", identity)
+                    if (existing["artifact_sha256"] == candidate["artifact_sha256"] and existing["role"] == role
+                            and existing["time_or_record_spans"] == spans and existing.get("rule_version") == report["algorithm_version"]):
+                        duplicate = existing
+                        break
+                if duplicate:
+                    associations.append(duplicate)
+                    continue
+                association = self._put(db, "association", {
+                    "id": str(uuid4()), "artifact_sha256": candidate["artifact_sha256"], "artifact_source_id": candidate_log["source"]["id"],
+                    "log_id": candidate_log["id"], "role": role, "synthetic": candidate_log["synthetic"],
+                    "vehicle_filter": {"source_id": candidate["selection"]["source_key"]}, "boot_epoch": candidate["selection"]["boot_epoch"],
+                    "time_or_record_spans": spans, "state": "verified", "rule_version": report["algorithm_version"],
+                    "supporting_evidence": ["Original-hash-bound managed capture membership; matching UID/firmware, independent reported-clock models and both observed armed boundaries."],
+                    "alignment_report_id": report_id, "fresh_evidence_hash": report["evidence_hash"],
+                    "candidate_universe": report["candidate_universe"], "clock_model": candidate["evidence"]["clock_model"],
+                    "contradictions": [], "candidate_alternatives": candidate["competing_candidates"], "review_history": [],
+                    "flight_record_id": record["id"], "armed_interval_id": interval["uuid"], "capture_session_id": capture["uuid"],
+                    "limitations": report["limitations"], "verification_meaning": "documented_content_rule_not_authenticated_identity_or_full_flight_completeness"})
+                record["association_ids"].append(association["id"])
+                associations.append(association)
+            timeline = self._put(db, "parameter_timeline", {"id": str(uuid4()), "flight_record_id": record["id"],
+                "alignment_report_id": report_id, "fresh_evidence_hash": report["evidence_hash"], **report["parameter_timeline"]})
+            interval["parameter_evidence"]["timeline"] = {"id": timeline["id"], "state": timeline["state"],
+                "observation_count": timeline["observation_count"], "change_count": timeline["change_count"], "attribution_allowed": False}
+            interval["parameter_evidence"]["aligned_acquisitions"] = [
+                {k: link[k] for k in ("acquisition_id", "state", "matches", "completeness", "consistency", "source_refs", "flight_time_applicability")}
+                for link in report["parameter_links"]["acquisitions"] if any(
+                    next((item["record_span"] for item in reference["armed_intervals"] if item["index"] == match["reference_interval_index"]), None) == expected_span
+                    for match in link["matches"])]
+            self._put(db, "interval", interval)
+            self._put(db, "flight_record", record)
+            manifest = self._manifest(db, interval, "machine_content_alignment_attached")
+            return self._complete(db, operation, {"associations": associations, "manifest": manifest,
+                                                  "parameter_timeline_id": timeline["id"], "operation_replayed": False})
+
     @staticmethod
     def _compact_parameter_evidence(evidence):
         value = copy.deepcopy(evidence)
@@ -899,7 +992,10 @@ class CollectionService:
             return None
         value = {k: v for k, v in capture.items() if k not in ("source_states", "artifact_sources", "recorder_status") or (k == "recorder_status" and detailed)}
         value["artifact_count"] = len(capture.get("artifact_sources", []))
-        value["artifact_sources"] = [{"role": item["role"], "source": item["source"]} for item in capture.get("artifact_sources", [])[:64 if detailed else 0]]
+        value["artifact_sources"] = [{"role": item["role"], "source": item["source"],
+            "coverage": {key: item.get("coverage", {}).get(key) for key in ("complete_chunk", "record_scope", "interval_membership")},
+            "record_start": item.get("record_start"), "record_end": item.get("record_end")}
+            for item in capture.get("artifact_sources", [])[:64 if detailed else 0]]
         value["artifact_sources_truncated"] = len(capture.get("artifact_sources", [])) > (64 if detailed else 0)
         value["armed_interval_count"] = len(capture["armed_interval_ids"])
         value["armed_interval_ids"] = capture["armed_interval_ids"][-100:]

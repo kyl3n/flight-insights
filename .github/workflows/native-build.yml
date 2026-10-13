@@ -2,6 +2,11 @@ name: Native preview builds
 
 on:
   workflow_dispatch:
+    inputs:
+      include_macos:
+        description: Also qualify experimental macOS targets (Windows/Linux are required)
+        type: boolean
+        default: false
   push:
     branches: [main]
   pull_request:
@@ -15,19 +20,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: ubuntu-22.04
-            target: x86_64-unknown-linux-gnu
-            bundles: deb,appimage
-          - os: windows-2022
-            target: x86_64-pc-windows-msvc
-            bundles: nsis
-          - os: macos-15
-            target: aarch64-apple-darwin
-            bundles: app,dmg
-          - os: macos-15-intel
-            target: x86_64-apple-darwin
-            bundles: app,dmg
+        include: ${{ fromJSON(inputs.include_macos && '[{"os":"ubuntu-22.04","target":"x86_64-unknown-linux-gnu","bundles":"deb,appimage"},{"os":"windows-2022","target":"x86_64-pc-windows-msvc","bundles":"nsis"},{"os":"macos-15","target":"aarch64-apple-darwin","bundles":"app,dmg"},{"os":"macos-15-intel","target":"x86_64-apple-darwin","bundles":"app,dmg"}]' || '[{"os":"ubuntu-22.04","target":"x86_64-unknown-linux-gnu","bundles":"deb,appimage"},{"os":"windows-2022","target":"x86_64-pc-windows-msvc","bundles":"nsis"}]') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     env:
@@ -62,11 +55,21 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install --no-install-recommends -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf libssl-dev pkg-config
+          sudo apt-get install --no-install-recommends -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf libssl-dev pkg-config xvfb xauth dbus-x11
       - name: Install locked project dependencies
         run: |
           npm ci
           uv sync --frozen --python 3.12.14
+      - name: Parse the offline Windows bench script
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          foreach ($relative in @('scripts/qualify-installed-windows.ps1', 'native-repair/scripts/install-windows.ps1')) {
+            $null = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PWD $relative), [ref]$tokens, [ref]$errors)
+            if ($errors.Count -gt 0) { $errors | Format-List; throw ('Bench script has PowerShell syntax errors: '+$relative) }
+          }
       - name: Engine tests
         run: python scripts/ci-check.py engine-test-output.txt uv run --frozen pytest
       - name: Frozen sidecar smoke
@@ -87,9 +90,18 @@ jobs:
           cargo fmt --manifest-path src-tauri/Cargo.toml --check
           cargo test --manifest-path src-tauri/Cargo.toml --target ${{ matrix.target }} --locked
           cargo clippy --manifest-path src-tauri/Cargo.toml --target ${{ matrix.target }} --locked -- -D warnings
+          cargo fmt --manifest-path native-repair/Cargo.toml --check
+          cargo test --manifest-path native-repair/Cargo.toml --target ${{ matrix.target }} --locked
+          cargo clippy --manifest-path native-repair/Cargo.toml --target ${{ matrix.target }} --locked -- -D warnings
+      - name: Build and verify unprivileged diagnostic helper without installation
+        run: |
+          cargo build --manifest-path native-repair/Cargo.toml --target ${{ matrix.target }} --release --locked
+          uv run --frozen python scripts/verify-repair-helper.py --target ${{ matrix.target }} --report native-verification-helper-${{ matrix.target }}.json
       - name: Install Linux browser dependencies
         if: runner.os == 'Linux'
         run: npx playwright install-deps chromium
+      - name: Preserve locked application dependency graph and upstream notices
+        run: uv run --frozen python scripts/application-dependencies.py --target ${{ matrix.target }}
       - name: Browser integration tests on the target operating system
         run: |
           npx playwright install chromium
@@ -108,7 +120,20 @@ jobs:
         run: npm run tauri -- build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --ci -- --locked
       - name: Verify every packaged runtime through its native supervisor
         run: |
-          uv run --frozen python scripts/verify-native-bundle.py --target ${{ matrix.target }} --bundle-root src-tauri/target/${{ matrix.target }}/release/bundle --formats ${{ matrix.bundles }} --report native-verification-${{ matrix.target }}.json
+          verification=(uv run --frozen python scripts/verify-native-bundle.py --target ${{ matrix.target }} --bundle-root src-tauri/target/${{ matrix.target }}/release/bundle --formats ${{ matrix.bundles }} --require-gui --report native-verification-${{ matrix.target }}.json)
+          if [[ "$RUNNER_OS" == Linux ]]; then
+            xvfb-run -a -s '-screen 0 1440x1000x24' dbus-run-session -- "${verification[@]}"
+          else
+            "${verification[@]}"
+          fi
+      - name: Preserve native qualification failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-failure-${{ matrix.target }}
+          if-no-files-found: ignore
+          retention-days: 14
+          path: native-verification-*.json
       - name: Archive macOS app with executable modes and symlinks preserved
         if: runner.os == 'macOS'
         run: |
@@ -127,3 +152,12 @@ jobs:
             src-tauri/binaries/*.inventory.json
             src-tauri/resources/engine/
             native-verification-${{ matrix.target }}.json
+            native-verification-helper-${{ matrix.target }}.json
+            native-repair/target/${{ matrix.target }}/release/q22-network-helper
+            native-repair/target/${{ matrix.target }}/release/q22-network-helper.exe
+            scripts/qualify-installed-linux.sh
+            scripts/qualify-installed-windows.ps1
+            native-repair/scripts/
+            native-repair/docs/windows-service.md
+            docs/linux-private-bench-helper.md
+            docs/native-release-checks.md

@@ -4,6 +4,29 @@ fn main() {
     let arguments: Vec<_> = std::env::args_os().skip(1).collect();
     if arguments
         .first()
+        .is_some_and(|value| value == "--verify-gui")
+    {
+        if arguments.len() != 7
+            || arguments[1] != "--data-dir"
+            || arguments[3] != "--report"
+            || arguments[5] != "--nonce"
+        {
+            eprintln!("Usage: q22-flight-lab --verify-gui --data-dir EMPTY_DIRECTORY --report NEW_FILE --nonce HEX64");
+            std::process::exit(2);
+        }
+        let result = q22_flight_lab::verify_native_gui(
+            std::path::PathBuf::from(&arguments[2]),
+            std::path::PathBuf::from(&arguments[4]),
+            arguments[6].to_string_lossy().into_owned(),
+        );
+        if let Err(message) = result {
+            eprintln!("Native GUI verification failed: {message}");
+            std::process::exit(1);
+        }
+        return;
+    }
+    if arguments
+        .first()
         .is_some_and(|value| value == "--verify-engine")
     {
         if arguments.len() != 3 || arguments[1] != "--data-dir" {

@@ -3,12 +3,16 @@ from __future__ import annotations
 
 from decimal import Decimal, InvalidOperation
 import math
+import random
 
 from . import guidance
+from .control_analysis import ControlAnalyzer
+from .control_analysis import quantile
+from .filter_models import filter_model
 from .logs import LogService, check_cancel
 from .parameters import MAX_PARAMETERS, MAX_TIME_SECONDS, NAME, finite, text_field
 
-VERSION = "q22-offline-insights/1"
+VERSION = "q22-offline-insights/2"
 MAX_FINDINGS = 100
 MAX_SERIES = 256
 PARAMETER_PREFIXES = ("INS_", "ATC_", "PSC_", "MOT_", "BATT", "SERVO", "RC")
@@ -157,6 +161,51 @@ class Trace:
                 "unavailable_reason": "No qualifying observations/pairs with validated units in the selected interval." if value is None else None}
 
 
+class VibrationDistribution:
+    """Time-weighted threshold exposure plus a bounded uniform sample reservoir."""
+    def __init__(self, start, end, gap, warning, critical):
+        self.trace = Trace(start, end, gap)
+        self.thresholds = {"warning": warning, "critical": critical}
+        self.duration = {key: 0.0 for key in self.thresholds}
+        self.values = []
+        self.random = random.Random(2201)
+
+    def add(self, t, value, ref):
+        old = self.trace.previous
+        accepted = self.trace.high_water is None or t > self.trace.high_water
+        self.trace.add(t, value, ref)
+        if not accepted or value is None:
+            return
+        if len(self.values) < 4096:
+            self.values.append(value)
+        else:
+            slot = self.random.randrange(self.trace.count)
+            if slot < len(self.values):
+                self.values[slot] = value
+        if old is None or old[1] is None or not 0 < t - old[0] <= self.trace.gap:
+            return
+        a, b = old[1], value
+        for key, threshold in self.thresholds.items():
+            if min(a, b) > threshold:
+                fraction = 1
+            elif max(a, b) <= threshold:
+                fraction = 0
+            else:
+                fraction = (max(a, b) - threshold) / abs(b - a)
+            self.duration[key] += (t - old[0]) * fraction
+
+    def summary(self):
+        return {"sample_count": self.trace.count, "retained_distribution_samples": len(self.values),
+                "distribution_approximate": self.trace.count > len(self.values),
+                "distribution_method": "Exact sample quantiles up to4096 observations; thereafter deterministic uniform reservoir sample, not time-weighted quantiles.",
+                **{f"p{int(q*100)}_mps2": quantile(self.values, q) if self.values else None for q in (.5,.95,.99)},
+                "maximum_mps2": self.trace.high, "time_above_warning_s": self.duration["warning"],
+                "time_above_critical_s": self.duration["critical"], "covered_duration_s": self.trace.covered,
+                "exposure_basis": "Piecewise-linear threshold crossing within valid short pairs only; gaps and unobserved interval tails excluded.",
+                "exposure_fraction_of_covered_warning": self.duration["warning"] / self.trace.covered if self.trace.covered else None,
+                "exposure_fraction_of_covered_critical": self.duration["critical"] / self.trace.covered if self.trace.covered else None}
+
+
 def fft(values):
     """Radix-2 forward transform used only on a bounded qualified raw window."""
     n = len(values)
@@ -211,6 +260,7 @@ class Spectrum:
         self.boundaries = self.observed = 0
         self.clock_exclusions = 0
         self.sample_high_water = None
+        self.batch_key = None
         self.last_sample_time = None
         self.capped_samples = 0
         self.reason = "No qualified raw high-rate GYR sample-clock waveform and anti-alias declaration was selected. VIBE summaries cannot supply frequency."
@@ -224,6 +274,10 @@ class Spectrum:
             raise ValueError("Spectrum requires rate 100..32000 Hz and declared anti-alias cutoff below 45% of that rate.")
         self.evidence = text_field(config, "anti_alias_evidence", 1000)
         self.instance = text_field(config, "sensor_instance", 32)
+        self.source = config.get("source", "raw_gyr")
+        self.filter_stage = config.get("filter_stage", "any")
+        if self.source not in {"raw_gyr", "batch_imu"} or self.filter_stage not in {"any", "unknown", "pre", "post"}:
+            raise ValueError("Spectrum source must be raw_gyr or batch_imu; filter_stage must be any/unknown/pre/post.")
         self.axis = config.get("axis", "x")
         self.window = config.get("window_samples", 1024)
         if self.axis not in ("x", "y", "z") or type(self.window) is not int or self.window not in (256, 512, 1024, 2048):
@@ -238,8 +292,10 @@ class Spectrum:
             self.boundaries += 1
 
     def add(self, event, t):
-        if self.config is None or event.get("message_type") != "GYR" or event.get("source_format") not in ("bin", "log"):
+        if self.config is None or self.source != "raw_gyr" or event.get("message_type") != "GYR" or event.get("source_format") not in ("bin", "log"):
             return
+        if self.filter_stage not in {"any", "unknown"}:
+            return  # No verified raw logging-stage mapping is available here.
         raw = event.get("raw_fields", {})
         if str(raw.get("I", raw.get("IMU", "unknown"))) != self.instance:
             return
@@ -275,6 +331,47 @@ class Spectrum:
             self.capped_samples += 1
         self.last_sample_time = sample
 
+    def add_batch(self, event):
+        if (self.config is None or self.source != "batch_imu" or event.get("sensor_type") != "gyro"
+                or event.get("sensor_instance") != self.instance or event.get("sample_unit") != "rad/s"
+                or event.get("batch_decode", {}).get("status") != "complete"):
+            return
+        if self.filter_stage != "any" and event.get("filter_stage") != self.filter_stage:
+            return
+        rate = event.get("sample_rate_hz")
+        key = event.get("batch_id"), event.get("sample_start_us")
+        if key != self.batch_key:
+            self.barrier()
+            self.batch_key = key
+        if not isinstance(rate, (int, float)) or abs(rate / self.rate - 1) > .01 or event.get("encoding_endpoint_count", 0):
+            self.barrier()
+            self.clock_exclusions += 1
+            return
+        values = event.get("samples", {}).get(self.axis, [])
+        for index, value in enumerate(values):
+            self.observed += 1
+            sample = event["sample_start_us"] / 1e6 + (event["sample_offset"] + index) / rate
+            relative = sample - self.origin_s
+            if not self.start <= relative <= self.end:
+                self.barrier()
+                continue
+            if self.sample_high_water is not None and sample <= self.sample_high_water:
+                self.clock_exclusions += 1
+                self.barrier()
+                continue
+            self.sample_high_water = sample
+            if self.last_sample_time is not None and abs((sample - self.last_sample_time) * self.rate - 1) > .01:
+                self.barrier()
+            block = event["sample_block_references"][index // 32]
+            ref = {**reference(event, relative), **block, "measurement_time_s": relative,
+                   "batch_id": event["batch_id"], "batch_sample_index": event["sample_offset"] + index,
+                   "filter_stage": event.get("filter_stage", "unknown")}
+            if len(self.samples) < 4096:
+                self.samples.append((sample, value, ref))
+            else:
+                self.capped_samples += 1
+            self.last_sample_time = sample
+
     def finish(self):
         if self.config is None:
             return {"status": "unavailable", "reason": self.reason, "bins": [], "peaks": [], "citation_ids": ["harmonic_notch"]}
@@ -292,7 +389,22 @@ class Spectrum:
                 for k, power in enumerate(density) if k * rate / self.window <= self.cutoff]
         peaks = [item for k, item in enumerate(bins) if 0 < k < len(bins) - 1
                  and item["psd"] > bins[k-1]["psd"] and item["psd"] >= bins[k+1]["psd"]]
+        offsets = list(range(0, used_samples - self.window + 1, self.window // 2))
+        chosen = sorted({round(i * (len(offsets) - 1) / max(1, min(16, len(offsets)) - 1)) for i in range(min(16, len(offsets)))})
+        spectrogram = []
+        rms = []
+        for position in chosen:
+            offset = offsets[position]
+            waveform = [row[1] for row in selected[offset:offset + self.window]]
+            power, _ = welch(waveform, rate, self.window)
+            mean = sum(waveform) / len(waveform)
+            rms.append(math.sqrt(sum((value - mean)**2 for value in waveform) / len(waveform)))
+            spectrogram.append({"center_time_s": (selected[offset][0] + selected[offset + self.window - 1][0]) / 2 - self.origin_s,
+                                "psd": power[:len(bins)]})
+        mean_rms = sum(rms) / len(rms)
+        rms_cv = math.sqrt(sum((value - mean_rms)**2 for value in rms) / len(rms)) / mean_rms if mean_rms else None
         return {"status": "conditional", "method": "Welch, symmetric Hann, per-window mean removed, 50% overlap, one-sided density",
+                "source": self.source, "filter_stage": selected[0][2].get("filter_stage", "unknown"),
                 "unit": "(rad/s)^2/Hz", "sample_rate_hz": rate, "declared_sample_rate_hz": self.rate,
                 "frequency_resolution_hz": rate / self.window, "nyquist_hz": rate / 2,
                 "anti_alias_cutoff_hz": self.cutoff, "anti_alias_basis": "operator declaration; attenuation and acquisition chain not independently verified",
@@ -301,12 +413,15 @@ class Spectrum:
                 "sample_cap": 4096, "scope_start": selected[0][2], "scope_end": selected[used_samples - 1][2],
                 "sample_cap_reached": self.capped_samples > 0,
                 "sample_clock_start_s": selected[0][0], "sample_clock_end_s": selected[used_samples - 1][0],
-                "measurement_clock_field": "GYR.SampleUS with schema-validated units",
+                "measurement_clock_field": "ISBH.SampleUS + sample_index / ISBH.smp_rate" if self.source == "batch_imu" else "GYR.SampleUS with schema-validated units",
                 "clock_exclusions": self.clock_exclusions,
                 "measurement_interval_start_s": selected[0][0] - self.origin_s,
                 "measurement_interval_end_s": selected[used_samples - 1][0] - self.origin_s,
                 "maximum_sample_period_error_fraction": max(abs((selected[k][0] - selected[k-1][0]) * self.rate - 1) for k in range(1, used_samples)),
                 "bins": bins, "peaks": sorted(peaks, key=lambda item: item["psd"], reverse=True)[:5],
+                "spectrogram": {"frequencies_hz": [item["frequency_hz"] for item in bins], "windows": spectrogram,
+                                "window_limit": 16, "total_windows": len(offsets), "selection": "evenly spaced complete windows; no interpolation"},
+                "window_rms_coefficient_of_variation": rms_cv,
                 "continuity_boundaries": self.boundaries, "citation_ids": ["harmonic_notch", "gyro_filter"],
                 "limitations": ["Only the reported continuous window is analyzed; other periods may have different spectra.",
                                 "A declared cutoff does not prove sufficient Nyquist attenuation. Peaks can still contain aliasing or non-motor motion.",
@@ -352,13 +467,16 @@ class InsightService:
         origin = int(selected["origin_time_us"])
         power, tracking, voltage = (Trace(start, end, gap) for _ in range(3))
         spectrum = Spectrum(params.get("spectrum"), origin_s=origin / 1e6, start=start, end=end, gap=gap)
+        control = ControlAnalyzer(params.get("control"), start, end, gap, profile["declared_firmware"], profile["flight_phase"])
+        model = filter_model(params["filter_model"]) if params.get("filter_model") is not None else {
+            "status": "unavailable", "reason": "No explicit static filter model was selected; aircraft settings are never inferred from a spectrum.", "response": []}
         findings, warnings, changes, current, at_start = [], [], [], {}, {}
         parameter_times = {}
         finding_count = change_count = untimed_parameters = invalid_parameters = 0
         observed_kinds = set()
         barriers = excluded_vibe = observed_vibe = 0
         vibe_buckets, excursions, clip_previous, clip_deltas, clip_resets = {}, {}, {}, {}, []
-        vibe_traces, clip_high_water, clip_coverage, clip_gaps = {}, {}, {}, []
+        vibe_traces, vibe_distributions, clip_high_water, clip_coverage, clip_gaps = {}, {}, {}, {}, []
         vibe_instances = set()
         clip_gap_count = clip_reset_count = 0
         last_power = None
@@ -402,6 +520,7 @@ class InsightService:
                     for trace in vibe_traces.values():
                         trace.barrier()
                     spectrum.barrier()
+                    control.barrier()
                     finish_excursions()
                     for counter, (_, _, old_ref) in clip_previous.items():
                         clipping_gap(counter, "corruption_or_clock_boundary", old_ref=old_ref)
@@ -431,6 +550,9 @@ class InsightService:
                     at_start[name] = {"name": name, "value": value, "age_at_start_s": start - t, "evidence": reference(event, t)}
                 elif t < end and (previous is None or Decimal(previous) != Decimal(value)):
                     change_count += 1
+                    # A response across mixed observed configuration cannot
+                    # establish one isolated controller response window.
+                    control.barrier()
                     if len(changes) < 64:
                         changes.append({"name": name, "before": previous, "after": value,
                                         "kind": "newly_observed" if previous is None else "changed", "evidence": reference(event, t)})
@@ -438,6 +560,9 @@ class InsightService:
                 continue
             if t is None:
                 continue
+            if kind == "imu_batch":
+                spectrum.add_batch(event)
+            control.add(event, t)
             ref = reference(event, t)
             inside = start <= t <= end
             raw = event.get("raw_fields", {})
@@ -476,9 +601,13 @@ class InsightService:
                     field = "Vibe" + axis.upper() if message == "VIBE" else "vibration_" + axis
                     value = quantity(event, field, {"m/s/s", "m/s^2", "m/s²"})
                     axis_key = instance, axis
-                    axis_trace = vibe_traces.setdefault(axis_key, Trace(start, end, gap))
+                    if axis_key not in vibe_distributions:
+                        vibe_distributions[axis_key] = VibrationDistribution(start, end, gap, warning, critical)
+                    distribution = vibe_distributions[axis_key]
+                    axis_trace = distribution.trace
+                    vibe_traces[axis_key] = axis_trace
                     rejected_time = axis_trace.high_water is not None and t <= axis_trace.high_water
-                    axis_trace.add(t, value if value is not None and value >= 0 else None, ref)
+                    distribution.add(t, value if value is not None and value >= 0 else None, ref)
                     if rejected_time:
                         value = None
                     if value is None or value < 0:
@@ -674,7 +803,27 @@ class InsightService:
                  "time_domain": selected["time_domain"], "origin_time_us": selected["origin_time_us"],
                  "interval_start_s": start, "interval_end_s": end, "max_gap_s": gap, "battery_id": battery}
         scope["flight_phase"] = profile["flight_phase"]
+        spectrum_result = spectrum.finish()
+        modeled_spectrum = {"status": "unavailable", "reason": "Requires a qualified spectrum and explicit static model at the same sample rate."}
+        if (spectrum_result.get("status") == "conditional" and model.get("status") == "modeled_static"
+                and abs(spectrum_result["sample_rate_hz"] / model["sample_rate_hz"] - 1) <= 1e-6):
+            bins = spectrum_result["bins"]
+            response = filter_model({**params["filter_model"], "frequencies_hz": [row["frequency_hz"] for row in bins]})["response"]
+            transformed = [{"frequency_hz": row["frequency_hz"], "observed_psd": row["psd"],
+                            "modeled_psd": row["psd"] * gain["gain"]**2 if gain["gain"] is not None else None}
+                           for row, gain in zip(bins, response)]
+            before = sum(row["observed_psd"] for row in transformed) * spectrum_result["frequency_resolution_hz"]
+            after = (sum(row["modeled_psd"] for row in transformed) * spectrum_result["frequency_resolution_hz"]
+                     if all(row["modeled_psd"] is not None for row in transformed) else None)
+            modeled_spectrum = {"status": "hypothetical_static_application", "bins": transformed,
+                "observed_band_power": before, "modeled_band_power": after, "band_power_unit": "(rad/s)^2",
+                "band_attenuation_db": 10*math.log10(before/after) if before > 0 and after is not None and after > 0 else None,
+                "band_start_hz": bins[0]["frequency_hz"], "band_end_hz": bins[-1]["frequency_hz"],
+                "interpretation": "Additional hypothetical static filtering of the logged waveform, PSD multiplied by |H|². Not a measured pre/post comparison or prediction of the aircraft's effective pipeline."}
         report = {"algorithm_version": VERSION, "scope": scope, "operating_profile": profile, "metrics": metrics,
+                  "control": control.finish(bool(observed_kinds & {"accelerometer_clipping", "vibration_excursion", "clipping_counter_reset"})),
+                  "filter_model": model,
+                  "modeled_spectrum": modeled_spectrum,
                   "vibration": {"status": "available" if vibe_buckets else "unavailable", "series": sorted(vibe_buckets.values(), key=lambda item: (item["time_s"], item["instance_id"], item["axis"])),
                                 "series_reduction": "Maximum per axis/instance in each of 256 interval buckets; no interpolation or FFT.",
                                 "warning_threshold_mps2": warning, "critical_threshold_mps2": critical,
@@ -684,16 +833,19 @@ class InsightService:
                                               "covered_duration_s": trace.covered, "coverage_fraction": trace.covered / (end - start),
                                               "valid_pair_count": trace.pairs, "exclusions": trace.exclusions,
                                               "exclusion_count": trace.exclusion_count} for key, trace in sorted(vibe_traces.items())],
+                                "distributions": [{"instance_id": key[0], "axis": key[1], **value.summary()} for key, value in sorted(vibe_distributions.items())],
                                 "clipping": {"observed_deltas": clip_deltas, "resets": clip_resets, "gap_count": clip_gap_count,
                                              "reset_count": clip_reset_count, "resets_truncated": clip_reset_count > len(clip_resets),
                                              "gaps": clip_gaps, "gaps_truncated": clip_gap_count > len(clip_gaps),
-                                             "coverage": [{"counter": key, **value, "coverage_fraction": value["covered_duration_s"] / (end - start)}
+                                             "coverage": [{"counter": key, **value, "coverage_fraction": value["covered_duration_s"] / (end - start),
+                                                           "observed_delta": clip_deltas.get(key, 0) if value["valid_pair_count"] else None,
+                                                           "observed_rate_per_s": clip_deltas.get(key, 0) / value["covered_duration_s"] if value["covered_duration_s"] else None}
                                                           for key, value in sorted(clip_coverage.items())],
                                              "interpretation": "Only monotonic counter deltas across short, uninterrupted sampled pairs are counted; initial absolute counts are not this interval's event count."},
                                 "observed_records": observed_vibe, "excluded_fields": excluded_vibe},
                   "parameter_evidence": parameter_evidence, "findings": findings, "finding_count": finding_count,
                   "findings_truncated": finding_count > len(findings), "recommendations": recommendations,
-                  "spectrum": spectrum.finish(), "guidance": registry, "warnings": warnings, "limitations": LIMITATIONS,
+                  "spectrum": spectrum_result, "guidance": registry, "warnings": warnings, "limitations": LIMITATIONS,
                   "evidence_features": {"source_sha256": log["source"]["sha256"], "sample_counts": {key: item.get("sample_count", 0) for key, item in metrics.items()},
                                         "barrier_count": barriers, "parameter_state": parameter_state,
                                         "vibration_records": observed_vibe, "clipping_observed_deltas": clip_deltas,

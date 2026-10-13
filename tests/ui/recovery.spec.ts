@@ -96,3 +96,55 @@ test('simulated native failure restores durable repair recovery and requires exp
     expect(syntheticInspectionCount).toBe(2);
   } finally {await engine.close();}
 });
+
+test('experimental helper requires session opt-in and a fresh exact native plan without claiming qualification', async ({page}) => {
+  // Typed helper boundary only: no enrollment, elevated process, host write, or
+  // real repair runs here. Ordinary data/status calls still use the real engine.
+  let optedIn=false;let expired=true;
+  const capability=()=>({current_platform:'Synthetic bench',platforms:{'Synthetic bench':{inspection:'fixture',stream_probes:'fixture',repair:{state:optedIn?'experimental_enabled':'experimental_available',automatic_apply:optedIn,reason:'Synthetic enrolled helper; no physical qualification.',bench_available:true,bench_opt_in:optedIn,qualified:false},qualification:'not_qualified'}},layers:[],repair_safety:{allowed:true,state:'synthetic_disarmed',reasons:[]}});
+  const inspection:NetworkInspection={status:'ready',platform:'Synthetic bench',interfaces:[{name:'test-adapter',index:1,up:true,ipv4:[{address:'10.0.0.10',prefix:24,network:'10.0.0.0/24'}]}],routes:[],default_routes:[],targets:[],firewall:{state:'unknown',reason:'Test-only fixture'},limitations:['No host inspection or write occurs in this simulated helper test.']};
+  const engine=await connectEngine(page,{boundaryOverride:(method,params)=>{
+    if(method==='network.capabilities')return capability();
+    if(method==='network.bench_opt_in'){optedIn=params.enabled===true;return capability();}
+    if(method==='network.inspect')return inspection;
+    if(method==='network.plan')return {plan_id:'app-test-plan',state:'ready',title:'Synthetic enrolled helper candidate',commands:[],rollback_commands:[],requires_elevation:true,automatic_apply:optedIn,warnings:['Test-only native helper contract.'],native_review:{plan_id:'native-test-plan',review_fingerprint:'review-immutable-123',before_fingerprint:'before-observed-456',candidate:{kind:'host_route',destination:'10.0.0.2/32',interface:'test-adapter'},expires_utc_ms:Date.now()+(expired?-1000:60_000),rollback_after_ms:30_000,authority:'admin_enrolled_helper'}};
+    if(method==='network.apply')return {plan_id:'app-test-plan',state:'applied',may_have_applied:true,message:'Synthetic native receipt only; no host changed.',native_state:'applied_temporary',rollback_deadline_utc_ms:Date.UTC(2030,0,1)};
+    return undefined;
+  }});
+  try{
+    await page.goto('/');await expect(page.getByText('Engine connected',{exact:true})).toBeVisible();
+    await page.getByRole('navigation').getByRole('button',{name:'Network checks',exact:true}).click();
+    const enable=page.getByRole('button',{name:'Enable experimental bench repairs',exact:true});
+    await expect(enable).toBeDisabled();
+    await expect(page.getByText('Qualification: Not established',{exact:true})).toBeVisible();
+    expect(engine.calls.some(call=>['network.bench_opt_in','network.inspect','network.apply'].includes(call.method))).toBe(false);
+    await page.getByLabel('I accept this experimental administrator-enrolled helper for this bench session and will review each temporary host change.').check();
+    await enable.click();await expect(page.getByText('Experimental session enabled',{exact:true})).toBeVisible();
+    await page.getByLabel('Device IPv4',{exact:true}).fill('10.0.0.2');await page.getByRole('button',{name:'Add source',exact:true}).click();
+    await page.getByRole('button',{name:'Inspect computer',exact:true}).click();
+    await page.getByRole('combobox',{name:'Repair type',exact:true}).selectOption('host_route');
+    await page.getByRole('button',{name:'Preview exact changes',exact:true}).click();
+    await expect(page.getByRole('heading',{name:'Administrator-enrolled helper plan',exact:true})).toBeVisible();
+    await expect(page.getByText('native-test-plan',{exact:true})).toBeVisible();
+    await expect(page.getByText('before-observed-456',{exact:true})).toBeVisible();
+    await expect(page.getByText('review-immutable-123',{exact:true})).toBeVisible();
+    await page.setViewportSize({width:640,height:900});
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(640);
+    const consent=page.getByLabel('I reviewed the exact helper candidate, fingerprints, expiry, and rollback interval. Apply this temporary host change.');
+    await consent.check();await expect(page.getByRole('button',{name:'Apply approved repair',exact:true})).toBeDisabled();
+    expired=false;await page.getByRole('button',{name:'Preview exact changes',exact:true}).click();
+    await expect(consent).not.toBeChecked();await expect(page.getByRole('button',{name:'Apply approved repair',exact:true})).toBeDisabled();
+    await consent.check();await page.getByRole('button',{name:'Apply approved repair',exact:true}).click();
+    await expect(page.getByText('Synthetic native receipt only; no host changed.',{exact:true}).first()).toBeVisible();
+    await expect(page.getByText('2030-01-01T00:00:00.000Z',{exact:true}).first()).toBeVisible();
+    expect(engine.calls.filter(call=>call.method==='network.apply').map(call=>call.params)).toEqual([{plan_id:'app-test-plan',confirm:true}]);
+    await expect(page.getByText('Qualification: Not established',{exact:true})).toBeVisible();
+    await page.getByRole('button',{name:'Disable experimental repair session',exact:true}).click();
+    await expect(enable).toBeDisabled();
+    await page.reload();await expect(page.getByText('Engine connected',{exact:true})).toBeVisible();
+    await page.getByRole('navigation').getByRole('button',{name:'Network checks',exact:true}).click();
+    await expect(enable).toBeDisabled();
+    expect(engine.calls.filter(call=>call.method==='network.bench_opt_in').map(call=>call.params)).toEqual([{enabled:true},{enabled:false}]);
+    expect(engine.calls.filter(call=>call.method==='network.apply')).toHaveLength(1);
+  }finally{await engine.close();}
+});

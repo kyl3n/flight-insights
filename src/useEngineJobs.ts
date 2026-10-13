@@ -28,6 +28,6 @@ export function useEngineJobs(ready:boolean,methods:readonly string[],onComplete
   },[jobs,ready,available,retry]);
   useEffect(()=>{const completed=jobs.filter(job=>job.state==='succeeded'&&!seen.current.has(job.id));if(completed.length){completed.forEach(job=>seen.current.add(job.id));complete.current(completed);}},[jobs]);
   const queue=useCallback((job:EngineJob)=>setJobs(previous=>[job,...previous.filter(item=>item.id!==job.id)]),[]);
-  const cancel=useCallback(async(job:EngineJob)=>{const result=await request<{job:EngineJob}>('jobs.cancel',{job_id:job.id});queue(result.job);},[queue]);
+  const cancel=useCallback(async(job:EngineJob)=>{const result=await request<{job:EngineJob;cancellation?:string;reason?:string}>('jobs.cancel',{job_id:job.id});queue(result.job);if(result.cancellation==='not_owned_by_this_engine')throw new Error(result.reason||'This job belongs to another engine instance. It was not cancelled; use its owning instance to cancel it.');},[queue]);
   return {jobs,error,available,queue,cancel,pending:jobs.some(jobActive)};
 }

@@ -23,6 +23,8 @@ const METHODS: &[&str] = &[
     "handshake",
     "engine.status",
     "sources.capabilities",
+    "catalog.status",
+    "catalog.verify",
     "network.inspect",
     "network.probe",
     "network.plan",
@@ -31,6 +33,7 @@ const METHODS: &[&str] = &[
     "network.recovery",
     "network.profile",
     "network.capabilities",
+    "network.bench_opt_in",
     "session.preview",
     "session.prepare_and_watch",
     "session.status",
@@ -59,10 +62,20 @@ const METHODS: &[&str] = &[
     "acquisition.logs.download",
     "acquisition.list",
     "acquisition.detail",
+    "orchestration.preview",
+    "orchestration.policy.save",
+    "orchestration.policy.list",
+    "orchestration.status",
+    "orchestration.retrieval.select",
     "reconciliation.scan_folder",
     "reconciliation.index_source",
     "reconciliation.get",
     "reconciliation.list",
+    "alignment.reference",
+    "alignment.analyze",
+    "alignment.get",
+    "alignment.list",
+    "alignment.attach",
     "radio.capture",
     "radio.list",
     "radio.detail",
@@ -102,7 +115,12 @@ struct Job {
 pub struct EngineSupervisor {
     queue: mpsc::Sender<Job>,
     shutdown: watch::Sender<bool>,
-    task: Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
+    task: Mutex<ShutdownTask>,
+}
+
+struct ShutdownTask {
+    handle: Option<tauri::async_runtime::JoinHandle<Result<(), EngineError>>>,
+    outcome: Option<Result<(), EngineError>>,
 }
 
 impl EngineSupervisor {
@@ -113,7 +131,10 @@ impl EngineSupervisor {
         Self {
             queue,
             shutdown,
-            task: Mutex::new(Some(task)),
+            task: Mutex::new(ShutdownTask {
+                handle: Some(task),
+                outcome: None,
+            }),
         }
     }
 
@@ -151,11 +172,32 @@ impl EngineSupervisor {
         receiver.await.unwrap_or_else(|_| Err(EngineError::new("engine_stopped", "The engine stopped before the operation completed. No operation was automatically repeated.")))
     }
 
-    pub async fn shutdown(&self) {
+    pub async fn shutdown(&self) -> Result<(), EngineError> {
         let _ = self.shutdown.send(true);
-        if let Some(task) = self.task.lock().await.take() {
-            let _ = task.await;
+        let mut state = self.task.lock().await;
+        if let Some(outcome) = &state.outcome {
+            return outcome.clone();
         }
+        // Keep the handle in the state while awaiting it: cancellation of a
+        // caller must not detach teardown or turn a later failure into success.
+        let outcome = match state.handle.as_mut() {
+            Some(task) => task
+                .await
+                .map_err(|error| {
+                    EngineError::new(
+                        "engine_shutdown",
+                        format!("Engine supervisor did not complete: {error}"),
+                    )
+                })
+                .and_then(|result| result),
+            None => Err(EngineError::new(
+                "engine_shutdown",
+                "Engine shutdown outcome is unavailable.",
+            )),
+        };
+        state.handle = None;
+        state.outcome = Some(outcome.clone());
+        outcome
     }
 }
 
@@ -164,7 +206,7 @@ async fn supervise(
     data_dir: PathBuf,
     mut jobs: mpsc::Receiver<Job>,
     mut shutdown: watch::Receiver<bool>,
-) {
+) -> Result<(), EngineError> {
     let mut engine: Option<EngineProcess> = None;
     let mut failed = false;
     loop {
@@ -222,15 +264,17 @@ async fn supervise(
         let _ = job.result.send(result);
     }
     jobs.close();
-    if let Some(mut process) = engine {
-        let _ = process.stop().await;
-    }
+    let outcome = match engine {
+        Some(mut process) => process.stop().await,
+        None => Ok(()),
+    };
     while let Some(job) = jobs.recv().await {
         let _ = job.result.send(Err(EngineError::new(
             "engine_stopped",
             "Application shutdown cancelled the queued operation.",
         )));
     }
+    outcome
 }
 
 struct EngineProcess {
@@ -547,6 +591,56 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn shutdown_failure_survives_cancelled_waiter_and_repeated_calls() {
+        let (queue, _) = mpsc::channel(1);
+        let (shutdown, _) = watch::channel(false);
+        let (finish, done) = oneshot::channel::<()>();
+        let engine = EngineSupervisor {
+            queue,
+            shutdown,
+            task: Mutex::new(ShutdownTask {
+                handle: Some(tauri::async_runtime::spawn(async move {
+                    let _ = done.await;
+                    Err(EngineError::new(
+                        "engine_shutdown",
+                        "Injected process-tree timeout",
+                    ))
+                })),
+                outcome: None,
+            }),
+        };
+        assert!(
+            tokio::time::timeout(Duration::from_millis(10), engine.shutdown())
+                .await
+                .is_err()
+        );
+        finish.send(()).unwrap();
+        for _ in 0..2 {
+            let error = engine.shutdown().await.unwrap_err();
+            assert_eq!(error.code, "engine_shutdown");
+            assert_eq!(error.message, "Injected process-tree timeout");
+        }
+    }
+
+    #[tokio::test]
+    async fn supervisor_task_failure_never_reports_successful_shutdown() {
+        let (queue, _) = mpsc::channel(1);
+        let (shutdown, _) = watch::channel(false);
+        let engine = EngineSupervisor {
+            queue,
+            shutdown,
+            task: Mutex::new(ShutdownTask {
+                handle: Some(tauri::async_runtime::spawn(async {
+                    panic!("Injected supervisor failure")
+                })),
+                outcome: None,
+            }),
+        };
+        assert_eq!(engine.shutdown().await.unwrap_err().code, "engine_shutdown");
+        assert_eq!(engine.shutdown().await.unwrap_err().code, "engine_shutdown");
+    }
+
+    #[tokio::test]
     async fn packaged_engine_supervisor_handshake_restart_and_shutdown() {
         let stamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -597,7 +691,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(restarted["product"], "Q22 Flight Lab");
-        engine.shutdown().await;
+        engine.shutdown().await.unwrap();
         assert_eq!(
             engine
                 .request("engine.status".into(), json!({}))

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 import json
 import logging
 import os
@@ -10,10 +11,12 @@ import sys
 import time
 
 from . import __version__
+from .catalog import CatalogService
 from .collection_controller import CollectionController
 from .jobs import JobService
 from .insight_service import InsightReports
 from .network import NetworkService
+from .network_helper import NativeRepairBackend
 from .parameters import ParameterService
 from .store import Store
 
@@ -21,8 +24,9 @@ MAX_REQUEST = 1024 * 1024
 MAX_RESPONSE = 4 * 1024 * 1024
 METHODS = (
     "handshake", "engine.status", "sources.capabilities", "network.inspect",
+    "catalog.status", "catalog.verify",
     "network.probe", "network.plan", "network.apply", "network.rollback", "network.recovery",
-    "network.profile", "network.capabilities",
+    "network.profile", "network.capabilities", "network.bench_opt_in",
     "session.preview", "session.prepare_and_watch", "session.status", "session.detail", "session.stop",
     "associations.evaluate", "associations.review",
     "parameters.import", "parameters.list", "parameters.diff", "sessions.import",
@@ -30,17 +34,20 @@ METHODS = (
     "insights.report", "insights.list", "insights.detail", "insights.review_packet", "insights.export_review",
     "acquisition.preview", "acquisition.parameters.capture", "acquisition.logs.list", "acquisition.logs.download",
     "acquisition.list", "acquisition.detail",
+    "orchestration.preview", "orchestration.policy.save", "orchestration.policy.list",
+    "orchestration.status", "orchestration.retrieval.select",
     "reconciliation.scan_folder", "reconciliation.index_source", "reconciliation.get", "reconciliation.list",
+    "alignment.reference", "alignment.analyze", "alignment.get", "alignment.list", "alignment.attach",
     "radio.capture", "radio.list", "radio.detail",
     "jobs.get", "jobs.list", "jobs.cancel",
 )
 LIMITATIONS = [
-    "Foundation preview; the complete handoff acceptance plan has not passed.",
-    "No real-aircraft or Windows/macOS hardware validation has been performed.",
+    "Managed-analysis preview for Windows and Linux; the complete handoff acceptance plan has not passed. macOS is deferred.",
+    "No real Q22 aircraft, DigiQ SkyPulse or SIYI A8 Mini bench qualification has been performed.",
     "Log metrics use only validated source/epoch/unit mappings; incomplete parameter timelines cannot establish historical settings.",
-    "Local insights and explicit read-only acquisition are available; full automatic flight reconciliation and aircraft-specific numerical tuning remain unqualified.",
+    "Approved collection policies, bounded content alignment and local RATE/IMU/static-filter analysis are available; complete historical configuration, dynamic firmware parity and aircraft-specific numerical tuning remain unqualified.",
     "Legacy onboard log transfer can suspend logging; verify resumption before another flight. A complete readback is not an atomic flight-time configuration.",
-    "Automatic host repairs require a qualified native helper and are diagnosis-only in this release.",
+    "Host repairs default to diagnosis only. An administrator-enrolled experimental Windows/Linux helper requires explicit session opt-in, per-plan approval and independent fresh safety evidence; hardware qualification remains open.",
     "A network response is not proof of video decoding, bidirectional delivery, or aircraft health.",
 ]
 
@@ -48,25 +55,40 @@ LIMITATIONS = [
 class Engine:
     def __init__(self, data_dir: Path):
         self.store = Store(data_dir)
+        self.catalog = CatalogService(self.store)
         self.parameters = ParameterService(self.store)
         self.jobs = JobService(data_dir)
-        self.collection = CollectionController(self.store, self.jobs)
-        self.network = NetworkService(data_dir=data_dir, safety_state=self.collection.safety_state)
+        self.collection = CollectionController(self.store, self.jobs, recording_guard=self._recording_guard)
+        self.network = NetworkService(data_dir=data_dir, safety_state=self.collection.safety_state,
+                                      repair_backend=NativeRepairBackend())
         self.logs = None
         self.insights = InsightReports(self.store)
         self.acquisition = None
+        self.orchestration = None
         self.reconciliation = None
+        self.alignment = None
         self.radio = None
         self.started = time.monotonic()
 
+    @contextmanager
+    def _recording_guard(self):
+        try:
+            self.network.before_recording()
+            yield
+        finally:
+            self.network.after_recording()
+
     def close(self):
+        self.network.close()
+        if self.orchestration is not None:
+            self.orchestration.close()
         self.collection.close()
         self.jobs.close()
 
     def call(self, method: str, params: dict) -> dict:
         if method == "handshake":
             return {"protocol_version": 1, "engine_version": __version__,
-                    "product": "Q22 Flight Lab", "milestone": "evidence-insights-preview",
+                    "product": "Q22 Flight Lab", "milestone": "managed-analysis-preview",
                     "capabilities": list(METHODS), "limitations": LIMITATIONS}
         if method == "engine.status":
             return {"state": "available", "protocol_version": 1,
@@ -82,12 +104,19 @@ class Engine:
                 {"kind": "live_recording", "state": "available", "limits": "Explicit separate passive UDP feed; read-only requests use a separate reviewed bidirectional endpoint. UDP replay protection remains unavailable."},
                 {"kind": "insights", "state": "available", "limits": "Scoped measurements, versioned guidance and explicit evidence gaps; no automatic tuning or aircraft writes."},
                 {"kind": "read_only_acquisition", "state": "experimental", "limits": "Explicit direct bidirectional endpoint, fresh disarmed identity/clock gates; real GCS/hardware qualification pending."},
+                {"kind": "collection_policies", "state": "experimental", "limits": "Explicit per-capture approval; gated pre/postflight readbacks and selected post-stop log transfers. No startup/restart replay or automatic aircraft commands."},
+                {"kind": "evidence_alignment", "state": "available", "limits": "Bounded imported catalog, identity/clock/armed-interval corroboration and reviewed attachment. Verified rule matches do not establish cryptographic identity or complete historical settings."},
+                {"kind": "catalog_integrity", "state": "available", "limits": "Versioned catalog migrations and explicit original-file verification; catalog backup does not include every evidence file."},
                 {"kind": "folder_reconciliation", "state": "available", "limits": "Explicit selected folder, content inspection and provisional candidates; no filename-based verified associations."},
                 {"kind": "skypulse_normalization", "state": "unvalidated", "recovery": "Supply radio firmware and actual raw responses."},
                 {"kind": "skypulse_raw_history", "state": "available", "limits": "Explicit bounded capture of documented HTTP endpoints; original responses and receipt times, no normalized RF metrics."},
             ]}
         if method.startswith("network."):
             return self.network.dispatch(method, params)
+        if method.startswith("catalog."):
+            if method == "catalog.verify":
+                return self.jobs.start(method, params, self.catalog.dispatch)
+            return self.catalog.dispatch(method, params)
         if method.startswith("radio."):
             if self.radio is None:
                 from .radio_history import RadioHistoryService
@@ -97,6 +126,32 @@ class Engine:
             return self.radio.dispatch(method, params)
         if method.startswith("jobs."):
             return self.jobs.dispatch(method, params)
+        if method.startswith("orchestration."):
+            return self._orchestrator().dispatch(method, params)
+        if method == "session.prepare_and_watch":
+            orchestrator = self._orchestrator()
+            profile = self.collection.collection.preview(params)["profile"]
+            approval = params.get("acquisition_policy")
+            orchestrator.validate_prepare_operation(profile, approval, params.get("operation_id"))
+            result = self.collection.dispatch(method, params)
+            capture = result["capture_session"]
+            recorder = result.get("recorder", {})
+            if (not result.get("operation_replayed") and recorder.get("active")
+                    and recorder.get("capture_session_id") == capture["uuid"]
+                    and capture.get("recorder_started")):
+                try:
+                    result["orchestration_run"] = orchestrator.on_prepared(capture, approval)
+                except Exception:
+                    # Readback-policy failure must not stop independently useful
+                    # passive recording or obscure that recording did start.
+                    logging.exception("Acquisition policy activation failed after recorder start")
+                    result["acquisition_policy_warning"] = "Recording started, but the acquisition policy could not be activated. Review collection status and retained evidence."
+            return result
+        if method == "session.stop":
+            result = self.collection.dispatch(method, params)
+            if self.orchestration is not None and not result.get("operation_replayed"):
+                self.orchestration.on_stopped(result["capture_session"]["uuid"])
+            return result
         if method.startswith(("session.", "associations.")):
             return self.collection.dispatch(method, params)
         if method.startswith("insights."):
@@ -104,9 +159,7 @@ class Engine:
                 return self.jobs.start(method, params, self.insights.dispatch)
             return self.insights.dispatch(method, params)
         if method.startswith("acquisition."):
-            if self.acquisition is None:
-                from .acquisition import AcquisitionService
-                self.acquisition = AcquisitionService(self.store, external_gate=self._acquisition_gate)
+            self._acquirer()
             if method in {"acquisition.parameters.capture", "acquisition.logs.list", "acquisition.logs.download"}:
                 return self.jobs.start(method, params, self.acquisition.dispatch)
             return self.acquisition.dispatch(method, params)
@@ -117,6 +170,13 @@ class Engine:
             if method in {"reconciliation.scan_folder", "reconciliation.index_source"}:
                 return self.jobs.start(method, params, self.reconciliation.dispatch)
             return self.reconciliation.dispatch(method, params)
+        if method.startswith("alignment."):
+            if self.alignment is None:
+                from .alignment import AlignmentService
+                self.alignment = AlignmentService(self.store, collection=self.collection.collection)
+            if method in {"alignment.reference", "alignment.analyze", "alignment.attach"}:
+                return self.jobs.start(method, params, self.alignment.dispatch)
+            return self.alignment.dispatch(method, params)
         if method.startswith("logs."):
             if self.logs is None:
                 from .logs import LogService
@@ -125,6 +185,18 @@ class Engine:
                 return self.jobs.start(method, params, self.logs.dispatch)
             return self.logs.dispatch(method, params)
         return self.parameters.dispatch(method, params)
+
+    def _acquirer(self):
+        if self.acquisition is None:
+            from .acquisition import AcquisitionService
+            self.acquisition = AcquisitionService(self.store, external_gate=self._acquisition_gate)
+        return self.acquisition
+
+    def _orchestrator(self):
+        if self.orchestration is None:
+            from .orchestration import OrchestrationService
+            self.orchestration = OrchestrationService(self.store, self.jobs, self._acquirer(), self.collection)
+        return self.orchestration
 
     def _acquisition_gate(self, kind, connection):
         """Additional app-owned capture guard; acquisition verifies its own wire peer."""

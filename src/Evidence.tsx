@@ -2,6 +2,7 @@ import { useState, type FormEvent } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { request, type Run, type Session, type Snapshot, type SourceEvidence } from './api';
 import FlightLogs from './FlightLogs';
+import CatalogIntegrity from './CatalogIntegrity';
 import { Badge, Empty, Icon, MetricDetails, Notes, SessionParameterEvidence, number, readable } from './ui';
 
 function EvidenceDetail({source}: {source?: SourceEvidence}) {
@@ -52,6 +53,7 @@ export default function Evidence({ready,busy,run,snapshots,sessions,refresh,onCo
         {success && <div className="success-note" role="status"><Icon name="check"/>{success}</div>}
       </form>
     </section>
+    <CatalogIntegrity ready={ready} busy={busy} run={run}/>
     <div className="two-column"><section className="panel"><div className="panel-heading"><h2>Parameter snapshots</h2><Badge>{snapshots.length} imported</Badge></div>{!snapshots.length ? <Empty icon="evidence" title="No snapshots imported">Import “Q22 original — pre-FACt”, “Q22 with FACt tune”, or the current readback from actual files. Original names and legacy Brian aliases remain intact. Missing baselines are never invented.</Empty> : <div className="padded-list">{snapshots.map(snapshot => <article className="evidence-card" key={snapshot.id}><div className="line-between"><h3>{snapshot.label}</h3>{snapshot.synthetic && <Badge tone="warn">Synthetic</Badge>}</div><p>{snapshot.aircraft_id} · {snapshot.board}</p><div className="badge-row"><Badge>{snapshot.parameter_count} parameters</Badge><Badge>{readable(snapshot.source_kind)}</Badge></div><dl className="metadata"><dt>Firmware</dt><dd>{snapshot.firmware}</dd><dt>Observed</dt><dd>{snapshot.observed_at ? new Date(snapshot.observed_at).toLocaleString() : `UTC unavailable${snapshot.time_domain ? ` · ${readable(snapshot.time_domain)}` : ''}${snapshot.observation_time_us ? ` · ${snapshot.observation_time_us} µs` : ''}`}</dd></dl><EvidenceDetail source={snapshot.source}/></article>)}</div>}</section>
     <section className="panel"><div className="panel-heading"><h2>Flight sessions</h2><Badge>{sessions.length} imported</Badge></div>{!sessions.length ? <Empty icon="compare" title="No flight evidence imported">Add a flight and associate its actual settings to start a measured comparison.</Empty> : <div className="padded-list">{sessions.map(session => <article className="evidence-card" key={session.id}><div className="line-between"><h3>{session.label}</h3>{session.synthetic && <Badge tone="warn">Synthetic</Badge>}</div><p>{session.aircraft_id} · {session.phase}</p><p className="field-help">Snapshot: {snapshots.find(s => s.id === session.snapshot_id)?.label || session.snapshot_id}</p><Notes title="Session evidence warnings" items={session.warnings}/><SessionParameterEvidence session={session}/><MetricDetails metrics={session.metrics}/><EvidenceDetail source={session.source}/><Notes items={session.limitations}/></article>)}</div>}</section></div>
   </div>;

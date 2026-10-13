@@ -26,6 +26,7 @@ from typing import Any, Callable
 from .network_journal import RepairJournal
 from .rtp_diagnostics import RtpDiagnostics
 from .network_profiles import capability_matrix, compare_reference, reference_profile
+from .network_helper import NativeRepairBackend
 
 
 def _executable(name: str) -> str | None:
@@ -147,6 +148,8 @@ class NetworkService:
         # These boundaries are engine-owned and never accepted through RPC.
         self.safety_state = safety_state
         self.repair_backend = repair_backend
+        if isinstance(repair_backend, NativeRepairBackend):
+            repair_backend.safety_state = lambda: self._safety_snapshot()
         self.max_heartbeat_age_s = 3.0
         self.plans: dict[str, dict] = {}
         self.journal = None
@@ -163,10 +166,23 @@ class NetworkService:
         handler = {"network.inspect": self.inspect, "network.probe": self.probe,
                    "network.plan": self.plan, "network.apply": self.apply,
                    "network.rollback": self.rollback, "network.recovery": self.recovery,
-                   "network.profile": self.profile, "network.capabilities": self.capabilities}.get(method)
+                   "network.profile": self.profile, "network.capabilities": self.capabilities,
+                   "network.bench_opt_in": self.bench_opt_in}.get(method)
         if handler is None:
             raise ValueError("Unknown network method.")
         return handler(params)
+
+    def close(self):
+        if isinstance(self.repair_backend, NativeRepairBackend):
+            self.repair_backend.close()
+
+    def before_recording(self):
+        if isinstance(self.repair_backend, NativeRepairBackend):
+            self.repair_backend.before_recording()
+
+    def after_recording(self):
+        if isinstance(self.repair_backend, NativeRepairBackend):
+            self.repair_backend.after_recording()
 
     def profile(self, params: dict) -> dict:
         if set(params) - {"profile_id"}:
@@ -191,6 +207,15 @@ class NetworkService:
 
     def _repair_safety(self) -> dict:
         observed = self._safety_snapshot()
+        native_authority = False
+        if isinstance(self.repair_backend, NativeRepairBackend):
+            capability = self.repair_backend.capabilities()
+            native = capability.get("repair_safety")
+            if capability.get("bench_available") and isinstance(native, dict):
+                recording = observed.get("recording_active")
+                observed = copy.deepcopy(native)
+                observed["recording_active"] = False if recording is False and native.get("recording_active") is False else True
+                native_authority = True
         flight_state = observed.get("flight_state", "unknown")
         if not isinstance(flight_state, str) or flight_state not in {"armed", "disarmed", "unknown"}:
             flight_state = "unknown"
@@ -213,7 +238,9 @@ class NetworkService:
                 "flight_state": flight_state, "heartbeat_age_s": age,
                 "identity_verified": observed.get("identity_verified") is True,
                 "recording_active": observed.get("recording_active") if type(observed.get("recording_active")) is bool else None,
-                "max_heartbeat_age_s": self.max_heartbeat_age_s}
+                "max_heartbeat_age_s": self.max_heartbeat_age_s,
+                "authority": "native_observer_and_engine_recording" if native_authority else "engine_observer",
+                "aircraft_identity_assurance": observed.get("aircraft_identity_assurance", "observed_unauthenticated" if observed.get("identity_verified") is True else "unverified")}
 
     def _execution_capability(self) -> dict:
         fallback = capability_matrix(self.system)["platforms"].get(self.system, {}).get("repair", {
@@ -221,6 +248,8 @@ class NetworkService:
         backend = self.repair_backend
         if backend is None:
             return fallback
+        if isinstance(backend, NativeRepairBackend):
+            return backend.capabilities()
         try:
             flags = backend.capabilities()
             qualified = (isinstance(flags, dict) and flags.get("platform") == self.system
@@ -233,6 +262,14 @@ class NetworkService:
         except Exception:
             pass
         return {**fallback, "reason": "The configured repair backend has not established all required native qualification capabilities."}
+
+    def bench_opt_in(self, params: dict) -> dict:
+        if set(params) != {"enabled"} or type(params["enabled"]) is not bool:
+            raise ValueError("Experimental bench opt-in accepts only an enabled boolean.")
+        if not isinstance(self.repair_backend, NativeRepairBackend):
+            raise ValueError("No native bench helper transport is configured.")
+        self.repair_backend.opt_in(params["enabled"])
+        return self.capabilities({})
 
     def capabilities(self, params: dict) -> dict:
         if params:
@@ -771,6 +808,16 @@ class NetworkService:
         plan["baseline"] = {"interfaces": snapshot["interfaces"], "routes": snapshot["routes"]}
         # Initial plans and recovered receipts share the same trusted compiler.
         self._compile_descriptor(plan)
+        if isinstance(self.repair_backend, NativeRepairBackend) and self._execution_capability()["automatic_apply"]:
+            plan["commands"], plan["rollback_commands"] = [], []
+            try:
+                plan["native_review"] = self.repair_backend.prepare(plan_id, plan["descriptor"])
+                plan["requires_elevation"] = False
+                plan["warnings"] = ["Experimental administrator-enrolled native helper; public signing and native hardware qualification remain pending.",
+                    "The helper records a temporary repair before writing, then attempts exact rollback at its deadline only while fresh disarmed evidence and unchanged ownership permit it. A blocked rollback remains unresolved.",
+                    "Session opt-out does not cancel native supervision. The UI and Python engine remain unprivileged."]
+            except (OSError, ValueError) as exc:
+                return self._unavailable(plan, "blocked", "Native helper could not prepare this exact operation: " + str(exc)[:1000])
         self.plans[plan_id] = plan
         return self._public_plan(plan)
 
@@ -947,13 +994,15 @@ class NetworkService:
     def recovery(self, params: dict) -> dict:
         if params:
             raise ValueError("Recovery discovery accepts no parameters.")
+        native_repairs, native_warnings = self._native_recovery()
         if not self.journal:
-            return {"status": "unavailable", "repairs": [], "warnings": [self.journal_error or "This session has no durable repair data directory."]}
+            return {"status": "ready" if native_repairs else "unavailable", "repairs": native_repairs, "warnings": native_warnings + [self.journal_error or "This session has no durable repair data directory."]}
         try:
             records, warnings = self.journal.records()
         except (OSError, ValueError) as exc:
-            return {"status": "unavailable", "repairs": [], "warnings": [str(exc)]}
-        repairs = []
+            return {"status": "unavailable", "repairs": native_repairs, "warnings": native_warnings + [str(exc)]}
+        repairs = native_repairs
+        warnings.extend(native_warnings)
         deadline = time.monotonic() + 20
         for record in records:
             if record["events"][-1]["state"] == "rolled_back":
@@ -993,6 +1042,56 @@ class NetworkService:
                 warnings.append(f"Receipt {record['plan_id']} is not recoverable: {exc}")
         return {"status": "ready", "repairs": repairs, "warnings": warnings}
 
+    def _native_recovery(self) -> tuple[list[dict], list[str]]:
+        backend = self.repair_backend
+        if not isinstance(backend, NativeRepairBackend):
+            return [], []
+        try:
+            records = backend.recovery()
+            repairs = []
+            for entry in records:
+                record, ownership = entry["record"], entry["ownership"]
+                native = record["plan"]
+                app_id = next((key for key, value in backend.prepared.items() if value["plan_id"] == native["plan_id"]), native["plan_id"])
+                backend.prepared[app_id] = copy.deepcopy(native)
+                candidate = native["candidate"]
+                plan = {"plan_id": app_id, "kind": candidate["operation"]["kind"], "state": "applied" if ownership == "owned" else "absent" if ownership == "absent" else "ownership_lost",
+                        "title": "Native helper temporary repair", "interface": candidate["interface"],
+                        "commands": [], "rollback_commands": [], "warnings": ["Helper-owned receipt. No repair was replayed; current safety and exact native ownership are checked again before rollback."],
+                        "native_review": {key: copy.deepcopy(native[key]) for key in ("plan_id", "review_fingerprint", "candidate", "before_fingerprint", "expires_utc_ms", "rollback_after_ms")},
+                        "applied": ownership != "absent", "may_have_applied": ownership != "absent", "recovered": True,
+                        "created": time.monotonic(), "ownership": ownership, "requires_elevation": False,
+                        "rollback_deadline_utc_ms": record.get("rollback_deadline_utc_ms"), "native_state": record["state"]}
+                plan["native_review"]["authority"] = "admin_enrolled_helper"
+                self.plans[app_id] = plan
+                repairs.append(self._public_plan(plan))
+            return repairs, []
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            return [], ["Native helper recovery is unavailable: " + str(exc)[:1000]]
+
+    def _native_execute(self, plan: dict, action: str) -> dict:
+        if not plan.get("native_review"):
+            return {"plan_id": plan["plan_id"], "state": "native_review_required", "message": "Create and review a fresh native helper plan before execution."}
+        blocked = self._mutation_gate(plan)
+        if blocked:
+            return blocked
+        try:
+            record = self.repair_backend.execute(action, plan["plan_id"], plan.get("descriptor"))
+            native_state = record["state"]
+            complete = native_state == ("applied_temporary" if action == "apply" else "rolled_back")
+            applied = native_state != "rolled_back"
+            plan["applied"] = applied
+            plan["state"] = "applied" if native_state == "applied_temporary" else "rolled_back" if not applied else "uncertain"
+            return {"plan_id": plan["plan_id"], "state": plan["state"] if complete else "verification_failed", "may_have_applied": applied,
+                    "native_state": native_state, "rollback_deadline_utc_ms": record.get("rollback_deadline_utc_ms"),
+                    "repair_safety": self._repair_safety(), "message": "Native helper verified the exact temporary addition; independent rollback supervision remains active." if native_state == "applied_temporary" else "Native helper confirmed the owned addition is absent." if not applied else "Native helper retained an unresolved durable receipt. Review recovery; no successful repair or rollback is claimed."}
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            # The authoritative helper intent may already exist after a lost
+            # reply. Recover from that service; never execute app-data receipts.
+            plan["applied"] = True
+            return {"plan_id": plan["plan_id"], "state": "failed", "may_have_applied": True,
+                    "message": "Native helper outcome unavailable; inspect its durable recovery before retrying: " + str(exc)[:1000]}
+
     def _guard_present(self, plan: dict) -> bool:
         text = self.run(plan["guard"]).strip()
         if (plan.get("expected") or {}).get("rule"):
@@ -1026,6 +1125,10 @@ class NetworkService:
     def apply(self, params: dict) -> dict:
         plan = self._confirmed_plan(params)
         plan_id = plan["plan_id"]
+        if isinstance(self.repair_backend, NativeRepairBackend):
+            if plan.get("recovered"):
+                return {"plan_id": plan_id, "state": "recovered_receipt", "message": "Recovered helper records never replay apply. Create a fresh plan."}
+            return self._native_execute(plan, "apply")
         if plan.get("recovered"):
             return {"plan_id": plan_id, "state": "recovered_receipt", "message": "Recovered receipts only authorize reviewed rollback. Generate a fresh plan for a new repair; nothing was replayed."}
         if plan["applied"]:
@@ -1079,6 +1182,8 @@ class NetworkService:
     def rollback(self, params: dict) -> dict:
         plan = self._confirmed_plan(params)
         plan_id = plan["plan_id"]
+        if isinstance(self.repair_backend, NativeRepairBackend):
+            return self._native_execute(plan, "rollback")
         if not plan["applied"]:
             return {"plan_id": plan_id, "state": "not_applied", "message": "This session has no applied change to roll back."}
         blocked = self._mutation_gate(plan)

@@ -168,6 +168,7 @@ class _Link:
         self.pending = []
         self.late_data_validator = None
         self.last_external_check = 0.0
+        self.initial_gate_observations = None
 
     def open(self):
         self.check_external()
@@ -318,13 +319,15 @@ class _Link:
                 raise AcquisitionStopped(self.gate_reason)
             self.signed = signed
             raw = message.to_dict()
+            receipt = {"received_monotonic_ns": str(mono_ns), "received_utc_us": str(utc_us),
+                       "raw_ref": raw_ref, "message_type": name}
             if name == "LOG_DATA" and self.late_data_validator:
                 self.late_data_validator(message)
             if name == "HEARTBEAT":
                 if raw["autopilot"] == 8 or raw["type"] == 6:
                     self.gate_reason = "Selected source is not an identified autopilot heartbeat."
                     raise AcquisitionStopped(self.gate_reason)
-                self.heartbeat = {"at": at, "armed": bool(raw["base_mode"] & 128), "autopilot": raw["autopilot"]}
+                self.heartbeat = {"at": at, "armed": bool(raw["base_mode"] & 128), "autopilot": raw["autopilot"], **receipt}
                 if self.heartbeat["armed"]:
                     self.gate_reason = "Autopilot became armed; requests stopped."
                     raise AcquisitionStopped(self.gate_reason)
@@ -341,7 +344,7 @@ class _Link:
                     self.gate_reason = "Parameter encoding capability evidence changed during acquisition."
                     raise AcquisitionStopped(self.gate_reason)
                 self.firmware_identity = firmware
-                self.identity = {"at": at, "uid": uid}
+                self.identity = {"at": at, "uid": uid, "firmware_identity": firmware, **receipt}
                 self.capabilities = int(raw.get("capabilities", 0))
             if type(raw.get("time_boot_ms")) is int:
                 value = raw["time_boot_ms"]
@@ -352,7 +355,7 @@ class _Link:
                     self.gate_reason = "Boot clock regressed; restart/wrap/reordering is unclassified and acquisition generation ended."
                     raise AcquisitionStopped(self.gate_reason)
                 self.last_boot_by_field[name] = value
-                self.boot = {"at": at, "time_boot_ms": value}
+                self.boot = {"at": at, "time_boot_ms": value, **receipt}
             accepted.append((message, {"raw_ref": raw_ref, "received_monotonic_ns": str(mono_ns), "received_utc_us": str(utc_us)}))
         if require_ready:
             self.gate()
@@ -368,6 +371,7 @@ class _Link:
                 if self.gate_reason:
                     raise
             else:
+                self.initial_gate_observations = self.gate_observations()
                 return
         raise AcquisitionStopped("Bootstrap timed out: require fresh disarmed heartbeat, matching AUTOPILOT_VERSION UID and boot-clock stream on this bidirectional endpoint.")
 
@@ -385,12 +389,21 @@ class _Link:
         finally:
             self.journal.close()
 
+    def gate_observations(self):
+        return {"heartbeat": {k: v for k, v in self.heartbeat.items() if k != "at"} if self.heartbeat else None,
+                "identity": {k: v for k, v in self.identity.items() if k != "at"} if self.identity else None,
+                "boot_clock": {k: v for k, v in self.boot.items() if k != "at"} if self.boot else None,
+                "authenticity": "unverified", "utc_mapping": "ground_receipt_only"}
+
     def evidence(self):
         return {"received_datagrams": self.received, "decoded_selected_frames": self.frames,
                 "sent_messages": self.sent, "outgoing_types": self.send_types,
                 "signature_present": self.signed, "signature_verified": False,
                 "identity_basis": "reported_uid_match_not_authenticated",
                 "boot_epoch": "single_observed_acquisition_clock_segment",
+                "initial_gate_observations": self.initial_gate_observations,
+                "final_gate_observations": self.gate_observations(),
+                "gate_interruption_reason": self.gate_reason,
                 "log_request_end_sent": self.log_request_end_sent,
                 "logging_resumption_verified": False,
                 "recovery_warning": "Remote transfer/logging state is unknown; verify onboard logging before flight." if self.log_transfer_started else None,

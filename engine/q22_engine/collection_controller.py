@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from concurrent.futures import CancelledError
+from contextlib import nullcontext
 import json
 import logging
 from pathlib import Path
@@ -13,8 +14,11 @@ from .recorder import RecorderService
 
 
 class CollectionController:
-    def __init__(self, store, jobs):
+    def __init__(self, store, jobs, *, recording_guard=None):
         self.store, self.jobs = store, jobs
+        # Constructor-owned guard only; renderer data cannot supply callbacks.
+        # Native repair leases must be revoked before opening a recorder socket.
+        self._recording_guard = recording_guard or nullcontext
         self._lock = threading.RLock()
         self.collection = CollectionService(store)
         self.recorder = RecorderService(store.root, on_event=self.collection.ingest_event)
@@ -78,10 +82,11 @@ class CollectionController:
                 capture = result["capture_session"]
                 if not result.get("operation_replayed"):
                     try:
-                        state = self.recorder.start(capture["uuid"], self._worker_config(capture["profile"]))
-                        if state.get("state") != "recording":
-                            raise ValueError(str(state.get("failure") or "Recorder did not establish its socket."))
-                        self.collection.mark_recorder_started(capture["uuid"], state)
+                        with self._recording_guard():
+                            state = self.recorder.start(capture["uuid"], self._worker_config(capture["profile"]))
+                            if state.get("state") != "recording":
+                                raise ValueError(str(state.get("failure") or "Recorder did not establish its socket."))
+                            self.collection.mark_recorder_started(capture["uuid"], state)
                     except Exception as error:
                         # If catalog publication fails after the socket opened,
                         # do not leave an unrepresented recorder running.

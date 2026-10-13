@@ -13,6 +13,8 @@ import tempfile
 from datetime import datetime, timezone
 from uuid import uuid4
 
+from .catalog import migrate_catalog
+
 
 CHUNK_BYTES = 1024 * 1024
 MAX_RAW_BYTES = 8 * 1024 * 1024 * 1024
@@ -27,28 +29,7 @@ class Store:
         self.raw.mkdir(parents=True, exist_ok=True)
         self.database = self.root / "catalog.sqlite3"
         with self._connect() as db:
-            version = db.execute("PRAGMA user_version").fetchone()[0]
-            if version > 1:
-                raise ValueError("Catalog is newer than this engine; use its matching version.")
-            db.executescript("""
-                CREATE TABLE IF NOT EXISTS sources (
-                    id TEXT PRIMARY KEY, created_at TEXT NOT NULL, data TEXT NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS documents (
-                    id TEXT PRIMARY KEY, kind TEXT NOT NULL, created_at TEXT NOT NULL,
-                    data TEXT NOT NULL
-                );
-                CREATE INDEX IF NOT EXISTS documents_kind ON documents(kind, created_at);
-                CREATE TRIGGER IF NOT EXISTS sources_no_update BEFORE UPDATE ON sources
-                    BEGIN SELECT RAISE(ABORT, 'Sources are immutable'); END;
-                CREATE TRIGGER IF NOT EXISTS sources_no_delete BEFORE DELETE ON sources
-                    BEGIN SELECT RAISE(ABORT, 'Sources are immutable'); END;
-                CREATE TRIGGER IF NOT EXISTS documents_no_update BEFORE UPDATE ON documents
-                    BEGIN SELECT RAISE(ABORT, 'Documents are immutable'); END;
-                CREATE TRIGGER IF NOT EXISTS documents_no_delete BEFORE DELETE ON documents
-                    BEGIN SELECT RAISE(ABORT, 'Documents are immutable'); END;
-                PRAGMA user_version=1;
-            """)
+            migrate_catalog(db, self.root)
 
     @contextmanager
     def _connect(self):

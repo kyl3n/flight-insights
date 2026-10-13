@@ -15,7 +15,7 @@ import struct
 from typing import Any, Iterator
 
 
-PARSER_VERSION = "q22-streaming-flight-log/1"
+PARSER_VERSION = "q22-streaming-flight-log/2"
 MAX_LINE_BYTES = 64 * 1024
 MAX_RESYNC_BYTES = 1024 * 1024
 FORMATS = {"b": "b", "B": "B", "g": "e", "h": "h", "H": "H", "i": "i",
@@ -120,7 +120,12 @@ def iter_log_events(path: Path | str, *, format: str | None = None,
     if actual == "tlog":
         yield from _tlog_events(path, cancel_check)
     else:
-        yield from _dataflash_events(path, actual, cancel_check)
+        from .imu_batches import BatchAssembler
+        batches = BatchAssembler()
+        for event in _dataflash_events(path, actual, cancel_check):
+            yield event
+            yield from batches.accept(event)
+        yield from batches.finish()
 
 
 def _issue(source_format, offset, index, reason, **details):
@@ -193,7 +198,25 @@ def _records(path, source_format, schemas, cancel_check):
                     index += 1
                     continue
                 # A final Z/N field can contain commas (FMT.Columns, MSG.Message).
-                parts = [item.strip() for item in rest.split(",", len(schema.columns) - 1)]
+                if "a" in schema.codes:
+                    # Array commas are internal field separators. Keep the
+                    # fixed 32-element arrays intact, with bounded input above.
+                    parts, mark, depth = [], 0, 0
+                    for position, character in enumerate(rest):
+                        if character == "[":
+                            depth += 1
+                        elif character == "]":
+                            depth -= 1
+                        elif character == "," and depth == 0:
+                            parts.append(rest[mark:position].strip())
+                            mark = position + 1
+                        if depth not in (0, 1):
+                            break
+                    parts.append(rest[mark:].strip())
+                    if depth != 0:
+                        parts = []
+                else:
+                    parts = [item.strip() for item in rest.split(",", len(schema.columns) - 1)]
                 if len(parts) != len(schema.columns):
                     yield None, {}, offset, index, "malformed_text_record"
                     index += 1

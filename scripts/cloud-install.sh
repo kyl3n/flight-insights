@@ -15,3 +15,5 @@ npm ci --no-fund --no-audit
 uv run --frozen python scripts/package-engine.py
 npm run build
 cargo fetch --manifest-path src-tauri/Cargo.toml --locked
+cargo fetch --manifest-path native-repair/Cargo.toml --locked
+uv run --frozen python scripts/application-dependencies.py --target x86_64-unknown-linux-gnu

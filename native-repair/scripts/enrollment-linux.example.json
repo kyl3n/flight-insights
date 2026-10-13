@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "client_principal": "REPLACE_WITH_NON_ROOT_DESKTOP_UID",
+  "client_image": "/usr/bin/q22-engine",
+  "client_sha256": "REPLACE_WITH_INSTALLED_ENGINE_SHA256",
+  "helper_sha256": "REPLACE_WITH_REVIEWED_HELPER_SHA256",
+  "allowed_interfaces": ["REPLACE_WITH_EXACT_INTERFACE_NAME"],
+  "devices": [{"host": "192.0.2.2", "verification_port": 80}],
+  "internet_probe": {"host": "198.51.100.1", "port": 443},
+  "observer": {
+    "local_address": "192.0.2.1",
+    "port": 14660,
+    "sender": "192.0.2.2",
+    "system_id": 1,
+    "component_id": 1,
+    "expected_uid": null,
+    "require_signed": false,
+    "signing_key_path": null
+  },
+  "bench_enrollment": true
+}

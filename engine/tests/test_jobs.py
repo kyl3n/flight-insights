@@ -2,11 +2,13 @@
 from concurrent.futures import CancelledError
 from contextlib import closing
 import json
+import os
 import sqlite3
 import threading
 import time
 
 import pytest
+import psutil
 
 from q22_engine.jobs import JobService, MAX_PENDING, TERMINAL
 
@@ -109,3 +111,98 @@ def test_failed_job_does_not_stop_next_import(tmp_path):
     assert finished(service, good["id"])["state"] == "succeeded"
     assert service.dispatch("jobs.list", {"limit": 1})["next_offset"] == 1
     service.close()
+
+
+def test_second_service_preserves_live_foreign_worker_and_cannot_cancel_it(tmp_path):
+    first = JobService(tmp_path)
+    second = None
+    entered, release = threading.Event(), threading.Event()
+
+    def handler(*_args, cancel_check, **_kwargs):
+        entered.set()
+        assert release.wait(4)
+        assert not cancel_check()
+        return {"completed_by_original_owner": True}
+
+    try:
+        job = first.start("synthetic.owner-review", {}, handler)["job"]
+        assert entered.wait(2)
+        running = first.dispatch("jobs.get", {"job_id": job["id"]})["job"]
+        assert running["state"] == "running" and running["owner"]["pid"] == os.getpid()
+        second = JobService(tmp_path)
+        assert second.dispatch("jobs.get", {"job_id": job["id"]})["job"] == running
+        denied = second.dispatch("jobs.cancel", {"job_id": job["id"]})
+        assert denied["cancellation"] == "not_owned_by_this_engine"
+        assert denied["job"] == running and not denied["job"]["cancel_requested"]
+        second.close()
+        second = None
+        assert first.dispatch("jobs.get", {"job_id": job["id"]})["job"] == running
+        release.set()
+        done = finished(first, job["id"])
+        assert done["state"] == "succeeded" and done["result"]["completed_by_original_owner"]
+        assert first.dispatch("jobs.cancel", {"job_id": job["id"]})["cancellation"] == "already_terminal"
+    finally:
+        release.set()
+        if second:
+            second.close()
+        first.close()
+
+
+@pytest.mark.parametrize("liveness", ["missing", "pid_reused", "zombie", "access_denied"])
+def test_recovery_requires_known_dead_owner_and_checks_process_creation_time(tmp_path, monkeypatch, liveness):
+    import q22_engine.jobs as jobs_module
+    initial = JobService(tmp_path)
+    initial.close()
+    owner_pid = 987654321
+    payload = {"id": "foreign", "state": "running", "owner": {"pid": owner_pid, "created_at": 100.0}}
+    with closing(sqlite3.connect(tmp_path / "jobs.sqlite3")) as db, db:
+        db.execute("INSERT INTO jobs VALUES (?, ?, ?)", (payload["id"], "2026-10-05", json.dumps(payload)))
+    actual_process = jobs_module.psutil.Process
+
+    class PriorOwner:
+        def create_time(self):
+            if liveness == "access_denied":
+                raise psutil.AccessDenied(owner_pid)
+            return 101.0 if liveness == "pid_reused" else 100.0
+
+        def status(self):
+            return psutil.STATUS_ZOMBIE if liveness == "zombie" else psutil.STATUS_RUNNING
+
+    def process(pid=None):
+        if pid != owner_pid:
+            return actual_process(pid)
+        if liveness == "missing":
+            raise psutil.NoSuchProcess(owner_pid)
+        return PriorOwner()
+
+    monkeypatch.setattr(jobs_module.psutil, "Process", process)
+    reopened = JobService(tmp_path)
+    try:
+        recovered = reopened.dispatch("jobs.get", {"job_id": payload["id"]})["job"]
+        if liveness == "access_denied":
+            assert recovered == payload
+            assert reopened.dispatch("jobs.list", {})["recovery_warnings"][0]["job_id"] == payload["id"]
+        else:
+            assert recovered["state"] == "interrupted" and recovered["owner"] == payload["owner"]
+            assert recovered["finished_at"]
+        assert not reopened._events
+    finally:
+        reopened.close()
+
+
+@pytest.mark.parametrize("owner", [None, {}, {"pid": True, "created_at": 100.0},
+                                    {"pid": 123, "created_at": "invalid"}])
+def test_invalid_owner_metadata_preserves_job_without_assuming_a_crash(tmp_path, owner):
+    service = JobService(tmp_path)
+    service.close()
+    payload = {"id": "uncertain", "state": "queued", "owner": owner}
+    with closing(sqlite3.connect(tmp_path / "jobs.sqlite3")) as db, db:
+        db.execute("INSERT INTO jobs VALUES (?, ?, ?)", (payload["id"], "2026-10-05", json.dumps(payload)))
+    reopened = JobService(tmp_path)
+    try:
+        assert reopened.dispatch("jobs.get", {"job_id": payload["id"]})["job"] == payload
+        result = reopened.dispatch("jobs.cancel", {"job_id": payload["id"]})
+        assert result["cancellation"] == "not_owned_by_this_engine" and result["job"] == payload
+        assert reopened.recovery_warnings and not reopened._events
+    finally:
+        reopened.close()

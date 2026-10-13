@@ -17,6 +17,7 @@ import platform
 import re
 import shutil
 import socket
+import sqlite3
 import subprocess
 import sys
 import sysconfig
@@ -136,7 +137,7 @@ def frozen_inventory(binary: Path) -> dict:
 
     archive = CArchiveReader(str(binary))
     entries, modules = [], []
-    forbidden = ("pymavlink.dfreader", "pymavlink.mavutil", "pymavlink.generator", "lxml", "fastcrc")
+    forbidden = ("pymavlink.dfreader", "pymavlink.mavutil", "pymavlink.generator", "lxml", "fastcrc", "scipy")
     for name, entry in sorted(archive.toc.items()):
         normalized = name.lower().replace("/", ".").replace("\\", ".")
         if any(normalized.startswith(prefix) for prefix in forbidden) or "iconv" in normalized:
@@ -153,7 +154,10 @@ def frozen_inventory(binary: Path) -> dict:
                 "q22_engine.recorder", "q22_engine.collection", "q22_engine.collection_controller",
                 "q22_engine.parameter_capture", "q22_engine.acquisition", "q22_engine.reconciliation",
                 "q22_engine.insights", "q22_engine.insight_service", "q22_engine.guidance",
-                "q22_engine.rtp_diagnostics", "q22_engine.radio_history"}
+                "q22_engine.rtp_diagnostics", "q22_engine.radio_history", "q22_engine.catalog",
+                "q22_engine.alignment", "q22_engine.orchestration", "q22_engine.imu_batches",
+                "q22_engine.control_analysis", "q22_engine.filter_models",
+                "q22_engine.network_helper", "q22_engine.network_helper_windows"}
     if not required.issubset(modules):
         raise RuntimeError(f"Frozen runtime missing required modules: {sorted(required - set(modules))}")
     commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True, text=True, encoding="utf-8")
@@ -237,6 +241,7 @@ def normalize_linux_runtime(binary: Path) -> None:
 def smoke(binary: Path) -> None:
     """Exercise the frozen runtime, persistent process, ID association and EOF exit."""
     with tempfile.TemporaryDirectory(prefix="Q22 packaging Δ ") as directory:
+        legacy = prepare_legacy_catalog(Path(directory))
         fixture = Path(directory) / "synthetic params données.param"
         fixture.write_text("# Synthetic packaging fixture; never aircraft evidence.\nATC_RAT_RLL_P,0.1\n", encoding="utf-8")
         label = "Synthetic · données · Перевірка"
@@ -256,15 +261,23 @@ def smoke(binary: Path) -> None:
         environment = {key: value for key, value in os.environ.items()
                        if key not in {"PYTHONHOME", "PYTHONPATH", "VIRTUAL_ENV"}}
         rpc = SmokeRPC(binary, Path(directory), environment)
+        policy_listener = None
         try:
             replies = [rpc.call(request["method"], request["params"]) for request in requests]
+            smoke_catalog(rpc, Path(directory), legacy)
+            policy, policy_listener = smoke_saved_policy(rpc)
             smoke_logs(rpc, Path(directory))
             acquisitions = smoke_acquisition(rpc, Path(directory))
             report = smoke_insights(rpc, Path(directory))
+            smoke_control_and_alignment(rpc, Path(directory))
             capture = smoke_recorder(rpc, Path(directory), binary)
         finally:
             rpc.close()
-        smoke_recorder_restart(binary, Path(directory), environment, capture, acquisitions, report)
+        try:
+            smoke_recorder_restart(binary, Path(directory), environment, capture, acquisitions, report, policy, policy_listener)
+        finally:
+            if policy_listener:
+                policy_listener.close()
         handshake = replies[0]
         if handshake.get("protocol_version") != 1 or handshake.get("product") != "Q22 Flight Lab":
             raise RuntimeError("Frozen engine handshake does not match desktop protocol version 1")
@@ -279,7 +292,92 @@ def smoke(binary: Path) -> None:
         if (network.get("platform") != platform.system() or not network.get("interfaces")
                 or network.get("status") not in {"inspected", "partial"}):
             raise RuntimeError("Frozen runtime failed native interface inspection")
-        print("Frozen engine smoke passed: Unicode and BIN/LOG/TLOG imports, Parquet metrics, native interfaces, synthetic bidirectional readback/list/download with immutable originals, vibration and power report/review export, receive-only recorder subprocess, verified archives, persistence/recovery, clean EOF worker exit. Synthetic evidence only; no hardware qualification.")
+        print("Frozen engine smoke passed: v1 catalog migration/integrity, Unicode and BIN/LOG/TLOG imports, Parquet metrics, native interfaces, saved-policy no-traffic/restart gate, synthetic bidirectional readback/list/download, vibration/power and batch-IMU/RATE/static-filter reports, positive content alignment, review export, receive-only recorder, verified archives, persistence/recovery, clean EOF worker exit. Synthetic evidence only; no hardware qualification.")
+
+
+def prepare_legacy_catalog(directory: Path) -> dict:
+    """Construct the previous on-disk format independently of the new Store."""
+    data = b"SYNTHETIC v1 immutable original; migration must preserve these bytes.\n"
+    digest = hashlib.sha256(data).hexdigest()
+    raw = directory / "raw" / "sha256"
+    raw.mkdir(parents=True)
+    (raw / digest).write_bytes(data)
+    source = {"id": "synthetic-legacy-source", "sha256": digest, "byte_size": len(data),
+              "original_name": "legacy-synthetic.bin", "schema_version": 1}
+    document = {"id": "synthetic-legacy-manifest", "source": source, "revision": 1, "synthetic": True}
+    db = sqlite3.connect(directory / "catalog.sqlite3")
+    try:
+        with db:
+            db.execute("CREATE TABLE sources (id TEXT PRIMARY KEY, created_at TEXT NOT NULL, data TEXT NOT NULL)")
+            db.execute("CREATE TABLE documents (id TEXT PRIMARY KEY, kind TEXT NOT NULL, created_at TEXT NOT NULL, data TEXT NOT NULL)")
+            db.execute("CREATE INDEX documents_kind ON documents(kind,created_at)")
+            for table in ("sources", "documents"):
+                for operation in ("update", "delete"):
+                    db.execute(f"CREATE TRIGGER {table}_no_{operation} BEFORE {operation.upper()} ON {table} BEGIN SELECT RAISE(ABORT,'immutable'); END")
+            db.execute("INSERT INTO sources VALUES (?,?,?)", (source["id"], "2020-01-01T00:00:00Z", json.dumps(source)))
+            db.execute("INSERT INTO documents VALUES (?,?,?,?)", (document["id"], "synthetic_migration_fixture", "2020-01-01T00:00:00Z", json.dumps(document)))
+            db.execute("PRAGMA user_version=1")
+    finally:
+        db.close()
+    return {"source": source, "document": document, "bytes": data}
+
+
+def smoke_catalog(rpc: SmokeRPC, directory: Path, legacy: dict) -> None:
+    status = rpc.call("catalog.status", {})
+    migrations = status["migrations"]
+    if (status["catalog_version"] != 2 or status["automatic_restore"] or len(migrations) != 1
+            or migrations[0]["from_version"] != 1 or migrations[0]["original_documents_rewritten"]):
+        raise RuntimeError("Frozen catalog failed the additive v1 migration contract")
+    backup = migrations[0]["backup"]
+    path = directory / "catalog-migrations" / backup["filename"]
+    if hashlib.sha256(path.read_bytes()).hexdigest() != backup["sha256"]:
+        raise RuntimeError("Frozen migration backup digest does not match retained bytes")
+    for database, expected_version in ((path, 1), (directory / "catalog.sqlite3", 2)):
+        db = sqlite3.connect(database)
+        try:
+            found = json.loads(db.execute("SELECT data FROM documents WHERE id=?", (legacy["document"]["id"],)).fetchone()[0])
+            if db.execute("PRAGMA user_version").fetchone()[0] != expected_version or found != legacy["document"]:
+                raise RuntimeError("Frozen migration rewrote legacy evidence or its pre-upgrade snapshot")
+        finally:
+            db.close()
+    raw = directory / "raw" / "sha256" / legacy["source"]["sha256"]
+    before = raw.read_bytes()
+    verified = rpc.job("catalog.verify", {})
+    if (verified["state"] != "passed" or verified["mutations_performed"] or verified["verified_unique_blobs"] < 2
+            or raw.read_bytes() != before or before != legacy["bytes"]):
+        raise RuntimeError("Frozen catalog integrity check changed evidence or did not verify originals")
+
+
+def assert_no_policy_traffic(listener: socket.socket) -> None:
+    listener.settimeout(.2)
+    try:
+        packet, _ = listener.recvfrom(65535)
+    except socket.timeout:
+        return
+    raise RuntimeError(f"Saved policy emitted unauthorized network traffic ({len(packet)} bytes)")
+
+
+def smoke_saved_policy(rpc: SmokeRPC) -> tuple[dict, socket.socket]:
+    listener = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    listener.bind(("127.0.0.1", 0))
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as local:
+        local.bind(("127.0.0.1", 0))
+        local_port = local.getsockname()[1]
+    policy = {"aircraft_id": "synthetic-policy-smoke", "synthetic": True, "preflight_parameters": True,
+        "postflight_parameters": True, "log_retrieval": "disabled", "connection": {
+            "local_address": "127.0.0.1", "local_port": local_port, "remote_address": "127.0.0.1",
+            "remote_port": listener.getsockname()[1], "system_id": 1, "component_id": 1,
+            "expected_uid": "123", "feed_origin": "direct_bidirectional"}}
+    try:
+        saved = rpc.call("orchestration.policy.save", {"policy": policy, "operation_id": str(uuid4())})["policy"]
+        status = rpc.call("orchestration.status", {})
+        if status["run_total"] or status["request_total"]:
+            raise RuntimeError("Saving a policy started an unapproved acquisition run")
+        assert_no_policy_traffic(listener)
+        return saved, listener
+    except BaseException:
+        listener.close()
+        raise
 
 
 def wait_smoke(check, ready, label: str, timeout: float = 15):
@@ -445,11 +543,16 @@ def smoke_recorder(rpc: SmokeRPC, directory: Path, binary: Path) -> dict:
 
 
 def smoke_recorder_restart(binary: Path, directory: Path, environment: dict, capture: dict,
-                           acquisitions: list[dict], report: dict) -> None:
+                           acquisitions: list[dict], report: dict, policy: dict, policy_listener: socket.socket) -> None:
     """Restart retains evidence; EOF terminates a worker instead of silently resuming it."""
     rpc = SmokeRPC(binary, directory, environment)
     worker = None
     try:
+        policies = rpc.call("orchestration.policy.list", {})["policies"]
+        policy_status = rpc.call("orchestration.status", {})
+        if not any(item["id"] == policy["id"] for item in policies) or policy_status["run_total"] or policy_status["request_total"]:
+            raise RuntimeError("Frozen restart lost the saved policy or reactivated acquisition without fresh approval")
+        assert_no_policy_traffic(policy_listener)
         for acquisition in acquisitions:
             restored_acquisition = rpc.call("acquisition.detail", {"acquisition_id": acquisition["id"]})["acquisition"]
             if restored_acquisition != acquisition:
@@ -720,6 +823,48 @@ def smoke_insights(rpc: SmokeRPC, directory: Path) -> dict:
     return report
 
 
+def smoke_control_and_alignment(rpc: SmokeRPC, directory: Path) -> None:
+    log = rpc.job("logs.import", {"path": str(ROOT / "fixtures/logs/synthetic-control-batch.log"),
+        "label": "SYNTHETIC batch gyro and RATE oracle", "synthetic": True})["log"]
+    result = rpc.job("insights.report", {"log_id": log["id"], "source_key": "dataflash", "boot_epoch": 0,
+        "interval_start_s": 0, "interval_end_s": 4,
+        "operating_profile": {"declared_firmware": "Copter-4.7.1", "flight_phase": "hover"},
+        "control": {"axis": "roll", "step": {"time_s": 2, "pre_s": .5, "post_s": 2}},
+        "spectrum": {"source": "batch_imu", "sensor_instance": "0", "axis": "x", "filter_stage": "pre",
+            "sample_rate_hz": 400, "window_samples": 256, "anti_alias_cutoff_hz": 100,
+            "anti_alias_evidence": "SYNTHETIC fixture, no hardware anti-alias qualification"},
+        "filter_model": {"sample_rate_hz": 400, "stages": [{"kind": "ardupilot_static_notch",
+            "center_hz": 50, "bandwidth_hz": 20, "attenuation_db": 30}]}})["report"]
+    step = result["control"]["step"]
+    spectrum = result["spectrum"]
+    center = next((r for r in result["filter_model"]["response"] if r["frequency_hz"] == 50), None)
+    modeled = next((r for r in result["modeled_spectrum"]["bins"] if r["frequency_hz"] == 50), None)
+    if (result["algorithm_version"] != "q22-offline-insights/2" or not result["scope"]["synthetic"]
+            or step["status"] != "observed_response" or not math.isclose(step["rise_time_s"], .44, abs_tol=1e-6)
+            or not math.isclose(step["settling_time_s"], .6, abs_tol=1e-6)
+            or spectrum["status"] != "conditional" or spectrum["source"] != "batch_imu"
+            or not math.isclose(spectrum["peaks"][0]["frequency_hz"], 50, abs_tol=1e-6)
+            or not math.isclose(spectrum["measurement_interval_end_s"], 1 + 255 / 400, abs_tol=1e-6)
+            or result["filter_model"]["status"] != "modeled_static" or center is None
+            or not math.isclose(center["attenuation_db"], 30, abs_tol=1e-6)
+            or result["filter_model"]["qualification"]["exact_firmware_parity"]
+            or modeled is None or not math.isclose(modeled["modeled_psd"] / modeled["observed_psd"], .001, rel_tol=1e-6)):
+        raise RuntimeError("Frozen batch-gyro/control/static-filter numerical oracle or qualification gate failed")
+    scopes = []
+    for role in ("reference", "candidate"):
+        value = rpc.job("logs.import", {"path": str(ROOT / f"fixtures/logs/synthetic-alignment-{role}.tlog"),
+            "label": f"SYNTHETIC alignment {role}", "synthetic": True})["log"]
+        scopes.append({"log_id": value["id"], "source_key": "1:1", "boot_epoch": 0})
+    aligned = rpc.job("alignment.analyze", {"reference": scopes[0], "candidates": [scopes[1]]})["report"]
+    candidate = aligned["candidates"][0]
+    if (candidate["state"] != "verified" or len(candidate["matches"]) != 1
+            or aligned["candidate_universe"]["truncated"] or not aligned["reference"]["synthetic"]
+            or not candidate["evidence"]["synthetic"] or aligned["hardware_qualified"]
+            or aligned["parameter_timeline"]["attribution_allowed"]
+            or rpc.call("alignment.get", {"report_id": aligned["id"]})["report"] != aligned):
+        raise RuntimeError("Frozen content alignment lost rule verification, immutable persistence or synthetic/uncertainty scope")
+
+
 def macos_minimum(path: Path) -> tuple[int, ...]:
     """Inspect Mach-O load commands without rewriting signed binaries."""
     result = subprocess.run(["otool", "-l", str(path)], capture_output=True, text=True,
@@ -795,8 +940,10 @@ def main() -> None:
             "--additional-hooks-dir", str(ROOT / "src-tauri" / "packaging-hooks"),
             "--add-data", f"{collect_notices()}{os.pathsep}q22-notices",
         ]
-        for module in ("pymavlink.DFReader", "pymavlink.mavutil", "pymavlink.generator", "lxml", "fastcrc"):
+        for module in ("pymavlink.DFReader", "pymavlink.mavutil", "pymavlink.generator", "lxml", "fastcrc", "scipy"):
             command.extend(["--exclude-module", module])
+        for module in ("q22_engine.network_helper", "q22_engine.network_helper_windows"):
+            command.extend(["--hidden-import", module])
         if platform.system() == "Darwin":
             command.extend(["--target-arch", "arm64" if args.target.startswith("aarch64") else "x86_64"])
             if os.environ.get("APPLE_SIGNING_IDENTITY"):

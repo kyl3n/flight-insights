@@ -110,6 +110,7 @@ def main():
         formats = "app,dmg"
     command = [sys.executable, str(ROOT / "scripts/verify-native-bundle.py"), "--target", target,
                "--bundle-root", str(bundle), "--formats", formats,
+               "--require-gui",
                "--report", str(ROOT / f"native-verification-signed-{target}.json")]
     if sys.platform in {"win32", "darwin"}:
         command.append("--require-publisher-signature")

@@ -62,13 +62,15 @@ export interface NetworkInspection {
 }
 export interface NetworkCapabilities {
   current_platform:string;
-  platforms:Record<string,{inspection:unknown;stream_probes:unknown;repair:{state:string;automatic_apply:boolean;reason:string};qualification:unknown}>;
+  platforms:Record<string,{inspection:unknown;stream_probes:unknown;repair:{state:string;automatic_apply:boolean;reason:string;bench_available?:boolean;bench_opt_in?:boolean;qualified?:boolean};qualification:unknown}>;
   layers:{layer:string;state:string;coverage:string}[];
   repair_safety:{allowed:boolean;state:string;reasons:string[]};
 }
 export interface RepairPlan {
   plan_id: string; state: string; title: string; commands: string[][]; rollback_commands: string[][];
   requires_elevation: boolean; warnings: string[]; message?: string; reason?: string;
+  automatic_apply?:boolean;
+  native_review?:{plan_id:string;review_fingerprint:string;candidate:Record<string,unknown>;before_fingerprint:string;expires_utc_ms:number;rollback_after_ms:number;authority:string};
 }
 export type Run = (label: string, action: () => Promise<void>) => Promise<void>;
 
@@ -118,6 +120,7 @@ export interface AcquisitionRecord {
 }
 export interface RecoveryReceipt extends RepairPlan {
   ownership:'owned'|'changed'|'absent'|'unknown'; may_have_applied:boolean; recovered:boolean;
+  rollback_deadline_utc_ms?:number|null;native_state?:string;
 }
 export interface RecoveryResponse {status:'ready'|'unavailable';repairs:RecoveryReceipt[];warnings:string[]}
 export interface CollectionProfile {
@@ -168,10 +171,10 @@ export interface InsightEvidence {time_s?:number|null;time_us?:string|null;recor
 export interface InsightFinding {id:string;kind:string;severity:string;title:string;evidence:InsightEvidence;details:Record<string,unknown>;citation_ids:string[]}
 export interface GuidanceCitation {id:string;title:string;summary:string;evidence_requirements:string[];limitations:string[];parameter_families:string[];firmware_scope:string;references:{source_id:string;repository:string;revision:string;path:string;url:string;sha256:string;retrieved_at:string;line_start?:number;line_end?:number}[]}
 export interface InsightReport {
-  id:string;created_at?:string;algorithm_version:string;
+  id:string;created_at?:string;algorithm_version:string;control?:ControlEvidence;filter_model?:FilterModelEvidence;modeled_spectrum?:{status:string;reason?:string;bins?:{frequency_hz:number;observed_psd:number;modeled_psd:number|null}[];observed_band_power?:number;modeled_band_power?:number;band_power_unit?:string;band_attenuation_db?:number;band_start_hz?:number;band_end_hz?:number;interpretation?:string;[key:string]:unknown};
   scope:{log_id:string;source_sha256:string;synthetic:boolean;source_key:string;boot_epoch:number;time_domain:string;origin_time_us:string|null;interval_start_s:number;interval_end_s:number;max_gap_s:number;battery_id:string|null};
   operating_profile:Record<string,unknown>;metrics:Record<string,Metric>;
-  vibration:{status:string;series:{instance_id:string;axis:string;time_s:number;value_mps2:number;record_index:number}[];series_reduction:string;warning_threshold_mps2:number;critical_threshold_mps2:number;threshold_basis:string;excursions:InsightFinding[];coverage?:{instance_id:string;axis:string;sample_count:number;covered_duration_s:number;coverage_fraction:number;valid_pair_count:number;exclusions:unknown[];exclusion_count:number}[];clipping:{observed_deltas:Record<string,number>;resets:unknown[];reset_count?:number;resets_truncated?:boolean;gap_count:number;interpretation:string};observed_records:number;excluded_fields:number};
+  vibration:{status:string;series:{instance_id:string;axis:string;time_s:number;value_mps2:number;record_index:number}[];distributions?:{instance_id:string;axis:string;sample_count:number;p50_mps2:number;p95_mps2:number;p99_mps2:number;maximum_mps2:number;time_above_warning_s:number;time_above_critical_s:number;covered_duration_s:number;distribution_approximate:boolean;distribution_method:string;exposure_basis:string}[];series_reduction:string;warning_threshold_mps2:number;critical_threshold_mps2:number;threshold_basis:string;excursions:InsightFinding[];coverage?:{instance_id:string;axis:string;sample_count:number;covered_duration_s:number;coverage_fraction:number;valid_pair_count:number;exclusions:unknown[];exclusion_count:number}[];clipping:{observed_deltas:Record<string,number>;resets:unknown[];reset_count?:number;resets_truncated?:boolean;gap_count:number;interpretation:string};observed_records:number;excluded_fields:number};
   parameter_evidence:{state:string;observations:{name:string;value:string|number;age_at_start_s:number;evidence:InsightEvidence}[];changes:Record<string,unknown>[];observations_truncated:boolean;changes_truncated:boolean;change_count:number;[key:string]:unknown};
   findings:InsightFinding[];finding_count:number;findings_truncated:boolean;
   recommendations:{id:string;action:string;citation_ids:string[];parameter_families:string[];proposed_values:null;parameter_attribution_state:string;evidence_ids:string[];requires_operator_review:boolean;firmware_caveat:string}[];
@@ -189,3 +192,13 @@ export async function listAll<T>(method:string,key:string,limit=100):Promise<T[]
     offset=page.next_offset;
   }
 }
+
+export interface AcquisitionPolicy {id:string;policy_fingerprint:string;created_at:string;policy:{aircraft_id:string;connection:AcquisitionConnection;synthetic:boolean;preflight_parameters:boolean;postflight_parameters:boolean;log_retrieval:'disabled'|'selected_after_stop';confirm_log_transfer_side_effects:boolean;preflight_freshness_s:number;max_requests_per_capture:number;limits?:Record<string,number>};adapter:Record<string,unknown>;limitations:string[]}
+export interface AcquisitionPolicyApproval {policy_id:string;policy_fingerprint:string;confirm_automatic_readback:true;confirm_experimental_adapter:true;confirm_log_transfer_side_effects?:true}
+export interface OrchestrationRequest {id:string;capture_session_id:string;flight_record_id:string|null;role:string;state:string;job_id:string|null;acquisition_id:string|null;association_state:string;historical_applicability:string;freshness:string;applicability:string;reason?:string;recovery_warning?:string;[key:string]:unknown}
+export interface OrchestrationStatus {runs:{id:string;state:string;runtime_authorized:boolean;authorization_state:string;gate:{allowed:boolean;reason:string};[key:string]:unknown}[];requests:OrchestrationRequest[];request_total:number;run_total:number;next_offset:number|null;adapter:Record<string,unknown>;limitations:string[]}
+export interface AlignmentSelection {log_id:string;source_key:string;boot_epoch:number}
+export interface AlignmentEvidence {selection:AlignmentSelection;artifact_sha256:string;format:string;synthetic?:boolean;uids:unknown[];firmware:unknown[];clock_model:{state:string;[key:string]:unknown};armed_intervals:unknown[];[key:string]:unknown}
+export interface AlignmentReport {id:string;created_at:string;algorithm_version:string;inputs:{reference:AlignmentSelection;candidates:AlignmentSelection[];flight_record_id?:string};reference:AlignmentEvidence;candidates:{selection:AlignmentSelection;artifact_sha256:string;format:string;state:string;matches:Record<string,unknown>[];missing_evidence:string[];contradictions:string[];competing_candidates:AlignmentSelection[];evidence:AlignmentEvidence}[];candidate_universe:{basis:string;log_count:number;stream_count:number;truncated:boolean;signature:string;alternatives:unknown[]};parameter_timeline:{state:string;observations:unknown[];changes:unknown[];attribution_allowed:false;[key:string]:unknown};parameter_links?:{acquisitions:{acquisition_id:string;state:string;matches:unknown[];completeness:string;consistency:string;missing_evidence:string[];contradictions:string[];[key:string]:unknown}[];exports:Record<string,unknown>[];automatic_effective_configuration:false};limitations:string[]}
+export interface ControlEvidence {status:string;reason?:string;axis:string;unit?:string;sample_count:number;sample_limit?:number;truncated?:boolean;scope?:{start_s:number;end_s:number};tracking?:{rmse_deg_s:number|null;bias_deg_s:number|null;absolute_error_p50_deg_s:number|null;absolute_error_p95_deg_s:number|null;absolute_error_p99_deg_s:number|null;covered_duration_s:number;coverage_fraction:number;quantile_basis:string};lag?:{status:string;seconds:number|null;reason?:string;[key:string]:unknown};step?:{status:string;rise_time_s?:number;settling_time_s?:number;overshoot_fraction?:number;reason?:string;[key:string]:unknown};pid_terms?:{status:string;statistics:Record<string,{sample_count:number;mean:number;rms:number;minimum:number;maximum:number;unit:string}>;flags:Record<string,unknown>;interpretation:string};series:{time_s:number;desired_deg_s:number;actual_deg_s:number;record_index:number}[];references?:string[];limitations?:string[]}
+export interface FilterModelEvidence {status:string;reason?:string;model_version?:string;sample_rate_hz?:number;stages?:unknown[];response?:{frequency_hz:number;gain:number|null;attenuation_db:number|null;phase_deg:number|null;group_delay_s:number|null;undefined_reason:string|null}[];qualification?:Record<string,unknown>;references?:{url:string;path:string;revision:string}[];validation?:Record<string,unknown>;limitations?:string[]}

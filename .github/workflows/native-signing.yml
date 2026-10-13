@@ -4,6 +4,11 @@ name: Protected native signing candidate
 # input, PR trigger, release creation, upload-to-store, or publishing permission.
 on:
   workflow_dispatch:
+    inputs:
+      include_macos:
+        description: Also sign experimental macOS targets on provisioned runners
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -15,16 +20,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - labels: '["self-hosted", "Linux", "X64", "q22-release"]'
-            target: x86_64-unknown-linux-gnu
-          - labels: '["self-hosted", "Windows", "X64", "q22-release"]'
-            target: x86_64-pc-windows-msvc
-          - labels: '["self-hosted", "macOS", "ARM64", "q22-release"]'
-            target: aarch64-apple-darwin
-          - labels: '["self-hosted", "macOS", "X64", "q22-release"]'
-            target: x86_64-apple-darwin
-    runs-on: ${{ fromJSON(matrix.labels) }}
+        include: ${{ fromJSON(inputs.include_macos && '[{"labels":["self-hosted","Linux","X64","q22-release"],"target":"x86_64-unknown-linux-gnu"},{"labels":["self-hosted","Windows","X64","q22-release"],"target":"x86_64-pc-windows-msvc"},{"labels":["self-hosted","macOS","ARM64","q22-release"],"target":"aarch64-apple-darwin"},{"labels":["self-hosted","macOS","X64","q22-release"],"target":"x86_64-apple-darwin"}]' || '[{"labels":["self-hosted","Linux","X64","q22-release"],"target":"x86_64-unknown-linux-gnu"},{"labels":["self-hosted","Windows","X64","q22-release"],"target":"x86_64-pc-windows-msvc"}]') }}
+    runs-on: ${{ matrix.labels }}
     timeout-minutes: 120
     defaults:
       run:
@@ -50,6 +47,8 @@ jobs:
           python -c 'import sys; assert sys.version_info[:3] == (3,12,14)'
           test "$(uv --version)" = "uv 0.12.19"
           rustc --version | rg '^rustc 1\.99\.0 '
+      - name: Inspect protected runner signing prerequisites without signing
+        run: python src-tauri/signing/preflight.py --report native-verification-signing-preflight-${{ matrix.target }}.json
       - name: Locked build and tests at the trusted commit
         run: |
           npm ci
@@ -60,6 +59,9 @@ jobs:
           cargo fmt --manifest-path src-tauri/Cargo.toml --check
           cargo test --manifest-path src-tauri/Cargo.toml --locked --target ${{ matrix.target }}
           cargo clippy --manifest-path src-tauri/Cargo.toml --target ${{ matrix.target }} --locked -- -D warnings
+          cargo fmt --manifest-path native-repair/Cargo.toml --check
+          cargo test --manifest-path native-repair/Cargo.toml --target ${{ matrix.target }} --locked
+          cargo clippy --manifest-path native-repair/Cargo.toml --target ${{ matrix.target }} --locked -- -D warnings
           npx playwright install chromium
           npm test
       - name: Preserve browser failure evidence
@@ -70,8 +72,15 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
           path: test-results/
+      - name: Preserve locked application dependency graph and upstream notices
+        run: uv run --frozen python scripts/application-dependencies.py --target ${{ matrix.target }}
       - name: Sign, notarize where required, and verify native artifacts
-        run: uv run --frozen python src-tauri/signing/release.py
+        run: |
+          if [[ "$RUNNER_OS" == Linux ]]; then
+            xvfb-run -a -s '-screen 0 1440x1000x24' dbus-run-session -- uv run --frozen python src-tauri/signing/release.py
+          else
+            uv run --frozen python src-tauri/signing/release.py
+          fi
       - name: Preserve signed candidates for release qualification, without publication
         uses: actions/upload-artifact@v4
         with:
@@ -86,3 +95,14 @@ jobs:
             src-tauri/binaries/*.macos-runtime.json
             src-tauri/resources/engine/
             native-verification-signed-${{ matrix.target }}.json
+            native-verification-signing-preflight-${{ matrix.target }}.json
+            scripts/qualify-installed-linux.sh
+            scripts/qualify-installed-windows.ps1
+      - name: Preserve signing and native qualification failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-signing-failure-${{ matrix.target }}
+          if-no-files-found: ignore
+          retention-days: 14
+          path: native-verification-*.json

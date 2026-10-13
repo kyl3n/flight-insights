@@ -22,7 +22,7 @@ unexpected outputs; do not replace expected values to make a failing case pass.
 | --- | --- |
 | Linux engine, UI and native supervisor test results in `validation.md` | Shared calculations, mocked OS adapters, loopback protocols and supervised bundled IPC for the recorded source revision |
 | Extracted Debian package and native CLI verification in the cloud | Payload identity and native supervisor operation from the packaged layout; no graphical installation claim |
-| Native CI job results linked in `validation.md` | Executed target builds and packaged-runtime checks at the recorded commits; no installed-GUI or hardware qualification |
+| Native CI job results linked in `validation.md` | Executed target builds and packaged-runtime checks at the recorded commits. A recorded `--require-gui` result adds basic production WebView rendering and native IPC evidence; it does not establish full desktop or hardware qualification |
 | Synthetic parameter, metric and protocol fixtures | Parser/arithmetic regressions; no real Q22, radio, camera or firmware validation |
 
 New decoder, repair or release code needs its own recorded results. Never carry a
@@ -30,7 +30,7 @@ previous milestone's passing count forward as evidence for a later build.
 
 ## Native platform qualification
 
-Run on Windows x64, Linux x64, macOS Apple Silicon and macOS Intel independently.
+Run on Windows x64 and Linux x64 independently. macOS Apple Silicon and Intel cases below are deferred reference procedures, not current release gates.
 Use a disposable VM for installation tests and a physical machine for USB/LAN and
 sleep/resume tests. Build each frozen Python runtime on its matching OS and CPU.
 
@@ -38,16 +38,18 @@ sleep/resume tests. Build each frozen Python runtime on its matching OS and CPU.
 | --- | --- |
 | Windows x64 | Clean installed desktop Windows version(s) declared supported, plus exact WebView2 version. The Windows Server 2022 CI runner alone does not qualify a desktop Windows release. Establish the supported minimum before advertising it. |
 | Linux x64 | Ubuntu 22.04 CI baseline and the intended desktop distribution with its declared WebKit/GTK/glibc packages. A local Debian 13 package uses the Debian 13 override and does not establish Ubuntu compatibility. Verify `.deb` and AppImage separately. |
-| macOS arm64 and x64 | Native architecture, declared macOS 13.0 floor and a current supported OS version. Verify embedded Mach-O minimums and actual installed execution; a macOS 15 build does not prove macOS 13 compatibility. |
+| macOS arm64 and x64 (deferred) | Native architecture, declared macOS 13.0 floor and a current supported OS version. Verify embedded Mach-O minimums and actual installed execution; a macOS 15 build does not prove macOS 13 compatibility. |
 
 1. Start with no Q22 installation or prior application data and no separately
    installed Python, Node or uv. Record the VM snapshot and prerequisite state.
    For Windows automated NSIS verification, use only a disposable clean runner:
    installation also affects uninstall registration, shortcuts and possibly the
    shared WebView2 runtime. A temporary destination is not complete isolation.
-2. Verify the artifact hash. Run `scripts/verify-native-bundle.py` on the matching
-   build host and retain its report. It checks the real packaged native supervisor
-   without a webview; complete the graphical steps separately.
+2. Verify the artifact hash. Run `scripts/verify-native-bundle.py` with
+   `--require-gui` on the matching build host and retain its report. This checks
+   the real packaged native supervisor plus basic production WebView rendering
+   and native IPC, restart and shutdown. Complete the graphical, permission,
+   accessibility and physical-device steps below separately.
 3. Install through the intended package flow. Launch from the normal desktop
    shortcut/Finder/application menu, with no developer shell environment. Check
    the native file picker, fonts, 200% scaling, keyboard focus and error dialogs.
@@ -212,7 +214,7 @@ or establish that signed builds have run.
 | Target | Before general distribution |
 | --- | --- |
 | Windows | Authorized Authenticode identity and timestamp service; verify publisher/signature on installer and shipped executables, then test the final signed installer on clean Windows |
-| macOS | Authorized Developer ID identity, required signing configuration and notarization credentials; sign nested code and app, notarize/staple as applicable, then verify Gatekeeper behavior on the final downloaded bundle |
+| macOS (deferred) | Authorized Developer ID identity, required signing configuration and notarization credentials; sign nested code and app, notarize/staple as applicable, then verify Gatekeeper behavior on the final downloaded bundle |
 | Linux | Published SHA-256 manifest and the selected package/repository signing policy; verify dependencies and final artifacts on each declared distribution |
 
 Existing ad hoc Mach-O signatures establish neither Developer ID identity nor

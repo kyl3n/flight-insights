@@ -1,5 +1,104 @@
 # Validation record
 
+## Managed analysis and private bench qualification — 13 October 2026
+
+This is the current **local development record; native CI and final installers
+for this source revision are pending**. Windows x64 and Linux x64 are the current
+required targets. macOS remains an optional future target; the older four-target
+results below describe their own earlier commits and do not validate this slice.
+
+The latest managed Debian 13 full engine run passed **632 tests and 29 subtests**
+in 29.91 seconds, with **14 skips**: nine optional SciPy signal-reference checks
+because SciPy was unavailable, two actual Windows ACL cases, two Windows recorder
+read-handle cases, and one Windows offline-bench wrapper case. These are explicit
+gaps in this local run, not passing checks. The transcript is retained as
+`q22-managed-analysis-pytest-final.log` in the delivery workspace.
+All **19 browser integration tests** and the TypeScript/Vite production build
+also passed. These browser checks use the real engine through the test bridge;
+they remain separate from the pending native WebView run. The native-helper suite
+passed **42 Rust tests**, rustfmt and Clippy with warnings denied. An independent
+review found no remaining concrete blocker in the implemented Linux write and
+rollback path; no privileged host mutation or hardware validation was performed.
+
+Coverage now includes bounded managed acquisition, evidence alignment, catalog
+migration/integrity, validated IMU batch decoding, conditional control/filter
+analysis and the private helper's injected-state/protocol boundaries. Tests remain
+synthetic unless stated otherwise. Implemented numerical analyses are conditional
+on their recorded schema, units, clock and sampling gates; this does not establish
+complete Filter Review/PID parity or tuning changes for a real aircraft. See
+[acceptance-status.md](acceptance-status.md) for current scope.
+
+The native qualification work adds a production-WebView rendering/IPC check with
+isolated engine/browser data and a nonce-bound, natively owned report. Nine Rust
+lifecycle/GUI guard tests passed locally, including retained shutdown failure and
+cancelled-waiter outcomes, followed by Clippy with warnings denied. Those checks
+preceded subsequent engine integration edits; final packaged checks must run
+again at the release candidate. Both Windows/Linux workflows passed Actionlint
+1.7.7. The Linux installer input tests cover read-only review, approval binding,
+exclusive writes, protected/visible image paths, executable access, and FIFO
+rejection. No helper installer or elevated service was run in this environment.
+
+The new workflow requires actual installed/extracted WebView verification on
+normal Windows/Linux runners. It is **not yet recorded as passed**. The managed
+cloud's extracted WebKit subprocess paths still prevent credible GUI qualification
+here; no sandbox or OS security was bypassed. Physical SkyPulse/SIYI streams,
+Mission Planner/QGroundControl coexistence, real network-manager repair/rollback,
+and publisher signing remain separate checks. Read-only signing preflight found
+no repository environments/rulesets; credential-name and runner metadata were
+unavailable with HTTP 403, not proven absent. The user reported no Windows signing
+identity. Private unsigned testing does not require one.
+
+### Measured synthetic import boundaries
+
+The full wide-record benchmark used **2,147,483,775 bytes** of valid DataFlash BIN:
+9,460,275 BAT records of 24 bytes alternating with 9,460,275 PAD records of
+203 bytes, plus 20 schema/identity/parameter records. PAD is a complete unknown
+message whose payload is normalized and persisted, not skipped file filler.
+Source-byte SHA-256 matched the immutable archive. The measured outputs were:
+
+| Measurement | Observed result |
+| --- | --- |
+| Complete decode and normalized persistence | 18,920,570 events; exactly 18,920,570 Parquet rows |
+| Persisted shards | 145, totaling 555,499,751 bytes |
+| Full import elapsed time | 768.622 seconds |
+| Peak engine RSS | 103,124,992 bytes, approximately 98.3 MiB |
+| Initial import RPC | 91.0 ms |
+| Maximum concurrent status RPC | 39.1 ms |
+| Separate 2,147,483,743-byte source cancellation | Cancelled during archive; 0.743 ms acknowledgment, 11.576 ms to terminal state |
+
+The cancellation case does not establish a completed decode of its own source.
+The completed wide-record case establishes this synthetic mix on this managed
+machine, not arbitrary 2 GiB logs, reference-laptop performance, raw-IMU/DSP
+throughput, or real-flight qualification. Byte size and event density are separate
+limits. The existing **20 million normalized-event guard was not raised**.
+
+An earlier dense BAT-only attempt requested 2048 MiB, representing approximately
+89 million records. It correctly failed at that event guard after **1,043.155
+seconds**, with the last progress update at **19,998,720 events** and the error
+“Log exceeds the supported 20 million normalized events.” It did not complete.
+Its original harness removed temporary inputs before retaining their hashes, so
+exact fixture/source fingerprints are unavailable; the observed terminal job,
+timestamps and failure-log hash were preserved without inventing them.
+
+The revised benchmark writes bounded structured progress/failure evidence and
+source/fixture hashes before cleanup. The completed wide-run report has SHA-256
+`71ccad9474829acf517bf5d171d70f7b14156b35819e715952a727c664ce7143`.
+Its start/finish hashes show concurrent edits to `__main__.py`,
+`collection_controller.py`, `network.py`, `network_helper.py` and
+`network_helper_windows.py`. The measured importer modules `logs.py`,
+`log_decoder.py`, `imu_batches.py`, `jobs.py`, `store.py` and `catalog.py` did not
+change. This is evidence scoped to the launched workload and preserved hashes,
+not a claim that the whole working tree stayed unchanged.
+
+Retained workspace evidence is under `/workspace/artifacts/`:
+`Q22-managed-analysis-2gib-wide-benchmark.json`, its `-qualification.json` scope
+annotation, and `Q22-managed-analysis-2gib-dense-failure.json` / `.log`.
+Reproduce a new measurement, using a new report path, with:
+
+```sh
+uv run --frozen python scripts/benchmark-log-import.py --size-mib 2048 --cancel-size-mib 2048 --record-mix bat-pad --report /absolute/new-benchmark.json
+```
+
 ## Evidence insights and explicit acquisition — 13 October 2026
 
 This slice adds persistent local insight reports, reviewed ArduPilot guidance, a minimized local AI review-packet preview/export, explicit read-only MAVLink acquisition, content-based folder/acquisition reconciliation, RTP/H.265 framing diagnostics and bounded raw SkyPulse history. No AI service receives evidence, no aircraft parameters are written, and production host repairs remain diagnosis-only.
@@ -91,9 +190,9 @@ Privileged OS mutations, including the new macOS scoped route/address plans and 
 
 ## Cross-platform audit follow-up
 
-The user's Windows/Linux/macOS requirement is recorded in the [platform support matrix](platform-support.md). The follow-up fixes deterministic SQLite connection closure, Windows binary-file handling, localized PowerShell JSON and adapter names, sparse desktop executable paths, and macOS route/source-address selection. The local engine suite, all eight UI tests and the frontend build passed after these changes. UI recovery uses a deterministic host fixture; the separate real-host inspection test remains. Source and simulated-platform checks are distinct from the native CI results below.
+At this earlier milestone, Windows/Linux/macOS were required; the [platform support matrix](platform-support.md) records the current Windows/Linux focus. The follow-up fixed deterministic SQLite connection closure, Windows binary-file handling, localized PowerShell JSON and adapter names, sparse desktop executable paths, and macOS route/source-address selection. The local engine suite, all eight UI tests and the frontend build passed after these changes. UI recovery used a deterministic host fixture; the separate real-host inspection test remained. Source and simulated-platform checks are distinct from the native CI results below.
 
-CI now requires shared engine/UI checks, native tests, and verification of the packaged runtime on Windows x64, Linux x64, Apple Silicon and Intel Macs. The original Linux-only UI test restriction has been removed. Native bundle verification exercises the packaged shell's engine supervisor independently of graphical startup; its result is not a passed GUI or hardware test.
+That milestone required shared engine/UI checks, native tests, and verification of the packaged runtime on Windows x64, Linux x64, Apple Silicon and Intel Macs. It removed the original Linux-only UI test restriction. Its native bundle verification exercised the packaged shell's engine supervisor independently of graphical startup; those results are not passed GUI or hardware tests.
 
 ## Log ingestion and recovery follow-up
 
@@ -120,7 +219,11 @@ macOS previews carry an ad hoc integrity seal, not a Developer ID signature or n
 
 The separately built Debian 13 preview also passed packaged-runtime verification at clean source commit `fa89915e75e1d6b04ac208673c6b8074ba691595`. Its file is `Q22-Flight-Lab-0.1.0-log-preview-linux-amd64.deb`, 48,174,900 bytes, SHA-256 `91d85c6fabf257bae90699d3ea280f13d01685902b7853eb10fcff219ef8bf94`. This is distinct from the Ubuntu CI artifact and retains the Debian 13 runtime dependency requirements.
 
-## Unpassed or unrun release checks
+## Earlier flight-log milestone limitations
+
+The following limits were recorded for the earlier flight-log preview. The current
+managed-analysis checks and outstanding native CI are recorded at the top of this
+document; current acceptance scope is in [acceptance-status.md](acceptance-status.md).
 
 - Full native WebView rendering is blocked in this cloud: the workspace-extracted Debian WebKit library expects its renderer subprocess in the system `/usr/lib` location. No package binary or browser sandbox was weakened to bypass this. See [cloud prerequisites](cloud-native-prerequisites.md).
 - The `.deb` was built and inspected, not installed and launched on a clean desktop. This local artifact requires the declared Debian/glibc runtime dependencies. Native CI execution is recorded below; publisher signing, notarization and clean-machine GUI qualification remain open.

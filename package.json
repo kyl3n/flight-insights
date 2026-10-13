@@ -10,10 +10,10 @@
     "test": "playwright test",
     "tauri": "tauri",
     "desktop:dev": "uv run --frozen python scripts/package-engine.py && tauri dev",
-    "desktop:build": "uv run --frozen python scripts/package-engine.py && tauri build -- --locked",
-    "desktop:build:windows": "uv run --frozen python scripts/package-engine.py --target x86_64-pc-windows-msvc && tauri build --target x86_64-pc-windows-msvc --bundles nsis -- --locked",
-    "desktop:build:linux": "uv run --frozen python scripts/package-engine.py --target x86_64-unknown-linux-gnu && tauri build --target x86_64-unknown-linux-gnu --bundles deb,appimage -- --locked",
-    "desktop:build:macos": "uv run --frozen python scripts/package-engine.py && tauri build --bundles app,dmg -- --locked"
+    "desktop:build": "uv run --frozen python scripts/package-engine.py && uv run --frozen python scripts/application-dependencies.py --fetch-locked && tauri build -- --locked",
+    "desktop:build:windows": "uv run --frozen python scripts/package-engine.py --target x86_64-pc-windows-msvc && uv run --frozen python scripts/application-dependencies.py --target x86_64-pc-windows-msvc --fetch-locked && tauri build --target x86_64-pc-windows-msvc --bundles nsis -- --locked",
+    "desktop:build:linux": "uv run --frozen python scripts/package-engine.py --target x86_64-unknown-linux-gnu && uv run --frozen python scripts/application-dependencies.py --target x86_64-unknown-linux-gnu --fetch-locked && tauri build --target x86_64-unknown-linux-gnu --bundles deb,appimage -- --locked",
+    "desktop:build:macos": "uv run --frozen python scripts/package-engine.py && uv run --frozen python scripts/application-dependencies.py --fetch-locked && tauri build --bundles app,dmg -- --locked"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.10.0",

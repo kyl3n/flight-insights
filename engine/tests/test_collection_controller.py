@@ -319,3 +319,53 @@ def test_no_artifact_capture_does_not_claim_successful_archival(tmp_path):
         assert state["artifact_count"] == 0
     finally:
         engine.close()
+
+
+def test_native_recording_reservation_precedes_socket_and_survives_until_catalog_publish(tmp_path, monkeypatch):
+    engine = Engine(tmp_path)
+    observations = []
+
+    def before():
+        assert engine.collection.recorder.status().get("active") is not True
+        observations.append("reserved")
+
+    def after():
+        state = engine.collection.recorder.status()
+        assert state["active"] is True
+        capture = engine.collection.collection.status({"capture_session_id": state["capture_session_id"]})["capture_session"]
+        assert capture["recorder_started"] is True
+        observations.append("published")
+
+    monkeypatch.setattr(engine.network, "before_recording", before, raising=False)
+    monkeypatch.setattr(engine.network, "after_recording", after, raising=False)
+    try:
+        _, arguments, stop, _ = setup_capture(engine)
+        assert observations == ["reserved", "published"]
+        replay = engine.call("session.prepare_and_watch", arguments)
+        assert replay["operation_replayed"] is True
+        assert observations == ["reserved", "published"], "Replay must not renew or release a recording reservation"
+        engine.call("session.stop", stop)
+    finally:
+        engine.close()
+
+
+def test_unconfirmed_native_recording_reservation_never_opens_recorder_socket(tmp_path, monkeypatch):
+    engine = Engine(tmp_path)
+    released = []
+
+    def denied():
+        raise ValueError("Native helper did not acknowledge recording reservation")
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("Recorder started before native repair authority was revoked")
+
+    monkeypatch.setattr(engine.network, "before_recording", denied, raising=False)
+    monkeypatch.setattr(engine.network, "after_recording", lambda: released.append(True), raising=False)
+    monkeypatch.setattr(engine.collection.recorder, "start", forbidden)
+    try:
+        _, _, _, result = setup_capture(engine, expected_state="idle")
+        assert result["capture_session"]["status"] == "failed"
+        assert released == [True]
+        assert engine.collection.recorder.status().get("active") is not True
+    finally:
+        engine.close()

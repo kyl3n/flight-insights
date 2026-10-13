@@ -1,0 +1,33 @@
+[Unit]
+Description=Q22 experimental private bench network repair supervisor
+After=NetworkManager.service network.target
+Requires=NetworkManager.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/usr/libexec/q22-network-helper --serve
+Restart=on-failure
+RestartSec=2
+TimeoutStopSec=120
+RuntimeDirectory=q22-network-helper
+RuntimeDirectoryMode=0755
+StateDirectory=q22-network-helper
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictRealtime=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_NETLINK
+ReadWritePaths=/run/q22-network-helper /var/lib/q22-network-helper
+
+[Install]
+WantedBy=multi-user.target

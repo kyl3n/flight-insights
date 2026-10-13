@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from q22_engine.insights import InsightService, Spectrum, Trace, fft, operating_profile, welch
+from q22_engine.insights import InsightService, Spectrum, Trace, VibrationDistribution, fft, operating_profile, welch
 from q22_engine.logs import LogService
 from q22_engine.store import Store
 
@@ -246,6 +246,30 @@ def test_trace_linear_error_oracle_and_boundary_clipping():
     assert trace.covered == 1
     assert trace.integral == 1
     assert trace.square == pytest.approx((1.5**3 - .5**3) / 3)
+
+
+def test_vibration_distribution_separates_sample_quantiles_from_time_weighted_exposure():
+    distribution = VibrationDistribution(0, 5, 1.5, 30, 60)
+    for stamp, value in [(0, 0), (1, 60), (2, 0), (4, 80), (5, 80)]:
+        distribution.add(stamp, value, {})
+    summary = distribution.summary()
+    assert summary["p50_mps2"] == 60
+    assert summary["covered_duration_s"] == 3  # two-second gap is excluded
+    assert summary["time_above_warning_s"] == pytest.approx(2)
+    assert summary["time_above_critical_s"] == pytest.approx(1)
+    assert summary["distribution_approximate"] is False
+    distribution.trace.barrier()
+    distribution.add(1, 1000, {})
+    assert distribution.summary()["maximum_mps2"] == 80
+
+
+def test_vibration_quantile_reservoir_is_bounded_and_declares_sampling():
+    distribution = VibrationDistribution(0, 60, .01, 30, 60)
+    for index in range(10000): distribution.add(index*.005, index % 100, {})
+    value = distribution.summary()
+    assert value["sample_count"] == 10000
+    assert value["retained_distribution_samples"] == 4096 and value["distribution_approximate"]
+    assert value["p50_mps2"] == pytest.approx(49.5, abs=2)
 
 
 @pytest.mark.parametrize("explicit_barrier", [False, True])

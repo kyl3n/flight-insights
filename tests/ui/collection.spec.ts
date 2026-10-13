@@ -122,6 +122,15 @@ test('passive observer records distinct armed intervals and preserves incomplete
     for(const button of await page.getByRole('button',{name:'Record reviewed provisional link',exact:true}).all())await expect(button).toBeDisabled();
     await page.getByRole('button',{name:'Inspect interval 1 bundle',exact:true}).click();
     await page.getByText('Collect missing evidence from a folder',{exact:true}).click();
+    await page.getByText('Align original sources and clock evidence',{exact:true}).click();
+    const managedImport=page.getByRole('button',{name:'Import managed alignment reference',exact:true});
+    await expect(managedImport).toBeEnabled();
+    expect(engine.calls.some(call=>call.method==='alignment.reference')).toBe(false);
+    await managedImport.click();
+    await expect(page.getByText('Managed TLOG chunk imported. Choose its exact source and clock segment as the reference.',{exact:true})).toBeVisible();
+    expect(engine.calls.find(call=>call.method==='alignment.reference')?.params.flight_record_id).toBe(scanned?.params.flight_record_id);
+    expect(engine.calls.some(call=>call.method==='alignment.analyze'||call.method==='alignment.attach')).toBe(false);
+    await page.getByText('Align original sources and clock evidence',{exact:true}).click();
     await page.evaluate(()=>{if(document.activeElement instanceof HTMLElement)document.activeElement.blur();window.scrollTo(0,0);});
     await page.screenshot({path:testInfo.outputPath('collection-bundle.png'),fullPage:true});
     await page.setViewportSize({width:640,height:900});

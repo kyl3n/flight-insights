@@ -1,13 +1,13 @@
-# Windows, Linux and macOS
+# Windows and Linux; macOS deferred
 
-All three operating systems are required release platforms. The user's clarification supersedes the Windows-first rollout in the supplied reference handoff. Platform-specific work belongs behind the native shell and network adapters; it must not produce different flight calculations or change evidence semantics.
+Windows x64 and Linux x64 are the current required release targets. The user's latest clarification defers macOS; existing Mac configurations are retained for optional future work. Platform-specific work belongs behind the native shell and network adapters; it must not produce different flight calculations or change evidence semantics.
 
 | Platform | Build target | Installer format | Native build command |
 | --- | --- | --- | --- |
 | Windows x64 | `x86_64-pc-windows-msvc` | NSIS `.exe`, with offline WebView2 runtime installation | `npm run desktop:build:windows` |
 | Linux x64 | `x86_64-unknown-linux-gnu` | `.deb` and AppImage | `npm run desktop:build:linux` |
-| macOS Apple Silicon | `aarch64-apple-darwin` | `.app` and `.dmg` | `npm run desktop:build:macos` on Apple Silicon |
-| macOS Intel | `x86_64-apple-darwin` | `.app` and `.dmg` | `npm run desktop:build:macos` on Intel |
+| macOS Apple Silicon (deferred) | `aarch64-apple-darwin` | `.app` and `.dmg` | `npm run desktop:build:macos` on Apple Silicon |
+| macOS Intel (deferred) | `x86_64-apple-darwin` | `.app` and `.dmg` | `npm run desktop:build:macos` on Intel |
 
 Build on the corresponding operating system and CPU architecture. The packaged Python runtime cannot be cross-compiled from Linux into a Windows or macOS executable. Separate Mac installers avoid claiming that a single-architecture runtime is universal. Installed users do not need Python, Node, uv or a terminal for normal app operation.
 
@@ -24,21 +24,22 @@ The Linux CI baseline is Ubuntu 22.04. The managed cloud is Debian 13; its local
 | Explicit parameter/log acquisition and content-based reconciliation | Shared engine; GCS/hardware qualification pending | Shared engine; GCS/hardware qualification pending | Shared engine; GCS/hardware qualification pending |
 | IPv4 adapter/subnet/route inspection | PowerShell NetTCPIP and psutil | iproute2 and psutil | netstat/route and psutil |
 | Configured SkyPulse HTTP/history, RTSP and UDP/RTP framing checks | Shared bounded socket probes | Shared bounded socket probes | Shared bounded socket probes |
-| Repair previews; production automatic execution disabled | Selected host routes and Windows Firewall rules | Selected host routes, address aliases and active firewalld rules | Selected device host routes and /32 address aliases; firewall changes unsupported |
+| Experimental administrator-enrolled helper | Narrow temporary host routes and Windows Firewall rules | Host routes through NetworkManager 1.42 or newer; aliases and firewall writes unavailable | Deferred; no native execution helper |
+| Default installation | Diagnosis and repair previews | Diagnosis and repair previews | Deferred diagnosis and repair previews |
 
-Core app compatibility does not make every administrator operation interchangeable across operating systems. Automatic repair is diagnosis-only on every production target until the native helper, narrow privileges, manager-aware writes and supervised rollback are qualified. Durable repair receipts retain manual recovery guidance across restarts; they never authorize automatic replay or removal of a changed setting. See [network capabilities and limitations](network-diagnostics.md).
+Core app compatibility does not make every administrator operation interchangeable across operating systems. Default installations remain diagnosis-only. A separately installed, administrator-enrolled helper can enable experimental Windows/Linux bench repairs after session opt-in, independent fresh aircraft safety observations, a recording interlock and exact per-plan approval. These helpers have not passed physical Q22 bench qualification. Durable repair receipts and conditional rollback never authorize replay or removal of a changed setting; unknown safety or conflicting host state blocks cleanup. See [network capabilities and limitations](network-diagnostics.md) and the [Linux bench setup](linux-private-bench-helper.md).
 
 On macOS versions with Local Network privacy controls, allow Q22 Flight Lab access under **System Settings → Privacy & Security → Local Network** when using configured LAN devices. A denied permission can prevent camera/telemetry access even when routing is correct. The application's privacy description explains the configured-device access; this permission prompt still needs native verification.
 
-## Required qualification on every platform
+## Required qualification on supported platforms
 
-CI runs separate native builds for all four target combinations. Before a release is declared compatible, each target must pass:
+CI runs Windows and Linux by default. Manual dispatch can add both deferred Mac architectures. Before a release is declared compatible, each supported target must pass:
 
 1. Locked dependency installation, engine tests, UI integration, Rust tests and packaged-runtime checks.
 2. Installer/bundle inspection and the engine handshake from the actual packaged application layout.
 3. Clean-machine install, launch, native file selection, immutable evidence import, comparison, shutdown, restart and upgrade without losing evidence.
 4. Offline launch with no separately installed Python or Node; paths containing spaces and non-ASCII names must work.
 5. Real host networking checks, occupied UDP ports, appropriate OS permission failures, and supported repair/rollback behavior on a separate test network.
-6. Platform signing/notarization and a documented supported OS-version range before general distribution.
+6. Publisher signing and a documented supported OS-version range before general distribution. Signing is not required for private unsigned bench testing. Mac notarization is future work.
 
-Native CI has executed on Windows, Linux and both Mac architectures. The [validation record](validation.md) links the actual runs and source commits and distinguishes them from the separate Debian 13 build. Automated checks include the bundled engine and native supervisor; clean installed GUI, supported minimum OS versions, real-device behavior and publisher signing remain release gates.
+Earlier native CI executed on Windows, Linux and both Mac architectures; that historical result does not qualify later source changes. The [validation record](validation.md) links the actual runs and source commits and distinguishes them from the separate Debian 13 build. Automated checks include the bundled engine and native supervisor; clean installed GUI, supported minimum OS versions, real-device behavior and publisher signing remain release gates.

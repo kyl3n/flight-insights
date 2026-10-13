@@ -5,7 +5,9 @@ Windows verification requires a clean runner/VM: it refuses any existing Q22
 uninstall registration, installs into a temporary per-user directory, and
 uninstalls it afterwards. macOS mounts the DMG read-only.
 Linux extracts the Debian package and AppImage without a system installation.
-No GUI rendering or hardware acceptance is implied. Publisher trust is checked
+--require-gui opens the actual installed production WebView and verifies its
+rendered UI and IPC using an isolated data directory; hardware acceptance is
+not implied. Publisher trust is checked
 only when --require-publisher-signature is supplied on Windows/macOS.
 """
 from __future__ import annotations
@@ -17,6 +19,7 @@ import json
 import os
 from pathlib import Path
 import plistlib
+import secrets
 import shutil
 import subprocess
 import sys
@@ -27,6 +30,7 @@ SPEC = importlib.util.spec_from_file_location("q22_packager", ROOT / "scripts" /
 PACKAGER = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(PACKAGER)
 REQUIRE_PUBLISHER = False
+REQUIRE_GUI = False
 
 
 def run(command, **kwargs) -> subprocess.CompletedProcess:
@@ -75,6 +79,36 @@ def payload_digest(path: Path) -> str:
     return digest.hexdigest()
 
 
+def verify_gui(binary: Path, directory: Path, *, expected_engine: Path | None, env=None) -> dict:
+    isolated = directory / ("Native GUI qualification " + secrets.token_hex(8))
+    isolated.mkdir(mode=0o700)
+    report_path = isolated / "native-gui.json"
+    nonce = secrets.token_hex(32)
+    try:
+        run([str(binary), "--verify-gui", "--data-dir", str(isolated.resolve()),
+             "--report", str(report_path.resolve()), "--nonce", nonce], cwd=directory, env=env, timeout=90)
+    except RuntimeError:
+        if (os.environ.get("GITHUB_ACTIONS") == "true" and report_path.is_file()
+                and report_path.stat().st_size <= 128 * 1024):
+            shutil.copyfile(report_path, ROOT / f"native-verification-gui-failure-{nonce[:16]}.json")
+        raise
+    if not report_path.is_file() or report_path.stat().st_size > 128 * 1024:
+        raise RuntimeError("Installed GUI did not produce bounded invocation-specific evidence")
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    if (report.get("schema_version") != 1 or report.get("nonce") != nonce
+            or report.get("native_gui_rendering") != "verified"
+            or report.get("production_webview") is not True
+            or report.get("isolated_data") is not True
+            or report.get("owned_engine_shutdown_completed") is not True
+            or report.get("security_bypasses") is not False):
+        raise RuntimeError(f"Installed native WebView qualification failed: {report.get('error')}")
+    if expected_engine is not None and not os.path.samefile(report["engine_path"], expected_engine):
+        raise RuntimeError("Native GUI used an engine outside its verified installed bundle")
+    # Keep relevant qualification evidence, not the invocation token or temporary paths.
+    return {key: report[key] for key in ("native_gui_rendering", "production_webview", "isolated_data",
+        "owned_engine_shutdown_completed", "security_bypasses", "evidence", "limitations")}
+
+
 def verify_layout(binary: Path, expected_engine: Path, directory: Path) -> dict:
     engine = binary.with_name("q22-engine.exe" if sys.platform == "win32" else "q22-engine")
     if not binary.is_file() or not engine.is_file():
@@ -97,20 +131,38 @@ def verify_layout(binary: Path, expected_engine: Path, directory: Path) -> dict:
             bundled = notices / original.relative_to(PACKAGER.RESOURCES / "notices")
             if not bundled.is_file() or sha256(original) != sha256(bundled):
                 raise RuntimeError(f"Required dependency notice missing or changed: {original.name}")
+    application = PACKAGER.RESOURCES / "application-dependencies"
+    application_report = json.loads((application / "manifest.json").read_text(encoding="utf-8"))
+    frozen_report = json.loads(inventories[0].read_text(encoding="utf-8"))
+    if (application_report["target"] != PACKAGER.host_target()
+            or application_report["source_commit"] != frozen_report["source"]["commit"]):
+        raise RuntimeError("Application dependency inventory does not match the frozen build target/commit")
+    for name, expected in application_report["lockfile_sha256"].items():
+        if sha256(ROOT / name) != expected:
+            raise RuntimeError("Application dependency inventory lockfiles changed after collection")
+    for original in application.rglob("*"):
+        if original.is_file():
+            bundled = inventories[0].parent / "application-dependencies" / original.relative_to(application)
+            if not bundled.is_file() or sha256(bundled) != sha256(original):
+                raise RuntimeError(f"Application dependency evidence missing or changed: {original.name}")
     PACKAGER.smoke(engine)
     result = run([str(binary), "--verify-engine", "--data-dir", str(directory / "Native data Δ with spaces")],
                  cwd=directory)
     report = json.loads(result.stdout)
     if (report.get("native_supervisor_verified") is not True
+            or report.get("owned_engine_shutdown_completed") is not True
             or report["handshake"].get("protocol_version") != 1
             or report["status"].get("state") != "available"
             or report["restart_handshake"].get("product") != "Q22 Flight Lab"):
         raise RuntimeError("Installed native supervisor diagnostic did not pass")
     if not os.path.samefile(report["engine_path"], engine):
         raise RuntimeError("Native shell loaded a sidecar outside its verified bundle")
+    gui = verify_gui(binary, directory, expected_engine=engine) if REQUIRE_GUI else None
     return {"engine_sha256": sha256(engine), "engine_payload_sha256": payload_digest(engine),
             "native_supervisor_verified": True, "relocated_unicode_path": True,
-            "dependency_inventory_and_notices_verified": True}
+            "dependency_inventory_and_notices_verified": True, "native_gui": gui,
+            "application_dependency_package_count": application_report["package_count"],
+            "unresolved_dependency_notice_count": len(application_report["unresolved_notice_texts"])}
 
 
 def verify_app(app: Path, expected_engine: Path, directory: Path) -> dict:
@@ -212,6 +264,8 @@ def verify_artifact(artifact: Path, expected_engine: Path) -> dict:
             if json.loads(wrapped.stdout).get("native_supervisor_verified") is not True:
                 raise RuntimeError("AppImage launcher failed its native diagnostic")
             result["appimage_launcher_verified"] = True
+            if REQUIRE_GUI:
+                result["appimage_launcher_gui"] = verify_gui(artifact, directory, expected_engine=None, env=env)
         elif suffix == ".app" and sys.platform == "darwin":
             destination = directory / "Q22 Flight Lab.app"
             shutil.copytree(artifact, destination, symlinks=True)
@@ -272,7 +326,7 @@ def verify_artifact(artifact: Path, expected_engine: Path) -> dict:
 
 
 def main() -> None:
-    global REQUIRE_PUBLISHER
+    global REQUIRE_PUBLISHER, REQUIRE_GUI
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--target", default=PACKAGER.host_target())
     parser.add_argument("--artifact", action="append", type=Path)
@@ -280,8 +334,11 @@ def main() -> None:
     parser.add_argument("--formats", help="Required comma-separated bundle formats when using --bundle-root")
     parser.add_argument("--report", type=Path, required=True)
     parser.add_argument("--require-publisher-signature", action="store_true")
+    parser.add_argument("--require-gui", action="store_true",
+                        help="Fail unless each installed production WebView renders and passes real IPC")
     args = parser.parse_args()
     REQUIRE_PUBLISHER = args.require_publisher_signature
+    REQUIRE_GUI = args.require_gui
     if args.target != PACKAGER.host_target():
         raise SystemExit("Artifact verification must run on the target OS and CPU")
     artifacts = [path.resolve() for path in args.artifact or []]
@@ -302,7 +359,7 @@ def main() -> None:
     report = {"target": args.target, "artifacts": [verify_artifact(path, expected) for path in artifacts],
               "source": json.loads((PACKAGER.RESOURCES / "frozen-inventory.json").read_text(encoding="utf-8"))["source"],
               "publisher_signature": "verified" if REQUIRE_PUBLISHER and sys.platform in {"darwin", "win32"} else "not_tested",
-              "native_gui_rendering": "not_tested", "hardware": "not_tested"}
+              "native_gui_rendering": "verified" if REQUIRE_GUI else "not_tested", "hardware": "not_tested"}
     args.report.parent.mkdir(parents=True, exist_ok=True)
     args.report.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print(f"Verified {len(artifacts)} native bundle(s) on {args.target}; report: {args.report}")
