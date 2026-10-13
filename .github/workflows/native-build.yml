@@ -84,15 +84,25 @@ jobs:
           path: |
             engine-test-output.txt
             engine-package-output.txt
-      - name: Frontend and native transport checks
+      - name: Frontend and native desktop transport checks
         run: |
           npm run build
-          cargo fmt --manifest-path src-tauri/Cargo.toml --check
-          cargo test --manifest-path src-tauri/Cargo.toml --target ${{ matrix.target }} --locked
-          cargo clippy --manifest-path src-tauri/Cargo.toml --target ${{ matrix.target }} --locked -- -D warnings
-          cargo fmt --manifest-path native-repair/Cargo.toml --check
-          cargo test --manifest-path native-repair/Cargo.toml --target ${{ matrix.target }} --locked
-          cargo clippy --manifest-path native-repair/Cargo.toml --target ${{ matrix.target }} --locked -- -D warnings
+          python scripts/ci-check.py native-check-desktop-fmt.txt cargo fmt --manifest-path src-tauri/Cargo.toml --check
+          python scripts/ci-check.py native-check-desktop-test.txt cargo test --manifest-path src-tauri/Cargo.toml --target ${{ matrix.target }} --locked
+          python scripts/ci-check.py native-check-desktop-clippy.txt cargo clippy --manifest-path src-tauri/Cargo.toml --target ${{ matrix.target }} --locked -- -D warnings
+      - name: Native helper checks without installation
+        run: |
+          python scripts/ci-check.py native-check-helper-fmt.txt cargo fmt --manifest-path native-repair/Cargo.toml --check
+          python scripts/ci-check.py native-check-helper-test.txt cargo test --manifest-path native-repair/Cargo.toml --target ${{ matrix.target }} --locked
+          python scripts/ci-check.py native-check-helper-clippy.txt cargo clippy --manifest-path native-repair/Cargo.toml --target ${{ matrix.target }} --locked -- -D warnings
+      - name: Preserve native check failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-check-failure-${{ matrix.target }}
+          if-no-files-found: ignore
+          retention-days: 14
+          path: native-check-*.txt
       - name: Build and verify unprivileged diagnostic helper without installation
         run: |
           cargo build --manifest-path native-repair/Cargo.toml --target ${{ matrix.target }} --release --locked
