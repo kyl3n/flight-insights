@@ -164,3 +164,69 @@ test('explicit raw radio capture preserves actual loopback responses without int
     expect(engine.calls.filter(call=>call.method==='radio.capture')).toHaveLength(1);
   }finally{await engine.close();await new Promise<void>((done,reject)=>server.close(error=>error?reject(error):done()));}
 });
+
+test('a delayed review packet cannot authorize export of a newer background report',async({page})=>{
+  let releasePreview!:()=>void;let releaseCompletion!:()=>void;let previewArrived!:()=>void;
+  const previewGate=new Promise<void>(resolve=>{releasePreview=resolve;});
+  const completionGate=new Promise<void>(resolve=>{releaseCompletion=resolve;});
+  const previewRequested=new Promise<void>(resolve=>{previewArrived=resolve;});
+  let oldReportId='';let newJobId='';
+  let engine:Awaited<ReturnType<typeof connectEngine>>;
+  engine=await connectEngine(page,{boundaryOverride:async(method,params)=>{
+    // Delay transport delivery only. Every job, report and packet comes from
+    // the actual engine; no fabricated result or report-selection state.
+    if(method==='insights.report'){
+      const response=await engine.rpc(method,params) as any;newJobId=response.job.id;return response;
+    }
+    if(method==='jobs.get'&&params.job_id===newJobId){await completionGate;return engine.rpc(method,params);}
+    if(method==='insights.review_packet'&&params.report_id===oldReportId){
+      const response=await engine.rpc(method,params);previewArrived();await previewGate;return response;
+    }
+  }});
+  try{
+    const log=await imported(engine,'synthetic-insights.log');
+    const first=await engine.rpc('insights.report',{log_id:log.id,source_key:'dataflash',boot_epoch:0,interval_start_s:1,interval_end_s:2,max_gap_s:1,battery_id:'0'}) as any;
+    let firstJob:any;
+    await expect.poll(async()=>{firstJob=(await engine.rpc('jobs.get',{job_id:first.job.id}) as any).job;return firstJob.state;}).toBe('succeeded');
+    oldReportId=firstJob.result.report.id;
+    await page.goto('/');await expect(page.getByText('Engine connected',{exact:true})).toBeVisible();
+    await page.getByRole('navigation').getByRole('button',{name:'Flight insights',exact:true}).click();
+    const saved=page.getByRole('combobox',{name:'Preserved insight report',exact:true});
+    await saved.selectOption(oldReportId);
+    const report=page.getByRole('region',{name:'Preserved flight insight report'});
+    await expect(report.locator('.insight-metrics article').filter({hasText:'Mean power'})).toContainText('340 W');
+    await page.getByRole('combobox',{name:'Insight log',exact:true}).selectOption(log.id);
+    await page.getByRole('combobox',{name:'Insight source',exact:true}).selectOption('dataflash');
+    await page.getByRole('combobox',{name:'Insight clock segment',exact:true}).selectOption('0');
+    await page.getByLabel('Insight interval start (seconds)',{exact:true}).fill('2');
+    await page.getByLabel('Insight interval end (seconds)',{exact:true}).fill('4');
+    await page.getByRole('button',{name:'Generate insight report',exact:true}).click();
+    await expect.poll(()=>newJobId).not.toBe('');
+    let newJob:any;
+    await expect.poll(async()=>{newJob=(await engine.rpc('jobs.get',{job_id:newJobId}) as any).job;return newJob.state;}).toBe('succeeded');
+    const newReportId=newJob.result.report.id;
+    await page.getByRole('button',{name:'Preview exact review packet',exact:true}).click();
+    await previewRequested;
+    releaseCompletion();
+    await expect(saved).toHaveValue(newReportId);
+    await expect(report.locator('.insight-metrics article').filter({hasText:'Mean power'})).toContainText('410 W');
+    releasePreview();
+    await expect(page.getByRole('button',{name:'Preview exact review packet',exact:true})).toBeEnabled();
+    await expect(page.getByTestId('review-packet')).toHaveCount(0);
+    await expect(page.getByRole('button',{name:'Choose folder and export reviewed packet',exact:true})).toHaveCount(0);
+    expect(engine.calls.some(call=>call.method==='insights.export_review')).toBe(false);
+    await page.getByRole('button',{name:'Preview exact review packet',exact:true}).click();
+    await expect(page.getByTestId('review-packet')).toBeVisible();
+    const reviewed=JSON.parse((await page.getByTestId('review-packet').textContent())!);
+    expect(reviewed.scope).toMatchObject({interval_start_s:2,interval_end_s:4});
+    const folder=join(engine.data,'review-race-export');await mkdir(folder);engine.files.push(folder);
+    await page.getByRole('button',{name:'Choose folder and export reviewed packet',exact:true}).click();
+    await expect(page.getByText('Review packet saved locally',{exact:true})).toBeVisible();
+    const path=await page.locator('.insights-workspace .success-note p').first().textContent();
+    expect(JSON.parse(await readFile(path!,'utf8'))).toEqual(reviewed);
+    // Boundary overrides are logged once when delegated and once when returned.
+    const exportCalls=engine.calls.filter(call=>call.method==='insights.export_review');
+    expect(exportCalls).toHaveLength(1);expect(exportCalls[0].params.report_id).toBe(newReportId);
+    expect(engine.calls.filter(call=>call.method==='insights.review_packet').every(call=>call.params.report_id===oldReportId||call.params.report_id===newReportId)).toBe(true);
+  }finally{releaseCompletion();releasePreview();await engine.close();}
+});

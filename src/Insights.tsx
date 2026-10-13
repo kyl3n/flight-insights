@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { errorMessage, listAll, request, type EngineJob, type FlightLog, type InsightEvidence, type InsightReport, type Snapshot, type Run } from './api';
 import BackgroundJobs from './BackgroundJobs';
@@ -6,17 +6,20 @@ import { useEngineJobs } from './useEngineJobs';
 import { Badge, Empty, MetricDetails, Notes, number, readable } from './ui';
 
 const profileNumbers=[['aircraft_mass_kg','All-up aircraft mass (kg)'],['payload_mass_kg','Included payload mass (kg)'],['rotor_count','Rotor count'],['propeller_diameter_m','Propeller diameter (m)'],['battery_cell_count','Battery series cell count'],['battery_capacity_ah','Declared battery capacity (Ah)']] as const;
+type ReviewPacket={report_id:string;packet:unknown;privacy:string[];byte_size:number};
+type ExportReceipt={report_id:string;path:string;sha256:string;byte_size:number};
 export default function Insights({ready,active,busy,run,onImport}:{ready:boolean;active:boolean;busy:string;run:Run;onImport:()=>void}){
   const [logs,setLogs]=useState<FlightLog[]>([]);const [snapshots,setSnapshots]=useState<Snapshot[]>([]);const [reports,setReports]=useState<InsightReport[]>([]);
   const [logId,setLogId]=useState('');const [source,setSource]=useState('');const [segment,setSegment]=useState('');
   const [start,setStart]=useState('');const [end,setEnd]=useState('');const [battery,setBattery]=useState('');
   const [report,setReport]=useState<InsightReport|null>(null);const [error,setError]=useState('');
   const [spectrum,setSpectrum]=useState(false);const [pwm,setPwm]=useState(false);
-  const [packet,setPacket]=useState<{packet:unknown;privacy:string[];byte_size:number}|null>(null);const [exported,setExported]=useState<{path:string;sha256:string;byte_size:number}|null>(null);
+  const [packet,setPacket]=useState<ReviewPacket|null>(null);const [exported,setExported]=useState<ExportReceipt|null>(null);
+  const selectedReportId=useRef<string|null>(null);
   const log=logs.find(item=>item.id===logId);const streams=log?.streams.filter(item=>item.source_key===source)||[];
   const stream=streams.find(item=>String(item.boot_epoch)===segment);
   const load=async()=>{const [catalog,saved,parameters]=await Promise.all([listAll<FlightLog>('logs.list','logs'),listAll<InsightReport>('insights.list','reports',50),listAll<Snapshot>('parameters.list','snapshots')]);setLogs(catalog);setReports(saved);setSnapshots(parameters);setError('');};
-  const selectReport=(value:InsightReport)=>{setReport(value);setPacket(null);setExported(null);};
+  const selectReport=(value:InsightReport)=>{selectedReportId.current=value.id;setReport(value);setPacket(null);setExported(null);};
   const jobs=useEngineJobs(ready,['insights.report'],completed=>{const latest=[...completed].sort((a,b)=>(b.created_at||'').localeCompare(a.created_at||''))[0];if(latest?.result?.report)selectReport(latest.result.report as InsightReport);void load().catch(cause=>setError(errorMessage(cause)));});
   useEffect(()=>{if(ready&&active)void load().catch(cause=>setError(errorMessage(cause)));},[ready,active]);
   const disabled=!ready||!jobs.available||Boolean(busy)||jobs.pending;
@@ -27,8 +30,26 @@ export default function Insights({ready,active,busy,run,onImport}:{ready:boolean
     if(spectrum)params.spectrum={sensor_instance:text('sensor_instance'),axis:text('axis'),sample_rate_hz:Number(text('sample_rate_hz')),anti_alias_cutoff_hz:Number(text('anti_alias_cutoff_hz')),anti_alias_evidence:text('anti_alias_evidence'),window_samples:Number(text('window_samples'))};
     await run('Queuing scoped insight report',async()=>{const result=await request<{job:EngineJob}>('insights.report',params);jobs.queue(result.job);setError('');});
   }
-  async function previewPacket(){if(!report)return;await run('Preparing local review packet',async()=>{setPacket(await request('insights.review_packet',{report_id:report.id}));setExported(null);});}
-  async function exportPacket(){if(!report||!packet)return;await run('Exporting reviewed local packet',async()=>{const folder=await open({directory:true,multiple:false,title:'Choose a folder for this reviewed insight packet'});if(typeof folder==='string')setExported(await request('insights.export_review',{report_id:report.id,folder}));});}
+  async function previewPacket(){
+    if(!report)return;
+    const reportId=report.id;
+    await run('Preparing local review packet',async()=>{
+      const result=await request<Omit<ReviewPacket,'report_id'>>('insights.review_packet',{report_id:reportId});
+      // A completed background report may change selection while this reply is
+      // in flight. Never relabel that old reply as the newly selected report.
+      if(selectedReportId.current===reportId){setPacket({...result,report_id:reportId});setExported(null);}
+    });
+  }
+  async function exportPacket(){
+    if(!report||!packet||packet.report_id!==report.id)return;
+    const reviewedReportId=packet.report_id;
+    await run('Exporting reviewed local packet',async()=>{
+      const folder=await open({directory:true,multiple:false,title:'Choose a folder for this reviewed insight packet'});
+      if(typeof folder!=='string'||selectedReportId.current!==reviewedReportId)return;
+      const result=await request<Omit<ExportReceipt,'report_id'>>('insights.export_review',{report_id:reviewedReportId,folder});
+      if(selectedReportId.current===reviewedReportId)setExported({...result,report_id:reviewedReportId});
+    });
+  }
   return <div className="stack insights-workspace"><div className="page-title"><div><span className="eyebrow">MEASUREMENTS, CONTEXT, AND EVIDENCE</span><h1>Flight insights</h1><p>Inspect vibration, electrical demand, and control tracking within one recorded interval.</p></div><Badge>No aircraft writes</Badge></div>
     <Notes title="Engineering review, bounded by the evidence" items={['Reports preserve source identity, clock scope, exclusions, and parameter uncertainty. They do not establish causation or a safe tuning configuration. Mass and payload provide context; they do not determine PID or filter values.']}/>
     <section className="panel"><div className="panel-heading"><div><h2>Choose the evidence interval</h2><p>Use one source and clock segment. Leave unknown operating details blank.</p></div><button className="button secondary small" disabled={!ready||Boolean(busy)} onClick={()=>run('Refreshing insight evidence',load)}>Refresh evidence</button></div>
@@ -40,7 +61,7 @@ export default function Insights({ready,active,busy,run,onImport}:{ready:boolean
     <div className="import-footer"><p className="field-help">The report is stored locally with its exact source hash and declarations. Existing reports remain unchanged.</p><button className="button primary" disabled={disabled||!stream||stream.start_s==null||stream.end_s==null} type="submit">Generate insight report</button></div></form>}</section>
     {(error||jobs.error)&&<Notes title="Insight report needs attention" items={[error||jobs.error]}/>}<BackgroundJobs jobs={jobs.jobs} ready={ready} busy={busy} run={run} cancel={jobs.cancel} labels={{'insights.report':'Scoped flight insight report'}}/>
     {reports.length>0&&<section className="panel padded"><label>Preserved insight report<select value={report?.id||''} disabled={!ready||Boolean(busy)} onChange={event=>{if(event.target.value)void run('Loading preserved report',async()=>selectReport((await request<{report:InsightReport}>('insights.detail',{report_id:event.target.value})).report));}}><option value="">Choose a report</option>{reports.map(item=><option key={item.id} value={item.id}>{item.scope.source_key} · {number(item.scope.interval_start_s,'s')}–{number(item.scope.interval_end_s,'s')} · {item.created_at||item.id}{item.scope.synthetic?' [synthetic]':''}</option>)}</select></label></section>}
-    {report&&<><ReportView report={report}/><section className="panel"><div className="panel-heading"><div><h2>Local AI review packet</h2><p>Preview the exact evidence package before deciding whether to share it elsewhere.</p></div><Badge>Local export only</Badge></div><div className="padded"><p>No AI provider is contacted. This packet contains aircraft performance and declared firmware data. Original files, paths, GPS, network addresses, and hardware UIDs are excluded; review all retained content before external sharing.</p><button className="button secondary" disabled={!ready||Boolean(busy)} onClick={previewPacket}>Preview exact review packet</button>{packet&&<><Notes title="Sharing and interpretation limits" items={packet.privacy}/><details className="technical" open><summary>Exact JSON packet · {number(packet.byte_size,'bytes')}</summary><pre data-testid="review-packet">{JSON.stringify(packet.packet,null,2)}</pre></details><button className="button secondary" disabled={!ready||Boolean(busy)} onClick={exportPacket}>Choose folder and export reviewed packet</button></>}{exported&&<div className="success-note" role="status"><div><strong>Review packet saved locally</strong><p className="break-word">{exported.path}</p><p className="mono break-word">SHA-256 {exported.sha256}</p></div></div>}</div></section></>}
+    {report&&<><ReportView report={report}/><section className="panel"><div className="panel-heading"><div><h2>Local AI review packet</h2><p>Preview the exact evidence package before deciding whether to share it elsewhere.</p></div><Badge>Local export only</Badge></div><div className="padded"><p>No AI provider is contacted. This packet contains aircraft performance and declared firmware data. Original files, paths, GPS, network addresses, and hardware UIDs are excluded; review all retained content before external sharing.</p><button className="button secondary" disabled={!ready||Boolean(busy)} onClick={previewPacket}>Preview exact review packet</button>{packet&&packet.report_id===report.id&&<><Notes title="Sharing and interpretation limits" items={packet.privacy}/><details className="technical" open><summary>Exact JSON packet · {number(packet.byte_size,'bytes')}</summary><pre data-testid="review-packet">{JSON.stringify(packet.packet,null,2)}</pre></details><button className="button secondary" disabled={!ready||Boolean(busy)} onClick={exportPacket}>Choose folder and export reviewed packet</button></>}{exported&&exported.report_id===report.id&&<div className="success-note" role="status"><div><strong>Review packet saved locally</strong><p className="break-word">{exported.path}</p><p className="mono break-word">SHA-256 {exported.sha256}</p></div></div>}</div></section></>}
   </div>;
 }
 
