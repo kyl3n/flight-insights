@@ -1,5 +1,6 @@
 """Qualification transport safeguards, separate from actual native GUI CI."""
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -124,6 +125,31 @@ def test_unprotected_signing_ref_stops_before_touching_os_credential_tools(monke
     with pytest.raises(RuntimeError, match="protected reviewed release tag"):
         preflight.inspect()
     assert calls == []
+
+def test_empty_verification_error_preserves_exception_class_and_traceback(monkeypatch, capsys):
+    verify = script("scripts/verify-native-bundle.py")
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    try:
+        raise AssertionError()
+    except AssertionError as error:
+        verify.emit_error_annotation(error)
+    output = capsys.readouterr().out
+    assert "::error title=Native artifact verification failed" in output
+    assert "AssertionError" in output and "Traceback" in output
+    assert "test_empty_verification_error_preserves_exception_class_and_traceback" in output
+
+def test_verification_annotation_preserves_unicode_with_restrictive_stdout(monkeypatch):
+    verify = script("scripts/verify-native-bundle.py")
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    raw = io.BytesIO()
+    stream = io.TextIOWrapper(raw, encoding="ascii", errors="strict")
+    with monkeypatch.context() as context:
+        context.setattr(verify.sys, "stdout", stream)
+        verify.emit_error_annotation(RuntimeError("Installed Δ path failed\n::notice::100%"))
+        output = raw.getvalue().decode("utf-8")
+    assert "RuntimeError: Installed Δ path failed" in output
+    assert "%0A::notice::100%25" in output
+    assert output.count("\n") == 1
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="Linux AppImage launch contract")

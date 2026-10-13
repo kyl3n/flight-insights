@@ -24,6 +24,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import traceback
 
 ROOT = Path(__file__).resolve().parent.parent
 SPEC = importlib.util.spec_from_file_location("q22_packager", ROOT / "scripts" / "package-engine.py")
@@ -58,8 +59,26 @@ def emit_error_annotation(error: Exception) -> None:
     if os.environ.get("GITHUB_ACTIONS") == "true":
         # Workflow command data requires escaping; subprocess output must never
         # inject another command through a newline or an encoded delimiter.
-        message = str(error)[:7000].replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
-        print(f"::error title=Native artifact verification failed::{message}", flush=True)
+        message = str(error)
+        detail = f"{type(error).__name__}: {message}" if message else "".join(
+            traceback.format_exception(type(error), error, error.__traceback__))
+        encoded = detail.encode("utf-8", errors="backslashreplace")[:24000]
+        chunks = [encoded[index:index + 3000].decode("utf-8", errors="replace")
+                  for index in range(0, len(encoded), 3000)]
+        for number, chunk in enumerate(chunks, 1):
+            escaped = chunk.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+            line = f"::error title=Native artifact verification failed ({number}/{len(chunks)})::{escaped}\n"
+            binary = getattr(sys.stdout, "buffer", None)
+            if binary is not None:
+                # Windows redirected stdout can have a legacy text encoding.
+                # GitHub workflow commands are UTF-8, including Unicode paths.
+                sys.stdout.flush()
+                binary.write(line.encode("utf-8", errors="backslashreplace"))
+                binary.flush()
+            else:
+                encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
+                sys.stdout.write(line.encode(encoding, errors="backslashreplace").decode(encoding))
+                sys.stdout.flush()
 
 
 def sha256(path: Path) -> str:

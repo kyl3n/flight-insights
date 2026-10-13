@@ -46,7 +46,7 @@ sleep/resume tests. Build each frozen Python runtime on its matching OS and CPU.
    installation also affects uninstall registration, shortcuts and possibly the
    shared WebView2 runtime. A temporary destination is not complete isolation.
 2. Verify the artifact hash. Run `scripts/verify-native-bundle.py` with
-   `--require-gui` on the matching build host and retain its report. This checks
+   `--require-gui --gui-repetitions 3` on the matching build host and retain its report. This checks
    the real packaged native supervisor plus basic production WebView rendering
    and native IPC, restart and shutdown. Complete the graphical, permission,
    accessibility and physical-device steps below separately.
