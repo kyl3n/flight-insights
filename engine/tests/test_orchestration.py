@@ -13,7 +13,7 @@ from q22_engine.collection import CollectionService
 from q22_engine.jobs import JobService
 from q22_engine.orchestration import OrchestrationService
 from q22_engine.store import Store
-from test_acquisition import Peer
+from test_acquisition import Peer, delay_first_heartbeat_persistence, durable_limits
 from test_collection import event
 
 
@@ -86,9 +86,7 @@ class Harness:
         self.policy = {"aircraft_id": self.profile["aircraft_id"], "connection": self.peer.connection,
             "synthetic": False, "preflight_parameters": True, "postflight_parameters": True,
             "log_retrieval": "disabled", "preflight_freshness_s": 60,
-            "limits": {"timeout_s": 3, "bootstrap_timeout_s": .6, "heartbeat_timeout_s": .15,
-                       "boot_timeout_s": .2, "identity_timeout_s": .6, "retry_wait_s": .07,
-                       "request_interval_s": .01, "settle_s": .04, "retries": 2}}
+            "limits": durable_limits()}
         self.index = 0
 
     def prepare(self, **changes):
@@ -122,13 +120,16 @@ class Harness:
         return [row for row in rows if role is None or row["role"] == role]
 
     def wait(self, role, state="complete"):
-        deadline = time.monotonic() + 4
+        deadline = time.monotonic() + 30
         while time.monotonic() < deadline:
             rows = self.rows(role)
             if rows and rows[0]["state"] == state:
                 return rows[0]
-            time.sleep(.01)
-        raise AssertionError(self.rows())
+            if rows and rows[0]["state"] in {"complete", "partial", "failed", "interrupted", "cancelled"}:
+                break
+            time.sleep(.05)
+        raise AssertionError({"expected_state": state, "requests": self.rows(role),
+                              "peer_alive": self.peer.thread.is_alive(), "peer_error": repr(self.peer.error)})
 
     def wait_run(self, state):
         deadline = time.monotonic() + 4
@@ -238,11 +239,15 @@ def test_preflight_real_readback_exactly_once_and_observed_change_invalidates(h)
 
 
 @pytest.mark.parametrize("change", ["stale", "gap", "identity", "boot", "budget"])
-def test_preflight_freshness_is_revoked_without_mutating_originals(h, change):
+def test_preflight_freshness_is_revoked_without_mutating_originals(h, change, monkeypatch):
+    # Deliberately exceed the old 150 ms transport-only budget before proving
+    # that durable success and every subsequent revocation remain independent.
+    delays = delay_first_heartbeat_persistence(monkeypatch)
     h.prepare()
     h.qualify()
     h.tick()
     request = h.wait("preflight_parameters")
+    assert len(delays) == 1 and delays[0]["elapsed_s"] >= .25
     original = h.store.get_document("acquisition", request["acquisition_id"])
     if change == "stale":
         with h.collection._lock, h.store._connect() as db:

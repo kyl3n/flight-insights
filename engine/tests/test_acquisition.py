@@ -12,7 +12,7 @@ from uuid import uuid4
 import pytest
 from pymavlink.dialects.v20 import ardupilotmega as mav
 
-from q22_engine.acquisition import AcquisitionService, ALLOWED_MESSAGES, _Link, _limits
+from q22_engine.acquisition import AcquisitionService, ALLOWED_MESSAGES, DEFAULT_LIMITS, _Link, _limits
 from q22_engine.store import Store
 
 
@@ -151,6 +151,42 @@ def params(service, peer, **extra):
     return value
 
 
+def durable_limits():
+    """Production freshness gates for fixtures that also persist real jobs/catalogs.
+
+    Transport fault tests keep params()'s explicit subsecond budgets. A routine
+    disk/scheduler pause must not accidentally become their fault injection in
+    unrelated durable workflow tests. Total work and retries remain bounded.
+    """
+    return {**DEFAULT_LIMITS, 'timeout_s': 20.0, 'retry_wait_s': .25,
+            'request_interval_s': .02, 'settle_s': .08, 'retries': 2}
+
+
+def delay_first_heartbeat_persistence(monkeypatch, delay_s=.25):
+    """Pause after each link's first heartbeat write, preserving receipt clocks.
+
+    This models evidence persistence/descheduling on a loaded runner. It does
+    not fabricate fresh timestamps, inject telemetry into gates, or retry an
+    acquisition. The peer continues sending ordinary loopback MAVLink frames.
+    """
+    original = _Link._record
+    delays = []
+
+    def record(link, direction, payload, endpoint, mono_ns, utc_us):
+        reference = original(link, direction, payload, endpoint, mono_ns, utc_us)
+        if direction == 0 and link.heartbeat is None:
+            messages = mav.MAVLink(None).parse_buffer(payload) or []
+            if any(message.get_type() == 'HEARTBEAT' for message in messages):
+                started = time.monotonic()
+                time.sleep(delay_s)
+                delays.append({'receipt_monotonic_ns': mono_ns,
+                               'elapsed_s': time.monotonic() - started})
+        return reference
+
+    monkeypatch.setattr(_Link, '_record', record)
+    return delays
+
+
 def run(service, peer, method='acquisition.parameters.capture', **extra):
     return service.dispatch(method, params(service, peer, **extra))['acquisition']
 
@@ -159,6 +195,28 @@ def listing(service, peer):
     result = run(service, peer, 'acquisition.logs.list', confirm_log_transfer_side_effects=True)
     assert result['state'] == 'complete', result
     return result
+
+
+@pytest.mark.parametrize('durable', [False, True], ids=['short_gate_stops', 'production_gate_completes'])
+def test_persistence_pause_preserves_receipt_age_and_fixture_budget_contract(service, peer, monkeypatch, durable):
+    delays = delay_first_heartbeat_persistence(monkeypatch)
+    arguments = params(service, peer, **({'limits': durable_limits()} if durable else {}))
+    result = service.dispatch('acquisition.parameters.capture', arguments)['acquisition']
+    assert len(delays) == 1 and delays[0]['elapsed_s'] >= .25
+    evidence = result['transport_evidence']
+    if durable:
+        assert result['state'] == 'complete', result
+        assert result['parameter_capture']['decoded_count'] == 2
+        for key in ('heartbeat_timeout_s', 'boot_timeout_s', 'bootstrap_timeout_s', 'identity_timeout_s'):
+            assert arguments['limits'][key] == DEFAULT_LIMITS[key]
+        heartbeat = evidence['initial_gate_observations']['heartbeat']
+        assert int(heartbeat['received_monotonic_ns']) >= delays[0]['receipt_monotonic_ns']
+    else:
+        assert result['state'] == 'partial', result
+        assert result['interruption_reason'] == 'Fresh disarmed autopilot heartbeat is unavailable.'
+        heartbeat = evidence['final_gate_observations']['heartbeat']
+        assert int(heartbeat['received_monotonic_ns']) == delays[0]['receipt_monotonic_ns']
+        assert not any(message.get_type().startswith('PARAM_REQUEST') for message in peer.requests)
 
 
 def test_synthetic_peer_survives_windows_port_unreachable_reset(service, monkeypatch):

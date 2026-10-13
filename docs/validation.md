@@ -7,12 +7,12 @@ for this source revision is pending**. Windows x64 and Linux x64 are the current
 required targets. macOS remains an optional future target; the older four-target
 results below describe their own earlier commits and do not validate this slice.
 
-The latest managed Debian 13 full engine run passed **638 tests and 29 subtests**
-in 31.16 seconds, with **15 skips**: nine optional SciPy signal-reference checks
+The latest managed Debian 13 full engine run passed **640 tests and 29 subtests**
+in 34.50 seconds, with **15 skips**: nine optional SciPy signal-reference checks
 because SciPy was unavailable, three actual Windows ACL/link cases, two Windows recorder
 read-handle cases, and one Windows offline-bench wrapper case. These are explicit
 gaps in this local run, not passing checks. The transcript is retained as
-`q22-managed-analysis-final-pytest.log` in the delivery workspace.
+`q22-managed-analysis-durable-fixture-pytest.log` in the delivery workspace.
 All **19 browser integration tests** and the TypeScript/Vite production build
 also passed. These browser checks use the real engine through the test bridge;
 they remain separate from the pending native WebView run. The native-helper suite
@@ -75,6 +75,14 @@ pending requests with bounded, cancellation-safe queue waiting; it never replays
 a dispatched operation. A 24-call frozen-engine startup regression passes.
 Native CI requires three fresh successful GUI launches per packaged entrypoint;
 the first failed attempt stops verification and preserves its evidence.
+
+Loaded-runner integration tests also exposed an inappropriate 150 ms synthetic
+heartbeat budget during durable catalog work. These fixtures now use unchanged
+production freshness defaults. A deliberate 250 ms transcript-write pause
+reproduces rejection under the short test budget and succeeds under production
+timing; subsequent stale/gap/identity/boot invalidation still passes. Production
+gates are unchanged. Actual Windows read-only inspection now verifies the
+documented native CIM classes, rather than deriving class names from cmdlets.
 
 ### Measured synthetic import boundaries
 

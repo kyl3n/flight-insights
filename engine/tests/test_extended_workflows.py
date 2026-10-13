@@ -6,7 +6,7 @@ import time
 import pytest
 
 from q22_engine.__main__ import Engine
-from test_acquisition import Peer, params as acquisition_params
+from test_acquisition import Peer, delay_first_heartbeat_persistence, durable_limits, params as acquisition_params
 from test_collection import arm, envelope, event, prepare, profile
 
 
@@ -14,7 +14,7 @@ FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "logs"
 
 
 def finished(engine, job):
-    deadline = time.monotonic() + 15
+    deadline = time.monotonic() + 30
     while time.monotonic() < deadline:
         result = engine.call("jobs.get", {"job_id": job["id"]})["job"]
         if result["state"] not in {"queued", "running"}:
@@ -84,23 +84,26 @@ def test_active_capture_gate_requires_disarmed_uid_and_separate_socket(tmp_path,
         engine.close()
 
 
-def test_explicit_readback_download_and_index_are_real_persistent_jobs(tmp_path):
+def test_explicit_readback_download_and_index_are_real_persistent_jobs(tmp_path, monkeypatch):
     engine = Engine(tmp_path / "catalog")
     peer = Peer()
     peer.logs = {7: (FIXTURES / "synthetic-flight.bin").read_bytes()}
+    delays = delay_first_heartbeat_persistence(monkeypatch)
     try:
         preview = engine.call("acquisition.preview", {"connection": peer.connection})
         assert preview["applicability_fingerprint"]
-        arguments = acquisition_params(engine.acquisition, peer, role="preflight")
+        arguments = acquisition_params(engine.acquisition, peer, role="preflight", limits=durable_limits())
         acquired = finished(engine, engine.call("acquisition.parameters.capture", arguments)["job"])["acquisition"]
-        assert acquired["state"] == "complete"
+        assert acquired["state"] == "complete", acquired
         assert acquired["parameter_capture"]["flight_time_applicability"] == "unknown"
         listing = finished(engine, engine.call("acquisition.logs.list", acquisition_params(
-            engine.acquisition, peer, confirm_log_transfer_side_effects=True))["job"])["acquisition"]
+            engine.acquisition, peer, limits=durable_limits(), confirm_log_transfer_side_effects=True))["job"])["acquisition"]
+        assert listing["state"] == "complete", listing
         download = finished(engine, engine.call("acquisition.logs.download", acquisition_params(
-            engine.acquisition, peer, listing_id=listing["id"], log_id=7,
+            engine.acquisition, peer, limits=durable_limits(), listing_id=listing["id"], log_id=7,
             confirm_log_transfer_side_effects=True))["job"])["acquisition"]
-        assert download["download"]["transfer_complete"]
+        assert download["state"] == "complete" and download["download"]["transfer_complete"], download
+        assert len(delays) == 3 and all(delay["elapsed_s"] >= .25 for delay in delays)
         source = next(item for item in download["source_refs"] if item["role"] == "onboard_log_candidate")
         assert engine.store.raw_path(source["sha256"]).read_bytes() == peer.logs[7]
         collection = engine.collection.collection
