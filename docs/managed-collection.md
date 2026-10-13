@@ -2,6 +2,16 @@
 
 This slice implements the receiving and evidence-management part of Revision 2. It is not the complete Stage 1 workflow. The app cannot guarantee recovery of a file that the aircraft or GCS never recorded, and it does not report a bundle complete merely because filenames, dates, system IDs or parameter hashes agree.
 
+## Collect every flight consistently
+
+Use the flight record and immutable manifest as the collection checklist. The app automatically gives each qualifying observed armed interval its own record and associates recorder evidence by source and recorded span. Keep native GCS and onboard logging enabled as independent sources. An armed interval is not automatically classified as flight.
+
+Before a flight, declare the aircraft/profile and verify the actual hardware UID and firmware. If the configured bidirectional endpoint meets the documented gates, explicitly request a preflight readback and retain its result. During collection, monitor gaps and recorder health. After disarm, retain a postflight readback, stop the app observer before legacy onboard-log transfer, retrieve a selected actual log ID or scan an explicitly chosen SD/export folder, and inspect content-based candidates against the intended flight record. Verify onboard logging has resumed before another flight.
+
+The preflight/postflight role is an operator declaration, not an automatic association to the next or previous flight. Readback snapshot JSON retains richer evidence than a plain parameter export and is not a legacy imported-snapshot ID. In this preview, it cannot automatically prove the flight-time parameter state. Do not substitute the currently loaded settings for missing historical evidence.
+
+Missing or ambiguous artifacts stay visible as partial/provisional evidence. The app does not block aircraft arming, configure a GCS logger, claim a complete flight from filenames, or silently relabel an uncertain file. Fully automatic verified linkage still needs qualified GCS adapters, physical identity and independently validated clock mapping across TLOG, BIN and parameter captures. This prevents unsupported completeness claims; it cannot guarantee that every required file was recorded.
+
 ## Use the observer
 
 1. Configure a separate live MAVLink forwarding output in the GCS or router. Keep its normal aircraft connection and native logging enabled. QGC forwarding is one-way; it is suitable for this passive receiver but cannot support parameter or onboard-log requests. Mission Planner behavior must be checked against the actual version.

@@ -712,7 +712,9 @@ def smoke_insights(rpc: SmokeRPC, directory: Path) -> dict:
     exported = rpc.call("insights.export_review", {"report_id": report["id"], "folder": str(directory)})
     path = Path(exported["path"])
     raw = path.read_bytes()
-    if (path.parent != directory or json.loads(raw) != packet or len(raw) != preview["byte_size"]
+    # macOS temporary directories can use /var while the exporter correctly
+    # resolves /private/var. Require the same directory, not identical spelling.
+    if (not path.parent.samefile(directory) or json.loads(raw) != packet or len(raw) != preview["byte_size"]
             or len(raw) != exported["byte_size"] or hashlib.sha256(raw).hexdigest() != exported["sha256"]):
         raise RuntimeError("Local review export differs from its exact preview or integrity receipt")
     return report

@@ -24,9 +24,15 @@ def main() -> int:
                 tail.append(line)
             code = process.wait()
     if code:
-        detail = "".join(tail)[-24000:]
-        escaped = detail.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
-        print(f"::error title=Check failed ({log_path.name})::{escaped}", flush=True)
+        # GitHub truncates each annotation at about 4 KiB. A single large tail
+        # lost the final exception behind early build output. Keep each UTF-8
+        # chunk bounded and expose at most eight annotations.
+        detail = "".join(tail).encode("utf-8")[-24000:]
+        chunks = [detail[index:index + 3000].decode("utf-8", errors="replace")
+                  for index in range(0, len(detail), 3000)] or ["Check failed without output."]
+        for index, chunk in enumerate(chunks, 1):
+            escaped = chunk.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+            print(f"::error title=Check failed ({log_path.name}, tail {index}/{len(chunks)})::{escaped}", flush=True)
     return code
 
 

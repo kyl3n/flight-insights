@@ -28,6 +28,7 @@ class Peer:
         self.encoder = mav.MAVLink(None, srcSystem=1, srcComponent=1)
         self.decoder = mav.MAVLink(None)
         self.requests = []
+        self.error = None
         self.stop_event = threading.Event()
         self.uid, self.armed, self.capabilities = 123, False, 131072
         self.boot_ms, self.boot_increment = 1000, 20
@@ -64,17 +65,27 @@ class Peer:
         self.send(mav.MAVLink_param_value_message(name, value, kind, len(self.parameters), index))
 
     def run(self):
+        try:
+            self._run()
+        except BaseException as error:
+            self.error = error
+
+    def receive(self):
+        return self.socket.recvfrom(65535)
+
+    def _run(self):
         last_status = 0
         while not self.stop_event.is_set():
             if time.monotonic() - last_status >= .02:
                 self.status()
                 last_status = time.monotonic()
             try:
-                payload, _ = self.socket.recvfrom(65535)
-            except socket.timeout:
+                payload, _ = self.receive()
+            except (socket.timeout, ConnectionResetError):
+                # Windows reports ICMP port-unreachable for status packets sent
+                # before the acquisition socket binds. The next receive remains
+                # usable; this synthetic peer must keep serving later requests.
                 continue
-            except OSError:
-                return
             for message in self.decoder.parse_buffer(payload) or []:
                 self.requests.append(message)
                 name = message.get_type()
@@ -113,6 +124,10 @@ class Peer:
         self.stop_event.set()
         self.thread.join(2)
         self.socket.close()
+        if self.thread.is_alive():
+            raise RuntimeError('Synthetic acquisition peer did not stop.')
+        if self.error is not None:
+            raise RuntimeError(f'Synthetic acquisition peer failed: {self.error}') from self.error
 
 
 @pytest.fixture
@@ -144,6 +159,41 @@ def listing(service, peer):
     result = run(service, peer, 'acquisition.logs.list', confirm_log_transfer_side_effects=True)
     assert result['state'] == 'complete', result
     return result
+
+
+def test_synthetic_peer_survives_windows_port_unreachable_reset(service, monkeypatch):
+    original = Peer.receive
+    injected = False
+
+    def reset_once(peer):
+        nonlocal injected
+        if not injected:
+            injected = True
+            raise ConnectionResetError(10054, 'Synthetic Windows UDP ICMP reset')
+        return original(peer)
+
+    monkeypatch.setattr(Peer, 'receive', reset_once)
+    peer = Peer()
+    try:
+        result = run(service, peer, role='preflight')
+        assert injected and result['state'] == 'complete', result
+        assert result['parameter_capture']['decoded_count'] == 2
+    finally:
+        peer.close()
+
+
+def test_synthetic_peer_surfaces_unexpected_socket_failure(monkeypatch):
+    failure = OSError('Synthetic unexpected receive failure')
+
+    def fail(_peer):
+        raise failure
+
+    monkeypatch.setattr(Peer, 'receive', fail)
+    peer = Peer()
+    peer.thread.join(2)
+    with pytest.raises(RuntimeError, match='unexpected receive failure') as raised:
+        peer.close()
+    assert raised.value.__cause__ is failure
 
 
 def test_parameter_readback_missing_index_retry_and_raw_provenance(service, peer):
