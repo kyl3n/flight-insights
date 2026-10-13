@@ -109,7 +109,7 @@ def capability_matrix(platform: str) -> dict:
                 {"layer": "address_and_route", "state": "supported_automatic", "coverage": "OS route/source selection; return-path and DNS preservation are not independently verified."},
                 {"layer": "service", "state": "supported_automatic", "coverage": "Explicit configured SkyPulse GET/RTSP DESCRIBE; no radio writes or guessed camera addresses."},
                 {"layer": "packet_arrival", "state": "diagnosis_only", "coverage": "Exclusive dedicated observer socket only; use existing recorder counters when recording."},
-                {"layer": "protocol_decode", "state": "diagnosis_only", "coverage": "Probe checks heartbeat CRC/SDP; it does not establish aircraft identity, signing authenticity or decoded video."},
+                {"layer": "protocol_decode", "state": "diagnosis_only", "coverage": "Probe checks heartbeat CRC/SDP and bounded RTP headers/explicitly configured H.265 payload framing; it does not establish aircraft identity, signing authenticity or decoded video."},
                 {"layer": "receiving_application", "state": "unknown", "coverage": "Actual GCS socket ownership, loaded decoder/runtime and frame consumption are not inspected yet."},
                 {"layer": "freshness_and_quality", "state": "diagnosis_only", "coverage": "Bounded probes are not continuous stream/flight-state monitoring."},
             ], "limitations": ["Capabilities describe implemented operations, not airworthiness or permission to change this host.",

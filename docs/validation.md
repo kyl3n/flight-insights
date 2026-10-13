@@ -1,5 +1,19 @@
 # Validation record
 
+## Evidence insights and explicit acquisition — 13 October 2026
+
+This slice adds persistent local insight reports, reviewed ArduPilot guidance, a minimized local AI review-packet preview/export, explicit read-only MAVLink acquisition, content-based folder/acquisition reconciliation, RTP/H.265 framing diagnostics and bounded raw SkyPulse history. No AI service receives evidence, no aircraft parameters are written, and production host repairs remain diagnosis-only.
+
+The managed Debian 13 engine suite passed **441 tests and 29 subtests**; a final acquisition consistency regression was then added and all **35 acquisition tests** passed. Two Windows-only recorder read-handle cases are reserved for native Windows execution. All **14 browser integration tests**, the React/TypeScript production build, **5 Rust transport tests**, rustfmt and Clippy with warnings denied passed. Desktop and compact insight views were inspected. These browser tests use the real engine through a test-only bridge; they do not establish native WebView or hardware qualification.
+
+The expanded frozen-runtime smoke passed from a relocated Unicode path. It performs real loopback readback/retry/idempotency, actual-ID log listing/download/EOF, original-byte hashes, downloaded BIN decoding, vibration/power reports, exact preview/export bytes, and persistence after restart, alongside the existing passive recorder/archive/recovery checks. The inventory requires every new module and retains the prior dependency exclusions. Installer and new native CI outcomes are recorded below when executed; the earlier passive-collection artifacts do not validate this source revision.
+
+New tests use explicitly synthetic logs and real loopback peers. They cover VIBE schema/units, clipping resets/gaps, time regression, selected measurement-clock bounds, power/tracking arithmetic, declared mass/geometry/PWM limits, and conditional Welch spectra against small DFT/Parseval/sine oracles. Independent review caught and fixed repeated-time integration, out-of-interval gyro samples and misleading parameter representation comparisons. Insight export tests exercise the actual imported-log report and exclude private free text, identifiers and device/calibration parameters while preserving synthetic and evidence-quality labels.
+
+Acquisition tests verify the narrow outbound allowlist, expected UID, fresh disarmed heartbeat and boot-clock gates, revocation on arming/staleness, missing-index retries, contradictory parameter counts, exact byte coverage, explicit EOF, conflicting late retransmissions through finalization, durable partial evidence and no network replay after restart. A separate real-engine job test performs readback, downloads a synthetic real-format BIN, indexes the archived bytes and reopens the catalog. Its candidates remain provisional. Reconciliation never treats filenames, dates or system IDs as proof, and synthetic log associations to declared-live flight records are rejected.
+
+Radio and RTP tests distinguish transport/framing evidence from RF health or video decode. Raw capture covers partial/malformed/deep JSON, slow headers, refused connections, redirect refusal, cancellation, byte limits, digest mismatch, orphan recovery and bounded Windows manifest replacement. No tests connect to Q22 hardware. Full Filter Review/PID parity, numerical tuning, verified automatic flight matching, qualified GCS adapters, native repair helpers, publisher signing and installed-app/device qualification remain open.
+
 ## Revision 2 passive collection — 12 October 2026
 
 The new slice adds a real receive-only UDP worker, managed capture/armed-interval records, source-span associations, passive parameter evidence, archive recovery, and Q22 reference/capability reporting. Automatic host repair is now diagnosis-only in production. The complete Revision 2 acceptance plan remains open.

@@ -10,6 +10,7 @@ import argparse
 import hashlib
 import importlib.metadata
 import json
+import math
 import os
 from pathlib import Path
 import platform
@@ -150,7 +151,9 @@ def frozen_inventory(binary: Path) -> dict:
         raise RuntimeError(f"Unexpected excluded Python modules: {rejected}")
     required = {"pymavlink.dialects.v20.ardupilotmega", "q22_engine.logs", "q22_engine.jobs",
                 "q22_engine.recorder", "q22_engine.collection", "q22_engine.collection_controller",
-                "q22_engine.parameter_capture"}
+                "q22_engine.parameter_capture", "q22_engine.acquisition", "q22_engine.reconciliation",
+                "q22_engine.insights", "q22_engine.insight_service", "q22_engine.guidance",
+                "q22_engine.rtp_diagnostics", "q22_engine.radio_history"}
     if not required.issubset(modules):
         raise RuntimeError(f"Frozen runtime missing required modules: {sorted(required - set(modules))}")
     commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True, text=True, encoding="utf-8")
@@ -256,10 +259,12 @@ def smoke(binary: Path) -> None:
         try:
             replies = [rpc.call(request["method"], request["params"]) for request in requests]
             smoke_logs(rpc, Path(directory))
+            acquisitions = smoke_acquisition(rpc, Path(directory))
+            report = smoke_insights(rpc, Path(directory))
             capture = smoke_recorder(rpc, Path(directory), binary)
         finally:
             rpc.close()
-        smoke_recorder_restart(binary, Path(directory), environment, capture)
+        smoke_recorder_restart(binary, Path(directory), environment, capture, acquisitions, report)
         handshake = replies[0]
         if handshake.get("protocol_version") != 1 or handshake.get("product") != "Q22 Flight Lab":
             raise RuntimeError("Frozen engine handshake does not match desktop protocol version 1")
@@ -274,7 +279,7 @@ def smoke(binary: Path) -> None:
         if (network.get("platform") != platform.system() or not network.get("interfaces")
                 or network.get("status") not in {"inspected", "partial"}):
             raise RuntimeError("Frozen runtime failed native interface inspection")
-        print("Frozen engine smoke passed: Unicode imports, BIN/LOG/TLOG jobs, Parquet reads, scoped metrics, native interfaces, synthetic receive-only recorder subprocess, verified capture archives, restart recovery, clean EOF worker exit.")
+        print("Frozen engine smoke passed: Unicode and BIN/LOG/TLOG imports, Parquet metrics, native interfaces, synthetic bidirectional readback/list/download with immutable originals, vibration and power report/review export, receive-only recorder subprocess, verified archives, persistence/recovery, clean EOF worker exit. Synthetic evidence only; no hardware qualification.")
 
 
 def wait_smoke(check, ready, label: str, timeout: float = 15):
@@ -439,11 +444,18 @@ def smoke_recorder(rpc: SmokeRPC, directory: Path, binary: Path) -> dict:
     return capture
 
 
-def smoke_recorder_restart(binary: Path, directory: Path, environment: dict, capture: dict) -> None:
+def smoke_recorder_restart(binary: Path, directory: Path, environment: dict, capture: dict,
+                           acquisitions: list[dict], report: dict) -> None:
     """Restart retains evidence; EOF terminates a worker instead of silently resuming it."""
     rpc = SmokeRPC(binary, directory, environment)
     worker = None
     try:
+        for acquisition in acquisitions:
+            restored_acquisition = rpc.call("acquisition.detail", {"acquisition_id": acquisition["id"]})["acquisition"]
+            if restored_acquisition != acquisition:
+                raise RuntimeError("Frozen restart lost the immutable acquisition result")
+        if rpc.call("insights.detail", {"report_id": report["id"]})["report"] != report:
+            raise RuntimeError("Frozen restart lost the persisted diagnostic report")
         status = rpc.call("session.status", {"capture_session_id": capture["uuid"]})
         restored = status["capture_session"]
         if (restored["status"] != "stopped" or not restored["artifact_sources"]
@@ -507,6 +519,203 @@ def smoke_logs(rpc: SmokeRPC, directory: Path) -> None:
                 found = session["metrics"][name]["value"]
                 if found is None or abs(found - expected) > 1e-6:
                     raise RuntimeError(f"Frozen {format_name} interval has incorrect {name}: {found}")
+
+
+class AcquisitionPeer:
+    """Actual loopback MAVLink peer with explicitly synthetic, finite evidence."""
+
+    def __init__(self, log_bytes: bytes):
+        from pymavlink.dialects.v20 import ardupilotmega as mavlink
+        self.mavlink, self.log_bytes = mavlink, log_bytes
+        self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.socket.bind(("127.0.0.1", 0))
+        self.socket.settimeout(.01)
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as reservation:
+            reservation.bind(("127.0.0.1", 0))
+            self.target = reservation.getsockname()
+        self.connection = {"local_address": self.target[0], "local_port": self.target[1],
+                           "remote_address": "127.0.0.1", "remote_port": self.socket.getsockname()[1],
+                           "system_id": 1, "component_id": 1, "expected_uid": "123",
+                           "feed_origin": "direct_bidirectional"}
+        self.encoder = mavlink.MAVLink(None, srcSystem=1, srcComponent=1)
+        self.decoder = mavlink.MAVLink(None)
+        self.requests, self.error = [], None
+        self.stopped = threading.Event()
+        self.thread = threading.Thread(target=self.run, daemon=True)
+        self.thread.start()
+
+    def send(self, message):
+        payload = message.pack(self.encoder)
+        self.encoder.seq = (self.encoder.seq + 1) % 256
+        self.socket.sendto(payload, self.target)
+
+    def parameter(self, index):
+        name, value, kind = [(b"TEST_A", 1.5, 9), (b"TEST_B", 7.0, 6)][index]
+        self.send(self.mavlink.MAVLink_param_value_message(name, value, kind, 2, index))
+
+    def run(self):
+        mav = self.mavlink
+        started, last_status = time.monotonic(), 0
+        try:
+            while not self.stopped.is_set():
+                now = time.monotonic()
+                if now - last_status >= .04:
+                    self.send(mav.MAVLink_heartbeat_message(2, 3, 0, 0, 3, 3))
+                    self.send(mav.MAVLink_system_time_message(1700000000000000, 1000 + int((now - started) * 1000)))
+                    last_status = now
+                try:
+                    payload, endpoint = self.socket.recvfrom(65535)
+                except (socket.timeout, ConnectionResetError):
+                    continue
+                if endpoint != self.target:
+                    raise RuntimeError("Unexpected endpoint contacted the synthetic acquisition peer")
+                for message in self.decoder.parse_buffer(payload) or []:
+                    self.requests.append(message)
+                    name = message.get_type()
+                    if name == "COMMAND_LONG":
+                        if (message.command != 512 or message.param1 != 148 or message.confirmation != 0
+                                or any(getattr(message, f"param{i}") != 0 for i in range(2, 8))):
+                            raise RuntimeError("Frozen engine emitted an unapproved command")
+                        self.send(mav.MAVLink_autopilot_version_message(131072, 1, 0, 0, 1,
+                            [0] * 8, [0] * 8, [0] * 8, 1, 1, 123))
+                    elif name == "PARAM_REQUEST_LIST":
+                        self.parameter(0)  # Exercise a real missing-index retry.
+                    elif name == "PARAM_REQUEST_READ":
+                        if message.param_index != 1:
+                            raise RuntimeError("Unexpected synthetic parameter retry index")
+                        self.parameter(1)
+                    elif name == "LOG_REQUEST_LIST":
+                        if message.start <= 7 <= message.end:
+                            self.send(mav.MAVLink_log_entry_message(7, 1, 7, 1700000000, len(self.log_bytes)))
+                    elif name == "LOG_REQUEST_DATA":
+                        if message.id != 7:
+                            raise RuntimeError("Frozen engine guessed an unlisted log ID")
+                        if message.ofs >= len(self.log_bytes):
+                            self.send(mav.MAVLink_log_data_message(7, message.ofs, 0, [0] * 90))
+                        else:
+                            end = min(len(self.log_bytes), message.ofs + message.count)
+                            for offset in range(message.ofs, end, 90):
+                                part = self.log_bytes[offset:min(offset + 90, end)]
+                                self.send(mav.MAVLink_log_data_message(7, offset, len(part), list(part) + [0] * (90 - len(part))))
+                    elif name != "LOG_REQUEST_END":
+                        raise RuntimeError(f"Unexpected outbound MAVLink message: {name}")
+        except BaseException as error:
+            self.error = error
+
+    def close(self):
+        self.stopped.set()
+        self.thread.join(2)
+        self.socket.close()
+        if self.thread.is_alive() or self.error:
+            raise RuntimeError(f"Synthetic acquisition peer failed: {self.error}")
+
+
+def smoke_acquisition(rpc: SmokeRPC, directory: Path) -> list[dict]:
+    """Exercise the frozen sender only against an explicitly synthetic loopback peer."""
+    payload = (ROOT / "fixtures/logs/synthetic-flight.bin").read_bytes()
+    peer = AcquisitionPeer(payload)
+    try:
+        limits = {"timeout_s": 15, "bootstrap_timeout_s": 3, "heartbeat_timeout_s": 1,
+                  "boot_timeout_s": 1, "identity_timeout_s": 3, "retry_wait_s": .2,
+                  "request_interval_s": .02, "settle_s": .1, "retries": 2}
+        preview = rpc.call("acquisition.preview", {"connection": peer.connection, "limits": limits})
+        base = {"connection": peer.connection, "limits": limits, "aircraft_id": "synthetic-packaging-readback",
+                "synthetic": True, "applicability_fingerprint": preview["applicability_fingerprint"]}
+        arguments = base | {"operation_id": str(uuid4()), "role": "preflight"}
+        result = rpc.job("acquisition.parameters.capture", arguments)
+        parameters = result["acquisition"]
+        capture = parameters.get("parameter_capture", {})
+        if (parameters["state"] != "complete" or parameters["synthetic"] is not True
+                or capture.get("completeness") != "complete_for_scope" or capture.get("decoded_count") != 2
+                or capture.get("atomic") is not False or capture.get("flight_time_applicability") != "unknown"
+                or capture.get("missing_index_retry_examples") != [1]):
+            raise RuntimeError(f"Frozen parameter readback did not preserve scope/completeness: {parameters}")
+        count = len(peer.requests)
+        repeated = rpc.job("acquisition.parameters.capture", arguments)
+        if not repeated["operation_replayed"] or repeated["acquisition"]["id"] != parameters["id"] or len(peer.requests) != count:
+            raise RuntimeError("Retrying an operation ID resent acquisition requests")
+        listing = rpc.job("acquisition.logs.list", base | {"operation_id": str(uuid4()),
+                          "confirm_log_transfer_side_effects": True})["acquisition"]
+        if (listing["state"] != "complete" or not listing.get("listing_complete")
+                or [entry["log_id"] for entry in listing["entries"]] != [7]
+                or listing["entries"][0]["remote_filename"] is not None):
+            raise RuntimeError(f"Frozen log inventory did not retain actual remote IDs: {listing}")
+        downloaded = rpc.job("acquisition.logs.download", base | {"operation_id": str(uuid4()),
+            "confirm_log_transfer_side_effects": True, "listing_id": listing["id"], "log_id": 7})["acquisition"]
+        transfer = downloaded.get("download", {})
+        evidence = downloaded["transport_evidence"]
+        expected_hash = hashlib.sha256(payload).hexdigest()
+        if (downloaded["state"] != "complete" or transfer.get("transfer_complete") is not True
+                or transfer.get("sha256") != expected_hash or transfer.get("received_bytes") != len(payload)
+                or transfer.get("logger_closed") != "unknown" or downloaded["association_state"] != "provisional"
+                or evidence["logging_resumption_verified"] is not False or not evidence["log_request_end_sent"]
+                or not evidence["recovery_warning"]):
+            raise RuntimeError(f"Frozen transfer validation/provisional evidence failed: {downloaded}")
+        acquisitions = [parameters, listing, downloaded]
+        for acquisition in acquisitions:
+            if rpc.call("acquisition.detail", {"acquisition_id": acquisition["id"]})["acquisition"] != acquisition:
+                raise RuntimeError("Frozen acquisition detail differs from its terminal result")
+            for source in acquisition["source_refs"]:
+                path = directory / "raw/sha256" / source["sha256"]
+                raw = path.read_bytes()
+                if (hashlib.sha256(raw).hexdigest() != source["sha256"] or len(raw) != source["byte_size"]
+                        or source["acquisition_method"] != "app_owned_readonly_mavlink_acquisition"):
+                    raise RuntimeError("Frozen acquisition lost immutable original bytes/provenance")
+        page = rpc.call("acquisition.list", {"limit": 2})
+        remaining = rpc.call("acquisition.list", {"limit": 2, "offset": page["next_offset"]})
+        if {item["id"] for item in page["acquisitions"] + remaining["acquisitions"]} != {item["id"] for item in acquisitions}:
+            raise RuntimeError("Frozen acquisition catalog pagination lost a result")
+        source = next(item for item in downloaded["source_refs"] if item["role"] == "onboard_log_candidate")
+        log = rpc.job("logs.import", {"path": str(directory / "raw/sha256" / source["sha256"]),
+            "label": "Synthetic transferred BIN candidate", "synthetic": True})["log"]
+        if log["source"]["sha256"] != expected_hash or not log["record_count"] or log["synthetic"] is not True:
+            raise RuntimeError("Frozen decoder could not content-index the downloaded synthetic BIN")
+        return acquisitions
+    finally:
+        peer.close()
+
+
+def smoke_insights(rpc: SmokeRPC, directory: Path) -> dict:
+    fixture = directory / "Synthetic vibration données.log"
+    shutil.copy2(ROOT / "fixtures/logs/synthetic-insights.log", fixture)
+    log = rpc.job("logs.import", {"path": str(fixture), "label": "Synthetic vibration and power", "synthetic": True})["log"]
+    report = rpc.job("insights.report", {"log_id": log["id"], "source_key": "dataflash", "boot_epoch": 0,
+        "interval_start_s": 1, "interval_end_s": 4, "max_gap_s": 1.5, "battery_id": "0",
+        "operating_profile": {"aircraft_mass_kg": 10, "payload_mass_kg": 4, "rotor_count": 4,
+            "propeller_diameter_m": .5, "rotor_layout": "non_overlapping", "battery_cell_count": 6,
+            "declared_firmware": "Copter-4.7.1", "flight_phase": "hover", "actuator_protocol": "pwm",
+            "motor_output_channels": [1, 2], "output_low_us": 1000, "output_high_us": 2000},
+        "thresholds": {"roll_error_deg": 1}})["report"]
+    for name, expected in (("mean_power_w", 1160 / 3), ("energy_wh", 1160 / 3600),
+                           ("roll_tracking_rmse_deg", math.sqrt(53 / 9))):
+        found = report["metrics"][name]["value"]
+        if found is None or abs(found - expected) > 1e-6:
+            raise RuntimeError(f"Frozen insight integration oracle failed for {name}: {found}")
+    clipping = report["vibration"]["clipping"]
+    if (clipping["observed_deltas"] != {"0:Clip": 5} or clipping["reset_count"] != 1
+            or not any(row["details"]["peak_mps2"] == 70 and row["evidence"]["time_s"] == 3
+                       for row in report["vibration"]["excursions"])
+            or report["operating_profile"]["derived_context"]["payload_mass_fraction"] != .4
+            or report["parameter_evidence"]["attribution_allowed"] is not False
+            or report["spectrum"]["status"] != "unavailable"
+            or report["guidance"]["firmware_compatibility"]["exact_build_validated"] is not False
+            or not report["scope"]["synthetic"]):
+        raise RuntimeError("Frozen insight report lost scoped observations or uncertainty gates")
+    if not any(row["id"] == report["id"] for row in rpc.call("insights.list", {})["reports"]):
+        raise RuntimeError("Frozen insight report was not persisted")
+    preview = rpc.call("insights.review_packet", {"report_id": report["id"]})
+    packet = preview["packet"]
+    if (str(directory) in json.dumps(packet) or not packet["scope"]["synthetic"]
+            or not packet["findings"] or not packet["guidance"]["entries"][0]["references"][0]["sha256"]
+            or any(item["proposed_values"] is not None for item in packet["recommendations"])):
+        raise RuntimeError("Review packet lost evidence/citations or its conservative projection")
+    exported = rpc.call("insights.export_review", {"report_id": report["id"], "folder": str(directory)})
+    path = Path(exported["path"])
+    raw = path.read_bytes()
+    if (path.parent != directory or json.loads(raw) != packet or len(raw) != preview["byte_size"]
+            or len(raw) != exported["byte_size"] or hashlib.sha256(raw).hexdigest() != exported["sha256"]):
+        raise RuntimeError("Local review export differs from its exact preview or integrity receipt")
+    return report
 
 
 def macos_minimum(path: Path) -> tuple[int, ...]:

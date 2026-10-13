@@ -208,6 +208,16 @@ def test_legacy_metric_session_does_not_become_flight_record(service):
     assert service.status()['flight_records'] == []
 
 
+def test_synthetic_import_cannot_be_linked_to_declared_live_flight(service):
+    capture_id, _ = prepare(service)
+    record = arm(service, capture_id)
+    log = service.store.add_document('log', {'synthetic': True, 'streams': []})
+    before = detail(service, record)['manifest']
+    with pytest.raises(ValueError, match='Synthetic log evidence'):
+        service.evaluate_association(envelope(service, flight_record_id=record['id'], log_id=log['id']))
+    assert detail(service, record)['manifest'] == before
+
+
 def artifact(service, tmp_path, **changes):
     path = tmp_path / 'synthetic.tlog'
     path.write_bytes(b'synthetic recorder bytes for catalog association test')

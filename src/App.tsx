@@ -6,10 +6,11 @@ import Network from './Network';
 import Collection from './Collection';
 import Compare from './Compare';
 import Evidence from './Evidence';
+import Insights from './Insights';
 import { Badge, Icon } from './ui';
 
-type Page = 'overview'|'collection'|'network'|'compare'|'evidence';
-const pages: {id:Page;label:string;icon:string}[] = [{id:'overview',label:'Overview',icon:'overview'},{id:'collection',label:'Prepare & watch',icon:'evidence'},{id:'network',label:'Network checks',icon:'network'},{id:'compare',label:'Compare',icon:'compare'},{id:'evidence',label:'Evidence',icon:'evidence'}];
+type Page = 'overview'|'collection'|'network'|'compare'|'evidence'|'insights';
+const pages: {id:Page;label:string;icon:string}[] = [{id:'overview',label:'Overview',icon:'overview'},{id:'collection',label:'Prepare & watch',icon:'evidence'},{id:'network',label:'Network checks',icon:'network'},{id:'insights',label:'Flight insights',icon:'compare'},{id:'compare',label:'Compare',icon:'compare'},{id:'evidence',label:'Evidence',icon:'evidence'}];
 
 function App() {
   const [page,setPage] = useState<Page>('overview'); const [ready,setReady] = useState(false);
@@ -47,6 +48,7 @@ function App() {
     const [parameters,flights] = await Promise.all([allPages<Snapshot>('parameters.list','snapshots'),allPages<Session>('sessions.list','sessions')]);
     setSnapshots(parameters); setSessions(flights);
   },[]);
+  useEffect(()=>{if(ready&&(page==='evidence'||page==='compare'))void refresh().catch(cause=>setError(errorMessage(cause)));},[page,ready,refresh]);
   const run = useCallback(async (label:string,action:()=>Promise<void>) => {setError('');setBusy(label);try {await action();} catch (err) {setError(errorMessage(err));if (typeof err === 'object' && err && 'code' in err && /^(engine_(io|stopped|unavailable|crashed|start|timeout|failed|exited)|protocol_)/.test(String(err.code))) {setReady(false);setRestartAcknowledged(false);}} finally {setBusy('');}},[]);
   const connect = useCallback(async () => {await run('Connecting to local engine',async () => {setReady(false);await request('handshake');setEngineStatus(await request('engine.status'));await refresh();setReady(true);});},[refresh,run]);
   const restart = useCallback(async () => {await run('Restarting local engine',async () => {setReady(false);await request('engine.restart');setEngineGeneration(previous => previous+1);setRestartAcknowledged(false);setEngineStatus(await request('engine.status'));await refresh();setReady(true);});},[refresh,run]);
@@ -66,6 +68,7 @@ function App() {
         <div hidden={page !== 'overview'}><Overview ready={ready} snapshots={snapshots} sessions={sessions} navigate={setPage} engineStatus={engineStatus}/></div>
         <div hidden={page !== 'collection'}><Collection ready={ready} busy={busy} run={run} onStatus={setCollectionStatus} onEvidence={()=>setPage('evidence')}/></div>
         <div hidden={page !== 'network'}><Network ready={ready} busy={busy} run={run} engineGeneration={engineGeneration}/></div>
+        <div hidden={page !== 'insights'}><Insights ready={ready} active={page==='insights'} busy={busy} run={run} onImport={()=>setPage('evidence')}/></div>
         <div hidden={page !== 'compare'}><Compare ready={ready} busy={busy} run={run} snapshots={snapshots} sessions={sessions} onImport={() => setPage('evidence')}/></div>
         <div hidden={page !== 'evidence'}><Evidence ready={ready} busy={busy} run={run} snapshots={snapshots} sessions={sessions} refresh={refresh} onCollection={()=>setPage('collection')}/></div>
         <footer className="workspace-footer"><span>Q22 Flight Lab · Local engineering workspace</span><span>Milestone build · Hardware validation pending</span></footer>
@@ -81,7 +84,7 @@ function Overview({ready,snapshots,sessions,navigate,engineStatus}: {ready:boole
     <div className="section-title"><h2>Move from setup to understanding</h2><span>Two connected workflows</span></div>
     <div className="two-column"><button className="workflow-card" onClick={() => navigate('network')}><div className="workflow-top"><span className="workflow-icon"><Icon name="network" size={25}/></span><span className="step-number">01</span></div><h3>Get the right streams<br/>to this computer</h3><p>Check adapters, subnet routes, digiQ reachability, camera access, and arriving UDP data. Review scoped repair and recovery instructions.</p><span className="workflow-link">Open network checks<Icon name="arrow" size={19}/></span></button><button className="workflow-card" onClick={() => navigate('compare')}><div className="workflow-top"><span className="workflow-icon green"><Icon name="compare" size={25}/></span><span className="step-number">02</span></div><h3>Connect setting changes<br/>with flight performance</h3><p>Compare immutable parameter snapshots alongside measured flight differences. Keep configuration evidence and confounding conditions visible.</p><span className="workflow-link">Open comparison workspace<Icon name="arrow" size={19}/></span></button></div>
     <section className="principles-strip"><div><Icon name="check"/><span>Originals preserved</span></div><div><Icon name="check"/><span>No aircraft parameter writes</span></div><div><Icon name="check"/><span>Unknown stays unknown</span></div></section>
-    <details className="panel milestone-details"><summary>About this milestone and available capabilities</summary><div className="padded"><p>This milestone provides host network diagnostics and repair recovery, parameter imports and diffs, and scoped performance comparisons. The Flight log workspace checks the installed engine’s native log adapters before enabling import. Prepare & watch adds bounded passive telemetry recording and provisional armed-interval bundles when supported by the installed engine. Full parameter readback, automatic onboard log retrieval, firmware-verified tuning analysis, and hardware validation are still pending.</p><p>Camera reachability and UDP packet observations do not establish full decoded stream quality. All comparisons remain descriptive; configuration changes are never sent to the aircraft.</p>{engineStatus && <details className="technical"><summary>Local engine capabilities</summary><pre>{JSON.stringify(engineStatus,null,2)}</pre></details>}</div></details>
+    <details className="panel milestone-details"><summary>About this milestone and available capabilities</summary><div className="padded"><p>This milestone provides host network diagnostics and repair recovery, parameter imports and diffs, and scoped performance comparisons. The Flight log workspace checks the installed engine’s native log adapters before enabling import. Prepare & watch adds bounded passive telemetry recording and provisional armed-interval bundles when supported by the installed engine. Explicit read-only parameter and onboard log acquisition use a separate bidirectional path and require fresh disarmed identity evidence. Folder scans produce provisional candidates. Flight insights preserve scoped measurements and versioned guidance; automatic flight reconciliation, exact-build tuning validation, and hardware qualification remain pending.</p><p>Camera reachability and UDP packet observations do not establish full decoded stream quality. All comparisons remain descriptive; configuration changes are never sent to the aircraft.</p>{engineStatus && <details className="technical"><summary>Local engine capabilities</summary><pre>{JSON.stringify(engineStatus,null,2)}</pre></details>}</div></details>
   </div>;
 }
 export default App;

@@ -1,0 +1,8 @@
+import type { EngineJob, Run } from './api';
+import { Badge, number, readable, stateTone } from './ui';
+import { jobActive } from './useEngineJobs';
+
+export default function BackgroundJobs({jobs,ready,busy,run,cancel,labels}:{jobs:EngineJob[];ready:boolean;busy:string;run:Run;cancel:(job:EngineJob)=>Promise<void>;labels:Record<string,string>}){
+  if(!jobs.length)return null;
+  return <details className="panel background-jobs" open={jobs.some(jobActive)}><summary>Background operations · {jobs.filter(jobActive).length} active</summary><div className="padded">{jobs.map(job=><article className="log-job" key={job.id}><div className="line-between"><strong>{labels[job.method]||readable(job.method)}</strong><Badge tone={job.state==='succeeded'?'blue':stateTone(job.state)}>{readable(job.state)}</Badge></div>{job.progress&&<><p>{readable(job.progress.stage)}{job.progress.total!=null?` · ${number(job.progress.completed)} / ${number(job.progress.total)}`:''}</p><progress aria-label={`${labels[job.method]||job.method} progress`} max={1} value={job.progress.fraction??undefined}/></>}{job.error&&<p className="job-error">{job.error.message}</p>}{job.state==='interrupted'&&<p>The engine stopped before this operation finished. Inspect retained evidence and recovery instructions before explicitly retrying.</p>}{job.state==='cancelled'&&<p>Cancelled. Partial evidence and any reported acquisition side effects remain visible in the operation record.</p>}{jobActive(job)&&<button type="button" className="button secondary small" disabled={!ready||Boolean(busy)||job.cancel_requested} onClick={()=>run('Requesting operation cancellation',()=>cancel(job))}>{job.cancel_requested?'Cancellation requested':'Cancel operation'}</button>}</article>)}</div></details>;
+}

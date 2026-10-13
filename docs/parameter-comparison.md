@@ -28,17 +28,19 @@ before deduplication; corruption causes refusal rather than replacement.
 The catalog records original name/path, SHA-256, size, acquisition method, creation
 time, snapshot observation time, source kind, parser/algorithm versions, metadata,
 and immutable snapshot/session IDs. SQL triggers reject updates/deletions of
-source and document rows. The application never edits the original file or sends
-aircraft commands. Read-only file permissions and catalog triggers protect against
+source and document rows. The application never edits the original file or writes
+aircraft settings. Explicit [read-only acquisition](read-only-acquisition.md) has a
+narrow request allowlist. Read-only file permissions and catalog triggers protect against
 accidental application mutation; they are not a tamper-proof filesystem security
 boundary. Import errors can leave a safely archived original with no parsed
 snapshot/session, which is preferable to losing evidence. Original files must be
 completed regular files; directories, devices, pipes and changing recordings are
 rejected.
 
-Linux archive behavior, corruption handling and persistence are tested. Windows
+Archive behavior, corruption handling and persistence run in the native target
+suites; exact executed revisions are listed in [validation](validation.md). Windows
 uses a no-replacement rename before setting the read-only attribute, avoiding a
-read-only hard-link cleanup failure. Native Windows behavior still needs testing.
+read-only hard-link cleanup failure. Installed-app and real-flight qualification remain open.
 
 The catalog stores parameter maps, metric aggregates and source metadata.
 The numeric CSV is streamed and retained unchanged; no full-series Python

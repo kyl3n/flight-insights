@@ -221,5 +221,6 @@ Attach exact installation/recovery instructions, the capability/limitation matri
 test records, fixture provenance, dependency notices and the review described in
 [dependency-review.md](dependency-review.md). State which requested functions are
 implemented, tested only with fixtures, unsupported, or awaiting hardware. A pilot
-release cannot claim completion of the handoff's unimplemented live recording,
-DSP/filter/PID, fault-rule, migration or performance acceptance families.
+release cannot claim completion of the handoff's managed collection,
+DSP/filter/PID, fault-rule, migration or performance acceptance families merely
+because passive recording, explicit readback or exploratory local insights pass synthetic tests.

@@ -641,6 +641,8 @@ class CollectionService:
             if row is None:
                 raise ValueError("Select an imported log ID.")
             log = json.loads(row[0])
+            if log.get("synthetic") and not capture["profile"]["connection"].get("synthetic"):
+                raise ValueError("Synthetic log evidence cannot be associated with a declared-live flight record.")
             streams = [s for s in log["streams"] if s["source_key"] == params.get("source_key") and s["boot_epoch"] == params.get("boot_epoch")]
             if len(streams) != 1:
                 raise ValueError("Select one explicit log source and clock segment.")
@@ -673,7 +675,7 @@ class CollectionService:
                 contradictions.append("Observed nonzero vehicle UID conflicts with the declared expected UID.")
             association = self._put(db, "association", {
                 "id": str(uuid4()), "artifact_sha256": log["source"]["sha256"], "artifact_source_id": log["source"]["id"],
-                "log_id": log["id"], "role": role, "vehicle_filter": {"source_id": params["source_key"], "system_id": streams[0]["system_id"], "component_id": streams[0]["component_id"]},
+                "log_id": log["id"], "role": role, "synthetic": log.get("synthetic"), "vehicle_filter": {"source_id": params["source_key"], "system_id": streams[0]["system_id"], "component_id": streams[0]["component_id"]},
                 "boot_epoch": params["boot_epoch"], "time_or_record_spans": spans,
                 "state": "rejected" if contradictions else "provisional",
                 "supporting_evidence": ["Operator selected this archived artifact, source, clock segment and record span."],

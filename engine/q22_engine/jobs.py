@@ -37,7 +37,7 @@ class JobService:
             pending = db.execute("SELECT id, data FROM jobs WHERE json_extract(data, '$.state') IN ('queued','running')").fetchall()
             for job_id, payload in pending:
                 job = json.loads(payload)
-                job.update(state="interrupted", finished_at=now(), error={"message": "The engine stopped before completion. Review imported evidence and retry explicitly."})
+                job.update(state="interrupted", finished_at=now(), error={"message": "The engine stopped before completion. Review retained evidence and recovery guidance before starting a new operation."})
                 db.execute("UPDATE jobs SET data=? WHERE id=?", (json.dumps(job), job_id))
 
     def _connect(self):
@@ -69,7 +69,7 @@ class JobService:
             if self._closed:
                 raise ValueError("Engine is shutting down.")
             if len(self._events) >= MAX_PENDING:
-                raise ValueError("Import queue is full. Wait for a job or cancel a queued import.")
+                raise ValueError("Operation queue is full. Wait for a job or cancel a queued operation.")
             job = {"id": str(uuid4()), "method": method, "state": "queued", "created_at": now(),
                    "cancel_requested": False,
                    "progress": {"stage": "queued", "completed": 0, "total": None, "fraction": None}}
@@ -112,7 +112,7 @@ class JobService:
             self._update(job_id, state="failed", finished_at=now(), error={"message": "Access denied. Review file permissions and retry."})
         except Exception:
             logging.exception("Background job failed: %s", method)
-            self._update(job_id, state="failed", finished_at=now(), error={"message": "Import failed. Inspect the engine diagnostic log."})
+            self._update(job_id, state="failed", finished_at=now(), error={"message": "Operation failed. Inspect the engine diagnostic log and retained evidence."})
         finally:
             with self._lock:
                 self._events.pop(job_id, None)

@@ -1,7 +1,8 @@
 import { expect, test } from '@playwright/test';
 import { createSocket } from 'node:dgram';
 import { execFileSync } from 'node:child_process';
-import { resolve } from 'node:path';
+import { resolve, join } from 'node:path';
+import { mkdir, copyFile } from 'node:fs/promises';
 import { connectEngine } from './engine-harness';
 
 // Synthetic loopback packets exercise the actual live-forwarded receive path.
@@ -95,6 +96,28 @@ test('passive observer records distinct armed intervals and preserves incomplete
     expect(before.flight_records).toHaveLength(2);
     expect(new Set(before.flight_records.map((record:any)=>record.armed_interval_id)).size).toBe(2);
     expect(before.flight_records.every((record:any)=>record.missing_sources.includes('onboard_bin')&&record.missing_sources.includes('preflight_parameters'))).toBe(true);
+    const folder=join(engine.data,'explicit-synthetic-folder');await mkdir(folder);await copyFile(resolve('fixtures/logs/synthetic-flight.bin'),join(folder,'renamed-original.bin'));
+    engine.files.push(folder);
+    await page.getByText('Collect missing evidence from a folder',{exact:true}).click();
+    await page.getByRole('button',{name:'Choose evidence folder',exact:true}).click();
+    await page.getByLabel('This folder contains synthetic test evidence',{exact:true}).check();
+    expect(engine.calls.some(call=>call.method==='reconciliation.scan_folder')).toBe(false);
+    await page.getByRole('button',{name:'Scan selected folder',exact:true}).click();
+    await expect(page.getByRole('heading',{name:'Folder evidence candidates',exact:true})).toBeVisible();
+    const scanned=engine.calls.find(call=>call.method==='reconciliation.scan_folder');
+    expect(scanned?.params).toMatchObject({folder,synthetic:true,max_depth:0,flight_record_id:before.flight_records.find((item:any)=>item.display_number===1).id});
+    expect(engine.calls.some(call=>call.method==='associations.evaluate')).toBe(false);
+    const afterScan=await engine.rpc('session.status') as any;
+    expect(afterScan.flight_records.every((record:any)=>record.missing_sources.includes('onboard_bin'))).toBe(true);
+    await page.getByRole('button',{name:'Inspect interval 2 bundle',exact:true}).click();
+    await expect(page.locator('.bundle-detail').getByRole('heading',{name:'Bundle for interval 2',exact:true})).toBeVisible();
+    // A saved report remains bound to its original target, even after navigation.
+    const reports=await engine.rpc('reconciliation.list') as any;
+    const scanReport=await engine.rpc('reconciliation.get',{report_id:reports.reports[0].id}) as any;
+    expect(scanReport.report.target.flight_record_id).toBe(scanned?.params.flight_record_id);
+    for(const button of await page.getByRole('button',{name:'Record reviewed provisional link',exact:true}).all())await expect(button).toBeDisabled();
+    await page.getByRole('button',{name:'Inspect interval 1 bundle',exact:true}).click();
+    await page.getByText('Collect missing evidence from a folder',{exact:true}).click();
     await page.evaluate(()=>{if(document.activeElement instanceof HTMLElement)document.activeElement.blur();window.scrollTo(0,0);});
     await page.screenshot({path:testInfo.outputPath('collection-bundle.png'),fullPage:true});
     await page.setViewportSize({width:640,height:900});

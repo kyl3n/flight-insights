@@ -12,6 +12,7 @@ import time
 from . import __version__
 from .collection_controller import CollectionController
 from .jobs import JobService
+from .insight_service import InsightReports
 from .network import NetworkService
 from .parameters import ParameterService
 from .store import Store
@@ -26,13 +27,19 @@ METHODS = (
     "associations.evaluate", "associations.review",
     "parameters.import", "parameters.list", "parameters.diff", "sessions.import",
     "sessions.list", "comparison.run", "logs.import", "logs.list", "logs.detail", "logs.session",
+    "insights.report", "insights.list", "insights.detail", "insights.review_packet", "insights.export_review",
+    "acquisition.preview", "acquisition.parameters.capture", "acquisition.logs.list", "acquisition.logs.download",
+    "acquisition.list", "acquisition.detail",
+    "reconciliation.scan_folder", "reconciliation.index_source", "reconciliation.get", "reconciliation.list",
+    "radio.capture", "radio.list", "radio.detail",
     "jobs.get", "jobs.list", "jobs.cancel",
 )
 LIMITATIONS = [
     "Foundation preview; the complete handoff acceptance plan has not passed.",
     "No real-aircraft or Windows/macOS hardware validation has been performed.",
     "Log metrics use only validated source/epoch/unit mappings; incomplete parameter timelines cannot establish historical settings.",
-    "Passive UDP capture is available; complete readbacks, automatic BIN retrieval, DSP and tuning recommendations are not implemented.",
+    "Local insights and explicit read-only acquisition are available; full automatic flight reconciliation and aircraft-specific numerical tuning remain unqualified.",
+    "Legacy onboard log transfer can suspend logging; verify resumption before another flight. A complete readback is not an atomic flight-time configuration.",
     "Automatic host repairs require a qualified native helper and are diagnosis-only in this release.",
     "A network response is not proof of video decoding, bidirectional delivery, or aircraft health.",
 ]
@@ -46,6 +53,10 @@ class Engine:
         self.collection = CollectionController(self.store, self.jobs)
         self.network = NetworkService(data_dir=data_dir, safety_state=self.collection.safety_state)
         self.logs = None
+        self.insights = InsightReports(self.store)
+        self.acquisition = None
+        self.reconciliation = None
+        self.radio = None
         self.started = time.monotonic()
 
     def close(self):
@@ -55,7 +66,7 @@ class Engine:
     def call(self, method: str, params: dict) -> dict:
         if method == "handshake":
             return {"protocol_version": 1, "engine_version": __version__,
-                    "product": "Q22 Flight Lab", "milestone": "passive-collection-preview",
+                    "product": "Q22 Flight Lab", "milestone": "evidence-insights-preview",
                     "capabilities": list(METHODS), "limitations": LIMITATIONS}
         if method == "engine.status":
             return {"state": "available", "protocol_version": 1,
@@ -68,15 +79,44 @@ class Engine:
                 {"kind": "network", "state": "available", "limits": "Configured sources only; explicit stream probes."},
                 {"kind": "dataflash", "state": "available", "formats": ["BIN", "LOG"], "limits": "Bounded offline import; fields without validated units remain unavailable."},
                 {"kind": "tlog", "state": "available", "limits": "Recorded MAVLink only; source and boot epochs remain separate."},
-                {"kind": "live_recording", "state": "available", "limits": "Explicit separate passive UDP feed; no full readback, automatic BIN retrieval or authenticated replay protection."},
+                {"kind": "live_recording", "state": "available", "limits": "Explicit separate passive UDP feed; read-only requests use a separate reviewed bidirectional endpoint. UDP replay protection remains unavailable."},
+                {"kind": "insights", "state": "available", "limits": "Scoped measurements, versioned guidance and explicit evidence gaps; no automatic tuning or aircraft writes."},
+                {"kind": "read_only_acquisition", "state": "experimental", "limits": "Explicit direct bidirectional endpoint, fresh disarmed identity/clock gates; real GCS/hardware qualification pending."},
+                {"kind": "folder_reconciliation", "state": "available", "limits": "Explicit selected folder, content inspection and provisional candidates; no filename-based verified associations."},
                 {"kind": "skypulse_normalization", "state": "unvalidated", "recovery": "Supply radio firmware and actual raw responses."},
+                {"kind": "skypulse_raw_history", "state": "available", "limits": "Explicit bounded capture of documented HTTP endpoints; original responses and receipt times, no normalized RF metrics."},
             ]}
         if method.startswith("network."):
             return self.network.dispatch(method, params)
+        if method.startswith("radio."):
+            if self.radio is None:
+                from .radio_history import RadioHistoryService
+                self.radio = RadioHistoryService(self.store)
+            if method == "radio.capture":
+                return self.jobs.start(method, params, self.radio.dispatch)
+            return self.radio.dispatch(method, params)
         if method.startswith("jobs."):
             return self.jobs.dispatch(method, params)
         if method.startswith(("session.", "associations.")):
             return self.collection.dispatch(method, params)
+        if method.startswith("insights."):
+            if method == "insights.report":
+                return self.jobs.start(method, params, self.insights.dispatch)
+            return self.insights.dispatch(method, params)
+        if method.startswith("acquisition."):
+            if self.acquisition is None:
+                from .acquisition import AcquisitionService
+                self.acquisition = AcquisitionService(self.store, external_gate=self._acquisition_gate)
+            if method in {"acquisition.parameters.capture", "acquisition.logs.list", "acquisition.logs.download"}:
+                return self.jobs.start(method, params, self.acquisition.dispatch)
+            return self.acquisition.dispatch(method, params)
+        if method.startswith("reconciliation."):
+            if self.reconciliation is None:
+                from .reconciliation import ReconciliationService
+                self.reconciliation = ReconciliationService(self.store, collection=self.collection.collection)
+            if method in {"reconciliation.scan_folder", "reconciliation.index_source"}:
+                return self.jobs.start(method, params, self.reconciliation.dispatch)
+            return self.reconciliation.dispatch(method, params)
         if method.startswith("logs."):
             if self.logs is None:
                 from .logs import LogService
@@ -85,6 +125,35 @@ class Engine:
                 return self.jobs.start(method, params, self.logs.dispatch)
             return self.logs.dispatch(method, params)
         return self.parameters.dispatch(method, params)
+
+    def _acquisition_gate(self, kind, connection):
+        """Additional app-owned capture guard; acquisition verifies its own wire peer."""
+        current = self.collection.recorder.status()
+        # Recovered workers retain their ownership even when a second app cannot
+        # observe their current aircraft state. Do not use them as proof of safety.
+        if any(item.get("active") and item.get("capture_session_id") != current.get("capture_session_id")
+               for item in self.collection.recorder.recovered()):
+            return {"allowed": False, "reason": "Another recorder owns this catalog; stop it in its owning app first."}
+        if not current.get("active"):
+            return {"allowed": True, "reason": "The acquisition must independently establish fresh disarmed identity and clock evidence."}
+        if kind != "parameters":
+            return {"allowed": False, "reason": "Stop the app observer before legacy onboard log transfer; it can suspend onboard logging."}
+        for binding in current.get("bindings", []):
+            if (binding.get("port") == connection.get("local_port") and
+                    (binding.get("local_address") in {"0.0.0.0", connection.get("local_address")}
+                     or connection.get("local_address") == "0.0.0.0")):
+                return {"allowed": False, "reason": "Readback requires a separate endpoint from the passive recorder."}
+        selected = [source for source in current.get("sources", [])
+                    if source.get("system_id") == connection.get("system_id")
+                    and source.get("component_id") == connection.get("component_id")]
+        safety = self.collection.collection.safety_state(current.get("capture_session_id"))
+        if (current.get("state") != "recording" or current.get("callback_error")
+                or current.get("event_backlog_bytes", 0) > 256 * 1024
+                or safety.get("armed_state") != "disarmed" or len(selected) != 1
+                or selected[0].get("armed_state") != "disarmed"
+                or str(selected[0].get("uid")) != str(connection.get("expected_uid"))):
+            return {"allowed": False, "reason": "The active observer lacks a fresh, unambiguous disarmed heartbeat and matching UID."}
+        return {"allowed": True, "reason": "Separate readback endpoint; observer matches declared UID and is freshly disarmed. UDP identity is not authenticated."}
 
     def handle(self, value: object) -> dict:
         request_id = value.get("id") if isinstance(value, dict) else None

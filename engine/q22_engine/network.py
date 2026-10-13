@@ -24,6 +24,7 @@ import uuid
 from typing import Any, Callable
 
 from .network_journal import RepairJournal
+from .rtp_diagnostics import RtpDiagnostics
 from .network_profiles import capability_matrix, compare_reference, reference_profile
 
 
@@ -91,6 +92,19 @@ def _source(value: Any) -> dict:
     result["path"] = path
     if value.get("expected_format", "unknown") not in {"unknown", "mavlink", "rtp"}:
         raise ValueError("Expected UDP format must be mavlink, rtp or unknown.")
+    if value.get("rtp_codec", "unknown") not in {"unknown", "h265"}:
+        raise ValueError("RTP codec must be unknown or explicitly configured h265.")
+    if any(key in value for key in ("rtp_codec", "rtp_payload_type", "h265_donl")):
+        if value["kind"] != "udp" or value.get("expected_format") != "rtp":
+            raise ValueError("RTP mapping fields require a UDP source with expected_format rtp.")
+        if value.get("rtp_codec", "unknown") == "h265":
+            payload_type = _integer(value.get("rtp_payload_type"), 0, 127, "Configured RTP payload type")
+            if 64 <= payload_type <= 95:
+                raise ValueError("RTP payload types 64..95 are ambiguous with RTCP multiplexing; use the actual supported session mapping.")
+            if value.get("h265_donl") is not False:
+                raise ValueError("H.265 framing requires explicit h265_donl=false from the configured session; DONL-present payloads are not implemented.")
+        elif any(key in value for key in ("rtp_payload_type", "h265_donl")):
+            raise ValueError("Codec-specific mapping fields require rtp_codec h265.")
     return result
 
 
@@ -558,6 +572,7 @@ class NetworkService:
 
     def _udp_probe(self, source: dict, local: str, timeout: float) -> dict:
         received = accepted = heartbeats = bytes_received = 0
+        rtp = RtpDiagnostics(h265_payload_type=source.get("rtp_payload_type") if source.get("rtp_codec") == "h265" else None) if source.get("expected_format") == "rtp" else None
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as connection:
             if self.system == "Windows" and hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
                 connection.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
@@ -581,11 +596,17 @@ class NetworkService:
                 bytes_received += len(data)
                 if source.get("expected_format") == "mavlink" and self._heartbeat_valid(data):
                     heartbeats += 1
-        return {"state": "telemetry_validated" if heartbeats else "packets_received" if accepted else "no_packets",
+                if rtp is not None:
+                    rtp.observe(data, remote[1], time.monotonic())
+        result = {"state": "telemetry_validated" if heartbeats else "packets_received" if accepted else "no_packets",
                 "checks": [{"local_address": local, "port": source["port"], "packets_from_configured_host": accepted,
                             "other_packets": received - accepted, "bytes": bytes_received, "valid_heartbeat_datagrams": heartbeats,
                             "authentication_verified": False, "video_decoded": False}],
                 "details": "A valid heartbeat CRC establishes a telemetry packet, not sender authentication or full-stream continuity. Generic/RTP packets do not establish playable video. A timeout does not identify firewall failure."}
+        if rtp is not None:
+            result["checks"][0]["rtp"] = rtp.result()
+            result["details"] = "Passive RTP headers, configured payload framing and local arrival cadence are separate from video decode. Sequence gaps do not prove RF loss; a timeout does not identify firewall failure."
+        return result
 
     def _is_elevated(self) -> bool:
         if self.system == "Windows":

@@ -21,18 +21,92 @@ If the dedicated adapter has no address in the radio subnet, a host route by its
 | Check | Evidence | Still unverified |
 | --- | --- | --- |
 | Host inspection | Adapter state, IPv4 address/subnet, default routes, OS route to each configured target | Device power, physical path, sender configuration, effective firewall policy |
-| SkyPulse | Read-only GET of `/scatter_data.json` and `/events.json`; status, byte count, valid complete JSON | Vendor field schema, units, sample times, RF link health; this is a probe, not the rolling-history recorder |
+| SkyPulse probe | Read-only GET of `/scatter_data.json` and `/events.json`; status, byte count, valid complete JSON | Vendor field schema, units, sample times, RF link health; a single probe does not record rolling history |
+| Explicit SkyPulse history | Bounded repeated GETs, original entity bytes/hash, UTC and monotonic request/receipt times, API/parse failures and scheduling gaps | Vendor schema/units, source sample timestamps, deduplicated RF history and collection from an unconfigured second radio |
 | RTSP | DESCRIBE on the exact configured URL; basic SDP structure and codec names actually advertised | Media reception/playback, decoder availability, resolution, dropped frames, glass-to-glass latency |
 | UDP | Exclusive bind on one existing local IPv4 address and configured port; packets from the exact configured sender | Playback or full telemetry continuity; other senders are counted separately |
+| RTP UDP | RTP header/CSRC/extension/padding structure, bounded per-sender-port/SSRC sequence observations and local arrival cadence; optionally explicitly configured H.265 single-NAL/AP/FU framing | Codec identification, FU reassembly, fresh decoded frames, exact RF loss, sender authentication, receiver playback |
 | MAVLink UDP | A common HEARTBEAT packet with valid MAVLink v1/v2 framing and CRC extra 50 | Signing authentication, other message types, stream completeness, physical RF loss |
 
-No incoming UDP during the timeout means **no packets observed**. It does not prove a firewall block. JSON reachability does not establish radio health; an SDP reply does not establish playable video. Effective firewall policy remains `unknown` because other rules and security software can override a scoped exception. A native video receive/decode adapter remains a later milestone. Separate passive MAVLink capture and recorded TLOG parsing are available; see [managed collection](managed-collection.md).
+No incoming UDP during the timeout means **no packets observed**. It does not prove a firewall block. JSON reachability does not establish radio health; an SDP reply does not establish playable video. Effective firewall policy remains `unknown` because other rules and security software can override a scoped exception. An RTP framing observation is not a native video decode adapter; actual decode and consuming-player inspection remain later milestones. Separate passive MAVLink capture and recorded TLOG parsing are available; see [managed collection](managed-collection.md).
 
 RTSP probes use unauthenticated `DESCRIBE` over TCP to a numeric IPv4 address, port and path. Credential negotiation and encrypted RTSP are not implemented. A `401`/`403` response is reported as `authentication_required`, not a route/firewall failure; verify the URL and credentials using the camera's supported player or GCS.
 
 Use a dedicated GCS/router forwarding destination such as port `14551`; do not take over the GCS's active telemetry port. The UDP socket never enables address/port reuse and uses exclusive binding on Windows. An occupied port returns `bind_failed` with instructions to configure forwarding while leaving the GCS running.
 
 For UDP, the UI's **Device IPv4** is the packet sender to accept, not necessarily the aircraft or radio address. If a GCS/router forwards telemetry, enter its actual sending address (including loopback when applicable), and set **Local adapter IPv4** to the address receiving that forwarding destination. Keep radio HTTP and forwarded UDP as separate sources when their sender addresses differ. Packets from other addresses are counted separately and do not satisfy the configured source check.
+
+
+
+## Explicit raw SkyPulse history
+
+**Capture radio history** starts only after selecting a configured SkyPulse source and requesting a duration. It polls the documented read-only `/scatter_data.json` and `/events.json` paths, preserving each body independently. Overlapping response windows are deliberately retained; identical responses still have distinct request/receipt records even when their content-addressed original bytes deduplicate. Five seconds is the proposed default interval, not a vendor guarantee. The current collector captures one explicitly selected radio; a successful ground-unit capture does not imply an air-unit capture.
+
+`radio.capture` is an asynchronous job. It accepts a source with only `id`, `kind: skypulse`, numeric IPv4 `host`, optional port and interface, plus integer `duration_s` (1–300, default 30), `interval_ms` (1000–30000, default 5000), and `timeout_ms` (100–5000, default 1500). It does not accept credentials, custom paths, request headers, radio configuration endpoints or redirects. No request sends MAVLink or writes device settings. It starts no collector on app launch, list/detail inspection or engine restart.
+
+```json
+{
+  "source": {"id": "ground-radio", "kind": "skypulse", "host": "10.0.0.2", "port": 80},
+  "duration_s": 30,
+  "interval_ms": 5000,
+  "timeout_ms": 1500
+}
+```
+
+The job result contains `{capture: summary}`. `radio.list` accepts optional `limit` (1–100) and `offset` and returns `captures`, `next_offset`, per-record read errors and a declared scan bound. `radio.detail` accepts `{capture_id}` and returns the full capture with `polls` and scheduling `gaps`. Capture states include `running`, `complete`, `partial`, `cancelled`, `failed`, `budget_exhausted`, and recovered `interrupted`/`unknown`. Here **complete** means the requested polling run finished without observed HTTP/parse/scheduling failures; it does not mean complete radio history or a healthy RF link.
+
+Each poll includes the fixed endpoint, HTTP status when observed, exact entity byte count, SHA-256 and archived Store source, UTC/monotonic request and receipt times, framing completeness and JSON syntax status. Malformed JSON, exceeded JSON parser depth, unexpected HTTP status, transport timeout/refusal, unsupported content encoding and missed schedule slots remain different evidence. A deeply nested reply is retained as `json_unvalidated` rather than failing the collection job. Response cookies, authorization headers and raw HTTP headers are not archived. HTTP entity bytes are preserved without JSON reserialization; unknown transfer framing may be retained as explicitly labelled partial transfer-body bytes. The collector does not invent units, deduplicate history points, infer sample timestamps from receipt time or claim an RF outage from an HTTP failure.
+
+Replies are bounded to 1 MiB of body and 64 KiB of headers under an overall per-request deadline, including slow-drip headers. One capture retains at most 32 MiB of response bodies; its local original files and content-addressed archive copies can together use roughly twice that amount. Requested duration limits polling/network waits; bounded body archival and OS filesystem flushes may finish afterward. Polls do not overlap or accumulate an unbounded request queue. If one cycle overruns the next scheduled slot, skipped slots within the requested capture window are recorded explicitly.
+
+Cancellation uses the existing jobs control. It stops further requests while preserving prior bodies and any partial body returned by the interrupted request. Request intent is written before contacting the device; completed poll metadata and originals are flushed afterward. Atomic manifest replacement preserves the preceding checkpoint on a write failure. Temporary files close before cleanup, and Windows sharing violations use the recorder’s bounded checkpoint-replacement retry; actual Windows power-loss qualification remains pending. A process crash may leave the current request outcome unknown, but previous replies and completed local body files remain available. Detail lists up to 32 unindexed original files left between a body write and manifest publication; those files are preserved without manufacturing a completed response or flight association.
+
+Restart recovery reads the capture owner's process identity and saved state, reports an interrupted or uncertain owner when applicable, and never resumes polling. `radio-history/<capture_id>/` retains local checkpoints and body files; originals archived through Store carry acquisition method `app_owned_readonly_radio_capture`. UTC/monotonic receipt times do not establish the clocks inside the radio's approximately 50-second rolling windows. Actual firmware responses, schema, sample identity/time units and air/ground topology are still required before RF normalization or deduplication can be qualified.
+
+## Passive RTP and configured H.265 framing
+
+Select **RTP** only for a dedicated forwarded/mirrored UDP destination. The existing GCS receiver remains the intended consumer; the app does not duplicate its unicast socket or start playback. The probe classifies bounded RTP headers and RTCP-shaped block headers from the configured sender. It groups RTP sequences by observed sender port and SSRC, keeping changing payload types inside that sequence scope. Source UDP ports need not equal the destination port.
+
+Sequence gaps, duplicates, reordering and large discontinuities are reported separately. A late packet can fill a missing slot within the 4096-sequence reconciliation window. Jumps larger than 3000 sequence numbers begin a new observation segment; their cause remains unknown. Gaps at the beginning/end of a probe are unknowable, and old slots outside the window may remain unreconciled. These counters must not be presented as RF loss percentages. Arrival gaps use the computer's local monotonic receipt times, not camera frame rate or glass-to-glass latency. RTP marker bits are counted without treating them as decoded frames.
+
+H.265 framing is optional and requires the actual sender/session's configured payload type and explicit knowledge that DONL fields are absent (`sprop-max-don-diff=0`). The port number and historic Q22 codec expectation do not establish that mapping. Sources with unknown negotiation still receive header/sequence diagnostics. DONL-present packetization and PACI are not implemented; fragment packets are inspected individually without reassembling or decoding video. Structurally plausible payload bytes do not identify a codec.
+
+```json
+{
+  "sources": [{
+    "id": "forwarded-video",
+    "kind": "udp",
+    "host": "127.0.0.1",
+    "local_address": "127.0.0.1",
+    "port": 5601,
+    "expected_format": "rtp",
+    "rtp_codec": "h265",
+    "rtp_payload_type": 96,
+    "h265_donl": false
+  }],
+  "timeout_ms": 1500
+}
+```
+
+This is an example of a separately configured forwarding endpoint, not a default camera address or negotiated payload mapping. `rtp_codec`, `rtp_payload_type` and `h265_donl` must be omitted when their configuration is unknown. Explicit H.265 payload types must be integers 0–127 excluding 64–95, whose marker-bearing octets overlap RTCP multiplexing. RTCP classification checks block header lengths only, not report contents or session validity.
+
+`network.probe` keeps its existing packet-level state and adds `checks[0].rtp`: `rtp_packets`, `rtcp_packets`, `rtcp_header_only`, `invalid_packets`, error categories, `streams_truncated`, `budget_exhausted`, and up to 16 stream summaries. Each stream records `ssrc_hex`, observed `sender_port`, payload-type counts, byte/marker counters, `sequence`, `cadence`, and optional `h265` framing counters/errors. `video_decoded` and `codec_identified` remain false. The existing 4096-datagram/time limits, source filter, exclusive bind and recorder-ownership interlock remain in force. Header parsing follows [RFC 3550](https://www.rfc-editor.org/rfc/rfc3550); the explicitly configured HEVC framing subset follows [RFC 7798](https://www.rfc-editor.org/rfc/rfc7798).
+
+## Native repair qualification still required
+
+The Python backend interface is an injection boundary for test fixtures and future native integration; setting its capability booleans is not a qualification procedure. Production constructs no backend. Administrator/root privileges alone do not change this, and neither the renderer nor mutable receipt JSON can provide a backend, command array or qualified status.
+
+| Native adapter | Required implementation before enabling it | Required installed-machine evidence |
+| --- | --- | --- |
+| Windows | Signed narrowly scoped helper with authenticated local IPC, stable adapter identity, typed ActiveStore route and exact Windows Firewall filters, durable owned-object receipt and independent supervisor | Declined UAC, profile/interface changes, policy-managed firewall, competing route edits, helper/UI crashes and repair/rollback on supported Windows versions |
+| Linux | Identify the active network manager; use its address/route transaction and checkpoint model with a narrowly authorized helper. Integrate the actual firewall manager without raw-command fallback that bypasses ownership | NetworkManager/networkd or explicitly unmanaged adapter qualification, polkit denial, manager reapply/reconnect, shared zones, concurrent edits and process/power interruption |
+| macOS | Signed helper and approved network-service configuration through SystemConfiguration, stable service/adapter identity, local privacy handling, independent supervisor and durable exact receipts | Signing/notarization, Local Network privacy denial, service order/DHCP changes, Wi-Fi/Ethernet transitions and host-route/alias recovery on supported macOS releases |
+
+Every implementation must consume a server-held typed descriptor and reviewed baseline, revalidate interface/topology/object ownership immediately before a write, preserve Internet default route and DNS, and verify both the precise addition and configured target/return path afterward. Current disarmed identity evidence must come from the engine, never a renderer boolean. A missing/armed/stale state or active recorder blocks disruptive apply and rollback. The observer must remain responsive while a helper works; holding its lock across native operations is not an interlock.
+
+Reachability-changing operations additionally need a native supervised rollback deadline that survives UI/engine exit, with a tested policy for aircraft-state changes or lost evidence during recovery. A timer must not blindly mutate an armed or unknown-state link. Crash/timeout outcomes retain the original intent and exact observed state; no restart auto-replays a repair. Changed or ambiguously recreated external objects require manual review. Recovery receipts remain untrusted origin claims, and a privileged process must recompile allowed typed operations rather than execute persisted argv.
+
+These are pending implementation and qualification requirements, not completed acceptance results. Mocked OS tests, source review and this Linux cloud environment cannot supply Windows/macOS signing, actual manager policy, multi-NIC continuity or radio/GCS hardware evidence. Raw SkyPulse responses can be recorded from documented read-only endpoints without schema claims; deduplicated RF histories still require actual firmware-specific sample/time/units evidence.
 
 ## Reviewed repairs and ownership
 

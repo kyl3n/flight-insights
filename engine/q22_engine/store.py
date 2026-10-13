@@ -69,7 +69,9 @@ class Store:
 
     def archive_file(self, path: Path | str, *, cancel_check=None, progress=None,
                      acquisition_method="manual_file_import") -> dict:
-        if acquisition_method not in {"manual_file_import", "app_owned_passive_udp_capture"}:
+        if acquisition_method not in {"manual_file_import", "app_owned_passive_udp_capture",
+                                      "app_owned_readonly_mavlink_acquisition",
+                                      "app_owned_readonly_radio_capture"}:
             raise ValueError("Unsupported evidence acquisition method.")
         source = Path(path).expanduser().resolve(strict=True)
         if not stat.S_ISREG(source.stat().st_mode):

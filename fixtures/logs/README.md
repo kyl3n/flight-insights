@@ -12,6 +12,13 @@ boot-time reset, and unknown battery sentinels. Packets are generated with
 the pinned pymavlink 2.4.49 ArduPilotMega v20 dialect. The TLOG does not contain
 the entire parameter list; it must never become a claimed complete snapshot.
 
+`synthetic-insights.log` is a separate hand-authored diagnostic oracle in DataFlash
+text format. It includes current per-IMU VIBE/clipping, battery load steps, attitude
+error and PWM output samples with explicit in-file units. Its MSG record says
+**SYNTHETIC ONLY**. It contains no raw gyro waveform; spectrum tests construct
+their own declared-rate synthetic GYR signals and compare against DFT/Parseval
+oracles. The generator below regenerates only the three `synthetic-flight` files.
+
 Regenerate from the repository root with:
 ` .venv/bin/python fixtures/logs/generate_synthetic.py `
 
