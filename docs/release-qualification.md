@@ -87,7 +87,9 @@ flight logs can contain location, operator and device-identifying information.
 Begin Q22 qualification with one matched controller BIN/LOG, GCS TLOG and actual
 parameter readback, plus the exact board/build, flight interval, battery monitor
 mapping/calibration and recorded flight conditions. Import logs through
-**Evidence → Flight log** and the readback through **Parameter snapshot**. Choose
+**Evidence → Flight log** and a plain `.param`/`.params` export through
+**Parameter snapshot**; retain app-acquired rich readback JSON in Collection
+acquisition history. Choose
 one source and clock segment before creating each scoped session. A separate
 readback import does not automatically verify the log's parameter history; keep
 that association evidence with the sample bundle.
@@ -110,8 +112,9 @@ ID, boot epoch and units for each selected signal. Preserve original bytes and
 parser versions even when an analysis is rerun. Generated fixtures can exercise
 all branches, but real Q22 logs remain necessary to validate the target hardware.
 
-Preserve accepted “Q22 original - before Brian settings” and “Q22 with Brian tune”
-as separate immutable sources. Do not reconstruct a missing original. Validate
+Preserve accepted “Q22 original - pre-FACt” and “Q22 with FACt tune”
+as separate immutable sources, retaining original bytes and legacy Brian aliases.
+Do not reconstruct a missing original. Validate
 Cube Orange+ and DEF H7 independently, including firmware build, sensor IDs,
 motor/output/ESC mapping and battery calibration. One modified flight does not
 establish causality; matched repeated flights and flight-level uncertainty are

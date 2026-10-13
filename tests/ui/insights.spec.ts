@@ -13,6 +13,10 @@ async function imported(engine:Awaited<ReturnType<typeof connectEngine>>,file:st
 }
 
 test('real insight report preserves vibration evidence, guidance, loaded parameters, and explicit local export',async({page},testInfo)=>{
+  // Real imports, report/export work, full-page screenshots, and persistence
+  // checks can exceed 30s together on Intel macOS CI. Individual assertions and
+  // the final navigation retain their shorter budgets to expose actual stalls.
+  test.setTimeout(90_000);
   const engine=await connectEngine(page);
   try{
     const log=await imported(engine,'synthetic-insights.log');
@@ -69,7 +73,7 @@ test('real insight report preserves vibration evidence, guidance, loaded paramet
     await page.setViewportSize({width:640,height:900});
     expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(640);
     await page.screenshot({path:testInfo.outputPath('flight-insights-compact.png'),fullPage:true});
-    await page.reload();await expect(page.getByText('Engine connected',{exact:true})).toBeVisible();
+    await page.reload({timeout:10_000});await expect(page.getByText('Engine connected',{exact:true})).toBeVisible();
     await page.getByRole('navigation').getByRole('button',{name:'Flight insights',exact:true}).click();
     await expect(page.getByRole('combobox',{name:'Preserved insight report',exact:true}).locator('option')).toHaveCount(2);
     expect(engine.calls.filter(call=>call.method==='insights.report')).toHaveLength(1);

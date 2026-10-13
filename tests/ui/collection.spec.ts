@@ -38,6 +38,10 @@ test('test transport rejects a status poll racing engine teardown',async({page})
 });
 
 test('passive observer records distinct armed intervals and preserves incomplete bundles after reload',async({page},testInfo)=>{
+  // Real UDP acquisition, stale-heartbeat evidence, folder import, screenshots,
+  // and persistence checks share one flow; Intel macOS CI can exceed 30s overall.
+  // Keep individual assertions and the final navigation independently bounded.
+  test.setTimeout(90_000);
   const engine=await connectEngine(page);
   const sender=createSocket('udp4');
   const probe=createSocket('udp4');
@@ -124,7 +128,7 @@ test('passive observer records distinct armed intervals and preserves incomplete
     expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(640);
     await page.evaluate(()=>{if(document.activeElement instanceof HTMLElement)document.activeElement.blur();window.scrollTo(0,0);});
     await page.screenshot({path:testInfo.outputPath('collection-bundle-compact.png'),fullPage:true});
-    await page.reload();await expect(page.getByText('Engine connected',{exact:true})).toBeVisible();
+    await page.reload({timeout:10_000});await expect(page.getByText('Engine connected',{exact:true})).toBeVisible();
     await page.getByRole('navigation').getByRole('button',{name:'Prepare & watch',exact:true}).click();
     await expect(page.getByRole('button',{name:'Inspect interval 1 bundle',exact:true})).toBeVisible();
     await expect(page.getByRole('button',{name:'Inspect interval 2 bundle',exact:true})).toBeVisible();
