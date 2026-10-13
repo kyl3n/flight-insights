@@ -25,6 +25,48 @@ class Recorder:
         return deepcopy(self.value)
 
 
+def paced_policy_status(peer, *, clock=time.monotonic):
+    """Status at 5 Hz for the durable recorder/catalog integration fixture.
+
+    Peer normally emits every 20 ms for short transport-only tests. Mirroring
+    that rate into real heartbeat/identity catalog commits needlessly floods
+    Windows disk I/O. Keep live evidence periodic, without a catch-up burst
+    after scheduler delays, and advance the synthetic boot clock with time.
+    """
+    from pymavlink.dialects.v20 import ardupilotmega as mav
+
+    original_status = peer.status
+    started = clock()
+    last_sent = None
+
+    def status():
+        nonlocal last_sent
+        now = clock()
+        if last_sent is not None and now - last_sent < .2:
+            return
+        last_sent = now
+        peer.boot_ms = 1000 + int((now - started) * 1000)
+        original_status()
+        peer.send(mav.MAVLink_autopilot_version_message(131072, 1, 0, 0, 1,
+            [0] * 8, [0] * 8, [0] * 8, 1, 1, 123))
+
+    return status
+
+
+def test_durable_policy_peer_paces_identity_and_advances_boot_without_catchup():
+    now = [100.0]
+    boot_times, identities = [], []
+    peer = SimpleNamespace(boot_ms=0, send=identities.append)
+    peer.status = lambda: boot_times.append(peer.boot_ms)
+    status = paced_policy_status(peer, clock=lambda: now[0])
+    for instant in (100.0, 100.02, 100.18, 100.25, 100.26, 101.25, 101.26):
+        now[0] = instant
+        status()
+    assert boot_times == [1000, 1250, 2250]
+    assert len(identities) == 3
+    assert all(message.get_type() == "AUTOPILOT_VERSION" for message in identities)
+
+
 class Harness:
     def __init__(self, root):
         self.peer = Peer()
@@ -502,7 +544,7 @@ def test_future_schema_guard_precedes_recovery_writes(h):
 def test_actual_engine_rpc_policy_lifecycle_and_restart(tmp_path):
     """Actual recorder subprocess plus UDP peer; every aircraft value is synthetic."""
     import socket
-    from pymavlink.dialects.v20 import ardupilotmega as mav
+    from q22_engine.acquisition import DEFAULT_LIMITS
     from q22_engine.__main__ import Engine
 
     peer = Peer()
@@ -517,14 +559,21 @@ def test_actual_engine_rpc_policy_lifecycle_and_restart(tmp_path):
         return reply["result"]
 
     def wait_request(role, state="complete"):
-        deadline = time.monotonic() + 10
+        deadline = time.monotonic() + 30
         while time.monotonic() < deadline:
             rows = rpc("orchestration.status", {"capture_session_id": capture["uuid"]})["requests"]
             found = next((row for row in rows if row["role"] == role and row["state"] == state), None)
             if found:
                 return found
-            time.sleep(.03)
-        raise AssertionError(rows)
+            failures = [row for row in rows if row["role"] == role
+                        and row["state"] in {"partial", "failed", "interrupted", "cancelled"}]
+            if failures:
+                raise AssertionError({"role": role, "requests": failures,
+                    "peer_alive": peer.thread.is_alive(), "peer_error": repr(peer.error),
+                    "recorder": engine.collection.recorder.status()})
+            time.sleep(.1)
+        raise AssertionError({"role": role, "requests": rows, "peer_alive": peer.thread.is_alive(),
+            "peer_error": repr(peer.error), "recorder": engine.collection.recorder.status()})
 
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as reserved:
@@ -538,21 +587,17 @@ def test_actual_engine_rpc_policy_lifecycle_and_restart(tmp_path):
             peer.socket.sendto(payload, ("127.0.0.1", observer_port))
 
         peer.send = mirrored_send
-        original_status = peer.status
-
-        def status_with_identity():
-            original_status()
-            peer.send(mav.MAVLink_autopilot_version_message(131072, 1, 0, 0, 1,
-                [0] * 8, [0] * 8, [0] * 8, 1, 1, 123))
-
-        peer.status = status_with_identity
+        peer.status = paced_policy_status(peer)
         policy = {"aircraft_id": "SYNTHETIC RPC POLICY", "connection": peer.connection,
             "synthetic": False, "preflight_parameters": True, "postflight_parameters": True,
             "log_retrieval": "selected_after_stop", "confirm_log_transfer_side_effects": True,
-            "limits": {"timeout_s": 10, "bootstrap_timeout_s": 2, "heartbeat_timeout_s": 1,
-                       "boot_timeout_s": 1, "identity_timeout_s": 2, "retry_wait_s": .15,
+            # Exercise shipped freshness/boot/bootstrap gates. Focused tests
+            # above separately use short budgets to verify stale revocation.
+            "limits": {"timeout_s": 20, "retry_wait_s": .25,
                        "request_interval_s": .02, "settle_s": .08, "retries": 2}}
         saved = rpc("orchestration.policy.save", {"policy": policy, "operation_id": str(uuid4())})["policy"]
+        for key in ("heartbeat_timeout_s", "boot_timeout_s", "bootstrap_timeout_s", "identity_timeout_s"):
+            assert saved["policy"]["limits"][key] == DEFAULT_LIMITS[key]
         profile = {"aircraft_id": policy["aircraft_id"], "aircraft_profile_version": "synthetic-v1",
             "connection_profile_version": "synthetic-v1", "connection": {"local_address": "127.0.0.1",
             "listen_port": observer_port, "expected_sender": "127.0.0.1", "system_id": 1, "component_id": 1,

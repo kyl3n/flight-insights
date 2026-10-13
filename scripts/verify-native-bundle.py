@@ -109,7 +109,7 @@ def verify_gui(binary: Path, directory: Path, *, expected_engine: Path | None, e
         "owned_engine_shutdown_completed", "security_bypasses", "evidence", "limitations")}
 
 
-def verify_layout(binary: Path, expected_engine: Path, directory: Path) -> dict:
+def verify_layout(binary: Path, expected_engine: Path, directory: Path, *, gui_entrypoint: Path | None = None) -> dict:
     engine = binary.with_name("q22-engine.exe" if sys.platform == "win32" else "q22-engine")
     if not binary.is_file() or not engine.is_file():
         raise RuntimeError(f"Native executable or adjacent engine missing from {binary.parent}")
@@ -157,7 +157,7 @@ def verify_layout(binary: Path, expected_engine: Path, directory: Path) -> dict:
         raise RuntimeError("Installed native supervisor diagnostic did not pass")
     if not os.path.samefile(report["engine_path"], engine):
         raise RuntimeError("Native shell loaded a sidecar outside its verified bundle")
-    gui = verify_gui(binary, directory, expected_engine=engine) if REQUIRE_GUI else None
+    gui = verify_gui(gui_entrypoint or binary, directory, expected_engine=engine) if REQUIRE_GUI else None
     return {"engine_sha256": sha256(engine), "engine_payload_sha256": payload_digest(engine),
             "native_supervisor_verified": True, "relocated_unicode_path": True,
             "dependency_inventory_and_notices_verified": True, "native_gui": gui,
@@ -257,7 +257,13 @@ def verify_artifact(artifact: Path, expected_engine: Path) -> dict:
             binaries = [path for path in binaries if path.is_file() and path.parent.name == "bin"]
             if len(binaries) != 1:
                 raise RuntimeError("Expected one application executable in the AppImage")
-            result = verify_layout(binaries[0], expected_engine, directory)
+            app_run = directory / "squashfs-root" / "AppRun"
+            if not app_run.is_file() or not os.access(app_run, os.X_OK):
+                raise RuntimeError("AppImage must include its executable AppRun entrypoint")
+            # AppRun supplies the packaged WebKit subprocess/library paths.
+            # Launching usr/bin directly is valid for the non-GUI supervisor
+            # diagnostic, but is not the supported AppImage GUI entrypoint.
+            result = verify_layout(binaries[0], expected_engine, directory, gui_entrypoint=app_run)
             # Exercise the AppImage runtime wrapper as well as its extracted layout.
             env = {**os.environ, "APPIMAGE_EXTRACT_AND_RUN": "1"}
             wrapped = run([str(artifact), "--verify-engine", "--data-dir", str(directory / "AppImage data Δ")], env=env)

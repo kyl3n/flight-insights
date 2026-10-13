@@ -63,6 +63,52 @@ def test_unprotected_signing_ref_stops_before_touching_os_credential_tools(monke
         preflight.inspect()
     assert calls == []
 
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux AppImage launch contract")
+def test_appimage_keeps_direct_supervisor_and_uses_both_real_gui_entrypoints(tmp_path, monkeypatch):
+    verify = script("scripts/verify-native-bundle.py")
+    artifact = tmp_path / "Synthetic.AppImage"
+    artifact.write_bytes(b"synthetic launch-contract fixture; not an application")
+    expected = tmp_path / "expected-engine"
+    expected.write_bytes(b"synthetic engine")
+    calls = []
+
+    def fake_run(command, **kwargs):
+        if "--appimage-extract" in command:
+            appdir = kwargs["cwd"] / "squashfs-root"
+            binary = appdir / "usr/bin/q22-flight-lab"
+            binary.parent.mkdir(parents=True)
+            binary.write_bytes(b"synthetic inner executable")
+            entrypoint = appdir / "AppRun"
+            entrypoint.write_bytes(b"synthetic packaged entrypoint")
+            entrypoint.chmod(0o755)
+        else:
+            assert command[0] == str(artifact) and command[1] == "--verify-engine"
+            assert kwargs["env"]["APPIMAGE_EXTRACT_AND_RUN"] == "1"
+            calls.append("wrapped-supervisor")
+        return subprocess.CompletedProcess(command, 0, stdout=json.dumps({"native_supervisor_verified": True}))
+
+    def layout(binary, expected_engine, directory, *, gui_entrypoint=None):
+        assert binary.name == "q22-flight-lab" and binary.parent.name == "bin"
+        assert expected_engine == expected
+        assert gui_entrypoint == directory / "squashfs-root/AppRun"
+        calls.append("direct-supervisor-and-extracted-AppRun-GUI")
+        return {"native_gui": {"native_gui_rendering": "synthetic_fixture_only"}}
+
+    def wrapped_gui(binary, directory, *, expected_engine, env):
+        assert binary == artifact and expected_engine is None
+        assert env["APPIMAGE_EXTRACT_AND_RUN"] == "1"
+        calls.append("actual-AppImage-GUI")
+        return {"native_gui_rendering": "synthetic_fixture_only"}
+
+    monkeypatch.setattr(verify, "REQUIRE_GUI", True)
+    monkeypatch.setattr(verify, "run", fake_run)
+    monkeypatch.setattr(verify, "verify_layout", layout)
+    monkeypatch.setattr(verify, "verify_gui", wrapped_gui)
+    result = verify.verify_artifact(artifact, expected)
+    assert calls == ["direct-supervisor-and-extracted-AppRun-GUI", "wrapped-supervisor", "actual-AppImage-GUI"]
+    assert result["appimage_launcher_gui"]["native_gui_rendering"] == "synthetic_fixture_only"
+
 @pytest.mark.skipif(sys.platform != "linux", reason="Linux offline bench wrapper")
 def test_linux_offline_bench_retains_failed_launch_evidence(tmp_path):
     output = tmp_path / "failed bench evidence"
