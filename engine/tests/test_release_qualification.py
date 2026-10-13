@@ -74,7 +74,45 @@ def test_gui_failure_exposes_only_matching_bounded_report_before_process_output(
     assert ("engine_restart" in message) is matching_nonce
     assert "engine_path" not in message and "private" not in message
     if matching_nonce:
-        assert message.startswith("Native GUI invocation report:")
+        assert message.index("Native GUI invocation report:") < message.index("Verification command exited 1")
+
+@pytest.mark.parametrize("fail_at", [None, 2])
+def test_gui_repetitions_require_fresh_launches_and_preserve_order_without_retry(tmp_path, monkeypatch, fail_at):
+    verify = script("scripts/verify-native-bundle.py")
+    monkeypatch.setattr(verify, "GUI_REPETITIONS", 3)
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    invocations = []
+    def fake_process(command, **kwargs):
+        report_path = Path(command[command.index("--report") + 1])
+        data_dir = Path(command[command.index("--data-dir") + 1])
+        nonce = command[command.index("--nonce") + 1]
+        assert not list(data_dir.iterdir())
+        invocations.append((data_dir, report_path, nonce))
+        if len(invocations) == fail_at:
+            raise RuntimeError("intentional launch failure")
+        report_path.write_text(json.dumps({
+            "schema_version": 1, "nonce": nonce, "native_gui_rendering": "verified",
+            "production_webview": True, "isolated_data": True,
+            "owned_engine_shutdown_completed": True, "security_bypasses": False,
+            "evidence": {"synthetic_launch": len(invocations)}, "limitations": [],
+        }))
+    monkeypatch.setattr(verify, "run", fake_process)
+    if fail_at:
+        with pytest.raises(RuntimeError, match="required launch 2/3 failed; no retry"):
+            verify.verify_gui(tmp_path / "application", tmp_path, expected_engine=None)
+        assert len(invocations) == 2
+    else:
+        result = verify.verify_gui(tmp_path / "application", tmp_path, expected_engine=None)
+        assert result["required_launches"] == result["verified_launches"] == 3
+        assert len(result["launches"]) == 3
+    assert len(set(invocations)) == len(invocations)
+    assert len({item[0] for item in invocations}) == len(invocations)
+    summary_path, = tmp_path.glob("native-verification-gui-attempts-*.json")
+    summary = json.loads(summary_path.read_text())
+    assert summary["all_launches_verified"] is (fail_at is None)
+    assert [item["attempt"] for item in summary["attempts"]] == list(range(1, len(invocations) + 1))
+    assert [item["outcome"] for item in summary["attempts"]] == (
+        ["verified", "failed"] if fail_at else ["verified"] * 3)
 
 def test_unprotected_signing_ref_stops_before_touching_os_credential_tools(monkeypatch):
     preflight = script("src-tauri/signing/preflight.py")

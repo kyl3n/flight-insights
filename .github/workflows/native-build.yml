@@ -130,7 +130,7 @@ jobs:
         run: npm run tauri -- build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --ci -- --locked
       - name: Verify every packaged runtime through its native supervisor
         run: |
-          verification=(uv run --frozen python scripts/verify-native-bundle.py --target ${{ matrix.target }} --bundle-root src-tauri/target/${{ matrix.target }}/release/bundle --formats ${{ matrix.bundles }} --require-gui --report native-verification-${{ matrix.target }}.json)
+          verification=(uv run --frozen python scripts/verify-native-bundle.py --target ${{ matrix.target }} --bundle-root src-tauri/target/${{ matrix.target }}/release/bundle --formats ${{ matrix.bundles }} --require-gui --gui-repetitions 3 --report native-verification-${{ matrix.target }}.json)
           if [[ "$RUNNER_OS" == Linux ]]; then
             xvfb-run -a -s '-screen 0 1440x1000x24' dbus-run-session -- "${verification[@]}"
           else
@@ -163,6 +163,7 @@ jobs:
             src-tauri/resources/engine/
             native-verification-${{ matrix.target }}.json
             native-verification-helper-${{ matrix.target }}.json
+            native-verification-gui-attempts-*.json
             native-repair/target/${{ matrix.target }}/release/q22-network-helper
             native-repair/target/${{ matrix.target }}/release/q22-network-helper.exe
             scripts/qualify-installed-linux.sh

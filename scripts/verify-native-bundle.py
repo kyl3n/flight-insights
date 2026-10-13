@@ -31,6 +31,8 @@ PACKAGER = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(PACKAGER)
 REQUIRE_PUBLISHER = False
 REQUIRE_GUI = False
+GUI_REPETITIONS = 1
+GUI_SUMMARY_DIRECTORY: Path | None = None
 
 
 def run(command, **kwargs) -> subprocess.CompletedProcess:
@@ -79,7 +81,7 @@ def payload_digest(path: Path) -> str:
     return digest.hexdigest()
 
 
-def verify_gui(binary: Path, directory: Path, *, expected_engine: Path | None, env=None) -> dict:
+def verify_gui_once(binary: Path, directory: Path, *, expected_engine: Path | None, env=None) -> dict:
     isolated = directory / ("Native GUI qualification " + secrets.token_hex(8))
     isolated.mkdir(mode=0o700)
     report_path = isolated / "native-gui.json"
@@ -120,6 +122,40 @@ def verify_gui(binary: Path, directory: Path, *, expected_engine: Path | None, e
     # Keep relevant qualification evidence, not the invocation token or temporary paths.
     return {key: report[key] for key in ("native_gui_rendering", "production_webview", "isolated_data",
         "owned_engine_shutdown_completed", "security_bypasses", "evidence", "limitations")}
+
+
+def verify_gui(binary: Path, directory: Path, *, expected_engine: Path | None, env=None) -> dict:
+    """Independent fresh launches, all required; never retry a failed launch."""
+    attempts = []
+    summary_path = (GUI_SUMMARY_DIRECTORY or directory) / (
+        "native-verification-gui-attempts-" + secrets.token_hex(8) + ".json")
+    with summary_path.open("x", encoding="utf-8") as summary:
+        def preserve() -> None:
+            summary.seek(0)
+            summary.truncate()
+            json.dump({"schema_version": 1, "required_launches": GUI_REPETITIONS,
+                       "all_launches_verified": (len(attempts) == GUI_REPETITIONS
+                           and all(item["outcome"] == "verified" for item in attempts)),
+                       "attempts": attempts}, summary, indent=2)
+            summary.write("\n")
+            summary.flush()
+            os.fsync(summary.fileno())
+
+        preserve()
+        for number in range(1, GUI_REPETITIONS + 1):
+            try:
+                evidence = verify_gui_once(binary, directory, expected_engine=expected_engine, env=env)
+            except Exception as error:
+                attempts.append({"attempt": number, "outcome": "failed", "error": str(error)[:5000]})
+                preserve()
+                raise RuntimeError(f"Native GUI required launch {number}/{GUI_REPETITIONS} failed; "
+                                   f"no retry was attempted.\n{error}") from error
+            attempts.append({"attempt": number, "outcome": "verified", "evidence": evidence})
+            preserve()
+    # Retain the prior top-level evidence contract and add the ordered evidence
+    # from every required launch, not merely the last successful process.
+    return {**attempts[-1]["evidence"], "required_launches": GUI_REPETITIONS,
+            "verified_launches": len(attempts), "launches": attempts}
 
 
 def verify_layout(binary: Path, expected_engine: Path, directory: Path, *, gui_entrypoint: Path | None = None) -> dict:
@@ -345,7 +381,7 @@ def verify_artifact(artifact: Path, expected_engine: Path) -> dict:
 
 
 def main() -> None:
-    global REQUIRE_PUBLISHER, REQUIRE_GUI
+    global REQUIRE_PUBLISHER, REQUIRE_GUI, GUI_REPETITIONS, GUI_SUMMARY_DIRECTORY
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--target", default=PACKAGER.host_target())
     parser.add_argument("--artifact", action="append", type=Path)
@@ -355,9 +391,16 @@ def main() -> None:
     parser.add_argument("--require-publisher-signature", action="store_true")
     parser.add_argument("--require-gui", action="store_true",
                         help="Fail unless each installed production WebView renders and passes real IPC")
+    parser.add_argument("--gui-repetitions", type=int, choices=range(1, 11), default=1,
+                        help="Independent GUI launches per entrypoint; every launch must pass (default: 1)")
     args = parser.parse_args()
     REQUIRE_PUBLISHER = args.require_publisher_signature
     REQUIRE_GUI = args.require_gui
+    if args.gui_repetitions != 1 and not REQUIRE_GUI:
+        parser.error("--gui-repetitions requires --require-gui")
+    GUI_REPETITIONS = args.gui_repetitions
+    GUI_SUMMARY_DIRECTORY = args.report.resolve().parent
+    GUI_SUMMARY_DIRECTORY.mkdir(parents=True, exist_ok=True)
     if args.target != PACKAGER.host_target():
         raise SystemExit("Artifact verification must run on the target OS and CPU")
     artifacts = [path.resolve() for path in args.artifact or []]

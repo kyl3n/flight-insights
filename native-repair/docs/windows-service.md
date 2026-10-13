@@ -51,7 +51,16 @@ Lease renewal uses independent connections while native operations are serialize
 ## Changes and recovery
 
 The service reads Windows adapter/address/route/DNS/firewall/policy state through
-fixed System32 PowerShell cmdlets. It checks canonical state immediately before a
+fixed System32 PowerShell cmdlets. Firewall filters are read in seven bounded bulk
+queries. Independent filter records remain in the comparison context, including
+filters for disabled or unselected rules. Runtime provider probes diagnose an
+unsupported identity mapping; they do not prove every foreign association.
+Every helper-prefixed rule requires actual native association and scope checks
+before its filters can be treated as part of the helper-owned addition. Missing,
+duplicate, changed, or contradictory records reject the snapshot. More than 16
+helper-prefixed rules withhold repair rather than return partial evidence.
+
+The service checks canonical state immediately before a
 compiled narrow write, independently rechecks fresh disarmed/recording-inactive
 state, and records durable intent first. A successful command plus the exact
 expected native object is required for ownership. This is guarded compare/check,
@@ -78,7 +87,9 @@ and journal; explicitly archive/migrate them before reenrollment or upgrades.
 ## Validation boundary
 
 Cross-compilation and synthetic snapshot tests cover canonical ordering, policy
-abstention, exact scope/ownership and foreign-rule changes. Windows CI must execute
+abstention, exact scope/ownership, opaque foreign-filter swaps and missing or
+contradictory associations. The snapshot retains its 15-second execution and
+2 MiB output bounds; native mutation timeouts have not increased. Windows CI must execute
 native ACL/pipe/cmdlet checks. Real dual-network repair, interruption, privilege
 policy, DHCP continuity, video/telemetry verification and power-loss recovery still
 require the planned Windows bench; no cloud host network settings are changed by

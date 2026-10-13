@@ -61,6 +61,8 @@ pub struct FirewallProfile {
 #[serde(deny_unknown_fields)]
 pub struct NativeRule {
     pub name: String,
+    pub instance_id: String,
+    pub association_verified: bool,
     pub enabled: bool,
     pub direction: String,
     pub action: String,
@@ -72,6 +74,9 @@ pub struct NativeRule {
     pub interfaces: Vec<String>,
     pub profile: String,
     pub program: String,
+    pub package: String,
+    pub icmp_type: Vec<String>,
+    pub dynamic_target: String,
     pub service: String,
     pub interface_type: String,
     pub edge_traversal: String,
@@ -85,6 +90,23 @@ pub struct NativeRule {
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
+pub struct NativeFilter {
+    pub kind: String,
+    pub instance_id: String,
+    pub properties: serde_json::Value,
+    pub association_rule: Option<String>,
+}
+const FILTER_KINDS: [&str; 7] = [
+    "address",
+    "port",
+    "interface",
+    "application",
+    "service",
+    "interface_type",
+    "security",
+];
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct Snapshot {
     pub adapters: Vec<Adapter>,
     pub addresses: Vec<NativeAddress>,
@@ -92,6 +114,7 @@ pub struct Snapshot {
     pub dns: Vec<NativeDns>,
     pub profiles: Vec<FirewallProfile>,
     pub rules: Vec<NativeRule>,
+    pub firewall_filters: Vec<NativeFilter>,
     pub domain_joined: bool,
     pub mdm_enrolled: bool,
     pub firewall_running: bool,
@@ -111,7 +134,8 @@ fn exact_rule(rule: &NativeRule, plan: &Plan) -> bool {
     else {
         return false;
     };
-    rule.name == platform::object(plan).native_identity
+    rule.association_verified
+        && rule.name == platform::object(plan).native_identity
         && rule.enabled
         && rule.direction == "Inbound"
         && rule.action == "Allow"
@@ -123,6 +147,9 @@ fn exact_rule(rule: &NativeRule, plan: &Plan) -> bool {
         && rule.interfaces == [plan.before.interface.clone()]
         && rule.profile == "Any"
         && rule.program == "Any"
+        && rule.package == "Any"
+        && rule.icmp_type == ["Any"]
+        && rule.dynamic_target == "Any"
         && rule.service == "Any"
         && rule.interface_type == "Any"
         && rule.edge_traversal == "Block"
@@ -146,10 +173,48 @@ pub fn normalize_snapshot(
         || raw.addresses.len() > 4096
         || raw.routes.len() > 8192
         || raw.rules.len() > 8192
+        || raw.firewall_filters.len() > 7 * 16384
         || raw.dns.len() > 256
         || raw.profiles.len() != 3
     {
         return Err("Native snapshot is incomplete or exceeds bounds".into());
+    }
+    let mut filter_ids = std::collections::HashMap::new();
+    for filter in &raw.firewall_filters {
+        if !FILTER_KINDS.contains(&filter.kind.as_str())
+            || filter.instance_id.is_empty()
+            || filter.instance_id.len() > 1024
+            || !filter.properties.is_object()
+            || filter.properties.to_string().len() > 65536
+            || filter_ids
+                .insert((filter.kind.as_str(), filter.instance_id.as_str()), filter)
+                .is_some()
+        {
+            return Err("Invalid, duplicate or oversized native filter evidence".into());
+        }
+    }
+    let mut rule_ids = std::collections::HashSet::new();
+    let mut rule_names = std::collections::HashSet::new();
+    for rule in &raw.rules {
+        if rule.instance_id.is_empty()
+            || rule.instance_id.len() > 1024
+            || !rule_ids.insert(rule.instance_id.as_str())
+            || !rule_names.insert(rule.name.to_uppercase())
+        {
+            return Err("Invalid or duplicate native rule identity".into());
+        }
+        for kind in FILTER_KINDS {
+            let filter = filter_ids
+                .get(&(kind, rule.instance_id.as_str()))
+                .ok_or("Native rule is missing independent filter evidence")?;
+            if rule.association_verified
+                && filter.association_rule.as_deref() != Some(rule.name.as_str())
+            {
+                return Err(
+                    "Native rule/filter association proof is missing or contradictory".into(),
+                );
+            }
+        }
     }
     for adapter in &mut raw.adapters {
         adapter.guid = normalize_guid(&adapter.guid)?;
@@ -160,6 +225,7 @@ pub fn normalize_snapshot(
     raw.dns.sort_by_key(fingerprint);
     raw.profiles.sort_by_key(fingerprint);
     raw.rules.sort_by_key(fingerprint);
+    raw.firewall_filters.sort_by_key(fingerprint);
     let selected: Vec<_> = raw
         .adapters
         .iter()
@@ -282,9 +348,22 @@ pub fn normalize_snapshot(
         .filter(|rule| !known.iter().any(|plan| exact_rule(rule, plan)))
         .collect();
     unrelated_rules.sort_by_key(|rule| rule.name.clone());
+    // Keep all bulk filters independently, including disabled/unselected rules.
+    // A sampled foreign join is not ownership proof. Only a positively matched
+    // helper association can disappear as part of that exact expected addition.
+    let verified_owned_ids: std::collections::HashSet<_> = raw
+        .rules
+        .iter()
+        .filter(|rule| known.iter().any(|plan| exact_rule(rule, plan)))
+        .map(|rule| (rule.instance_id.as_str(), rule.name.as_str()))
+        .collect();
+    let mut foreign_filters: Vec<_> = raw.firewall_filters.iter().filter(|filter| {
+        filter.association_rule.as_deref().is_none_or(|name|!verified_owned_ids.contains(&(filter.instance_id.as_str(),name)))
+    }).map(|filter|serde_json::json!({"kind":filter.kind,"instance_id":filter.instance_id,"properties":filter.properties})).collect();
+    foreign_filters.sort_by_key(|value| value.to_string());
     let mut profiles = raw.profiles.clone();
     profiles.sort_by_key(|p| p.name.clone());
-    let context = serde_json::json!({"adapters":raw.adapters,"profiles":profiles,"unrelated_rules":unrelated_rules,"all_addresses":raw.addresses,"all_dns":raw.dns,
+    let context = serde_json::json!({"adapters":raw.adapters,"profiles":profiles,"unrelated_rules":unrelated_rules,"independent_foreign_filters":foreign_filters,"all_addresses":raw.addresses,"all_dns":raw.dns,
         "domain_joined":raw.domain_joined,"mdm_enrolled":raw.mdm_enrolled,"firewall_running":raw.firewall_running});
     let policy_allows_changes = !raw.domain_joined
         && !raw.mdm_enrolled
@@ -318,23 +397,11 @@ pub fn normalize_snapshot(
 }
 
 /// Entire script is compiled here. No caller text becomes PowerShell source.
-pub const SNAPSHOT_SCRIPT: &str = r#"
-$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'
-$adapters=@(Get-NetAdapter -IncludeHidden | ForEach-Object {
- $ip=@(Get-NetIPInterface -InterfaceIndex $_.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue)
- if($ip.Count -eq 1){[ordered]@{name=[string]$_.Name;guid=[string]$_.InterfaceGuid;index=[uint32]$_.ifIndex;up=($_.Status -eq 'Up');dhcp=($ip[0].Dhcp -eq 'Enabled');interface_metric=[uint32]$ip[0].InterfaceMetric}}
-})
-$addresses=@(Get-NetIPAddress -AddressFamily IPv4 | ForEach-Object {[ordered]@{address=[string]$_.IPAddress;prefix=[uint32]$_.PrefixLength;index=[uint32]$_.InterfaceIndex}})
-$routes=@(Get-NetRoute -AddressFamily IPv4 -PolicyStore ActiveStore | ForEach-Object {$parts=$_.DestinationPrefix.Split('/');[ordered]@{destination=$parts[0];prefix=[uint32]$parts[1];gateway=[string]$_.NextHop;index=[uint32]$_.InterfaceIndex;metric=[uint32]$_.RouteMetric}})
-$dns=@(Get-DnsClientServerAddress -AddressFamily IPv4 | ForEach-Object {[ordered]@{index=[uint32]$_.InterfaceIndex;addresses=@($_.ServerAddresses | ForEach-Object {[string]$_})}})
-$profiles=@(Get-NetFirewallProfile -PolicyStore ActiveStore | ForEach-Object {[ordered]@{name=[string]$_.Name;enabled=($_.Enabled -eq 'True');allow_local_rules=[string]$_.AllowLocalFirewallRules;default_inbound=[string]$_.DefaultInboundAction;default_outbound=[string]$_.DefaultOutboundAction}})
-$rules=@(Get-NetFirewallRule -PolicyStore ActiveStore | Where-Object {$_.Enabled -eq 'True' -or $_.Name.StartsWith('Q22-Helper-')} | ForEach-Object {
- $rule=$_; $address=$rule | Get-NetFirewallAddressFilter; $port=$rule | Get-NetFirewallPortFilter; $interface=$rule | Get-NetFirewallInterfaceFilter; $app=$rule | Get-NetFirewallApplicationFilter; $service=$rule | Get-NetFirewallServiceFilter; $type=$rule | Get-NetFirewallInterfaceTypeFilter; $security=$rule | Get-NetFirewallSecurityFilter
- [ordered]@{name=[string]$rule.Name;enabled=($rule.Enabled -eq 'True');direction=[string]$rule.Direction;action=[string]$rule.Action;protocol=[string]$port.Protocol;local_address=@($address.LocalAddress | ForEach-Object {[string]$_});remote_address=@($address.RemoteAddress | ForEach-Object {[string]$_});local_port=@($port.LocalPort | ForEach-Object {[string]$_});remote_port=@($port.RemotePort | ForEach-Object {[string]$_});interfaces=@($interface.InterfaceAlias | ForEach-Object {[string]$_});profile=[string]$rule.Profile;program=[string]$app.Program;service=[string]$service.Service;interface_type=[string]$type.InterfaceType;edge_traversal=[string]$rule.EdgeTraversalPolicy;policy_source_type=[string]$rule.PolicyStoreSourceType;authentication=[string]$security.Authentication;encryption=[string]$security.Encryption;override_block_rules=($security.OverrideBlockRules -eq 'True');local_user=[string]$security.LocalUser;remote_user=[string]$security.RemoteUser;remote_machine=[string]$security.RemoteMachine}
-})
-$mdm=@();if(Test-Path 'HKLM:\SOFTWARE\Microsoft\Enrollments' -ErrorAction Stop){$mdm=@(Get-ChildItem 'HKLM:\SOFTWARE\Microsoft\Enrollments' -ErrorAction Stop | Get-ItemProperty -ErrorAction Stop | Where-Object {$_.UPN -or $_.EnrollmentType})}
-[ordered]@{adapters=$adapters;addresses=$addresses;routes=$routes;dns=$dns;profiles=$profiles;rules=$rules;domain_joined=[bool](Get-CimInstance Win32_ComputerSystem).PartOfDomain;mdm_enrolled=($mdm.Count -gt 0);firewall_running=((Get-Service MpsSvc).Status -eq 'Running')} | ConvertTo-Json -Depth 12 -Compress
-"#;
+pub const SNAPSHOT_LIBRARY: &str = include_str!("../scripts/windows-snapshot.ps1");
+pub const SNAPSHOT_SCRIPT: &str = concat!(
+    include_str!("../scripts/windows-snapshot.ps1"),
+    "\nGet-Q22NativeSnapshot | ConvertTo-Json -Depth 12 -Compress"
+);
 
 #[cfg(windows)]
 pub struct WindowsHost {

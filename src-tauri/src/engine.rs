@@ -11,7 +11,7 @@ use std::{
 use tokio::{
     io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
     process::{Child, ChildStdin, ChildStdout, Command},
-    sync::{mpsc, oneshot, watch, Mutex},
+    sync::{mpsc, oneshot, watch, Mutex, Semaphore},
     task::JoinHandle,
 };
 
@@ -19,6 +19,12 @@ const MAX_REQUEST: usize = 1024 * 1024;
 const MAX_RESPONSE: usize = 4 * 1024 * 1024;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(15);
+const QUEUE_CAPACITY: usize = 8;
+const ADMISSION_TIMEOUT: Duration = Duration::from_secs(15);
+// Include callers awaiting admission, queued jobs, and the active request in
+// one bound. Startup can mount several panels concurrently without turning the
+// eight-slot dispatch queue into an unbounded collection of request payloads.
+const MAX_PENDING_REQUESTS: usize = 32;
 const METHODS: &[&str] = &[
     "handshake",
     "engine.status",
@@ -114,6 +120,8 @@ struct Job {
 
 pub struct EngineSupervisor {
     queue: mpsc::Sender<Job>,
+    pending: Semaphore,
+    admission_timeout: Duration,
     shutdown: watch::Sender<bool>,
     task: Mutex<ShutdownTask>,
 }
@@ -125,11 +133,13 @@ struct ShutdownTask {
 
 impl EngineSupervisor {
     pub fn new(binary: PathBuf, data_dir: PathBuf) -> Self {
-        let (queue, receiver) = mpsc::channel(8);
+        let (queue, receiver) = mpsc::channel(QUEUE_CAPACITY);
         let (shutdown, closed) = watch::channel(false);
         let task = tauri::async_runtime::spawn(supervise(binary, data_dir, receiver, closed));
         Self {
             queue,
+            pending: Semaphore::new(MAX_PENDING_REQUESTS),
+            admission_timeout: ADMISSION_TIMEOUT,
             shutdown,
             task: Mutex::new(ShutdownTask {
                 handle: Some(task),
@@ -160,15 +170,55 @@ impl EngineSupervisor {
                 "Request exceeds the 1 MiB IPC limit. Import a file through the native picker.",
             ));
         }
-        if *self.shutdown.borrow() {
+        drop(encoded);
+        let mut shutdown = self.shutdown.subscribe();
+        if *shutdown.borrow() {
             return Err(EngineError::new(
                 "engine_stopped",
                 "The application is shutting down.",
             ));
         }
+        if self.queue.is_closed() {
+            return Err(EngineError::new(
+                "engine_stopped",
+                "The engine supervisor has stopped. The operation was not dispatched.",
+            ));
+        }
+        let _pending = self.pending.try_acquire().map_err(|_| {
+            EngineError::new(
+                "engine_busy",
+                "Too many engine requests are pending. This operation was not dispatched.",
+            )
+        })?;
         let (result, receiver) = oneshot::channel();
-        self.queue.try_send(Job { method, params, result })
-            .map_err(|_| EngineError::new("engine_busy", "The engine request queue is full or closed. Retry after the current operation."))?;
+        // reserve() is cancellation-safe: a timeout or dropped invoke before
+        // admission cannot leave a job behind. After send, there is exactly one
+        // dispatch attempt; a transport failure never repeats the operation.
+        let slot = tokio::select! {
+            biased;
+            _ = shutdown.changed() => return Err(EngineError::new(
+                "engine_stopped", "Application shutdown cancelled request admission. The operation was not dispatched.")),
+            slot = tokio::time::timeout(self.admission_timeout, self.queue.reserve()) => {
+                match slot {
+                    Ok(Ok(slot)) => slot,
+                    Ok(Err(_)) => return Err(EngineError::new(
+                        "engine_stopped", "The engine supervisor stopped before admission. The operation was not dispatched.")),
+                    Err(_) => return Err(EngineError::new(
+                        "engine_busy", "The engine request queue remained full until the admission deadline. This operation was not dispatched.")),
+                }
+            },
+        };
+        if *shutdown.borrow() {
+            return Err(EngineError::new(
+                "engine_stopped",
+                "Application shutdown cancelled request admission. The operation was not dispatched.",
+            ));
+        }
+        slot.send(Job {
+            method,
+            params,
+            result,
+        });
         receiver.await.unwrap_or_else(|_| Err(EngineError::new("engine_stopped", "The engine stopped before the operation completed. No operation was automatically repeated.")))
     }
 
@@ -549,6 +599,211 @@ pub fn sidecar_path() -> Result<PathBuf, EngineError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+
+    fn admission_fixture(
+        timeout: Duration,
+        limit: usize,
+    ) -> (
+        Arc<EngineSupervisor>,
+        mpsc::Receiver<Job>,
+        watch::Receiver<bool>,
+    ) {
+        let (queue, receiver) = mpsc::channel(1);
+        let (shutdown, closed) = watch::channel(false);
+        let engine = Arc::new(EngineSupervisor {
+            queue,
+            pending: Semaphore::new(limit),
+            admission_timeout: timeout,
+            shutdown,
+            task: Mutex::new(ShutdownTask {
+                handle: None,
+                outcome: None,
+            }),
+        });
+        (engine, receiver, closed)
+    }
+
+    async fn occupy_queue(engine: &EngineSupervisor) -> oneshot::Receiver<Reply> {
+        let (result, receiver) = oneshot::channel();
+        engine
+            .queue
+            .send(Job {
+                method: "handshake".into(),
+                params: json!({}),
+                result,
+            })
+            .await
+            .unwrap();
+        receiver
+    }
+
+    async fn await_pending(engine: &EngineSupervisor, remaining: usize) {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while engine.pending.available_permits() != remaining {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("request reached bounded admission");
+    }
+
+    #[tokio::test]
+    async fn admission_waits_for_capacity_and_dispatches_mutation_exactly_once() {
+        let (engine, mut queue, _closed) = admission_fixture(Duration::from_secs(5), 1);
+        let _occupied = occupy_queue(&engine).await;
+        let caller = engine.clone();
+        let request = tokio::spawn(async move {
+            caller
+                .request("network.apply".into(), json!({"plan_id":"one-attempt"}))
+                .await
+        });
+        await_pending(&engine, 0).await;
+        assert!(!request.is_finished());
+        assert_eq!(queue.recv().await.unwrap().method, "handshake");
+        let job = tokio::time::timeout(Duration::from_secs(5), queue.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(job.method, "network.apply");
+        assert_eq!(job.params, json!({"plan_id":"one-attempt"}));
+        // A dispatched request retains its pending permit until its reply.
+        assert_eq!(engine.pending.available_permits(), 0);
+        job.result.send(Ok(json!({"attempts":1}))).unwrap();
+        assert_eq!(request.await.unwrap().unwrap(), json!({"attempts":1}));
+        assert!(matches!(
+            queue.try_recv(),
+            Err(mpsc::error::TryRecvError::Empty)
+        ));
+        assert_eq!(engine.pending.available_permits(), 1);
+    }
+
+    #[tokio::test]
+    async fn admission_timeout_and_cancellation_never_leave_mutations_queued() {
+        let (engine, mut queue, _closed) = admission_fixture(Duration::from_millis(20), 1);
+        let _occupied = occupy_queue(&engine).await;
+        let error = engine
+            .request("network.apply".into(), json!({}))
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, "engine_busy");
+        assert!(error.message.contains("not dispatched"));
+        queue.recv().await.unwrap();
+        assert!(matches!(
+            queue.try_recv(),
+            Err(mpsc::error::TryRecvError::Empty)
+        ));
+        assert_eq!(engine.pending.available_permits(), 1);
+
+        let (engine, mut queue, _closed) = admission_fixture(Duration::from_secs(5), 1);
+        let _occupied = occupy_queue(&engine).await;
+        let caller = engine.clone();
+        let request =
+            tokio::spawn(async move { caller.request("network.apply".into(), json!({})).await });
+        await_pending(&engine, 0).await;
+        request.abort();
+        assert!(request.await.unwrap_err().is_cancelled());
+        queue.recv().await.unwrap();
+        assert!(matches!(
+            queue.try_recv(),
+            Err(mpsc::error::TryRecvError::Empty)
+        ));
+        assert_eq!(engine.pending.available_permits(), 1);
+    }
+
+    #[tokio::test]
+    async fn pending_admission_is_bounded_without_enlarging_the_dispatch_queue() {
+        let (engine, mut queue, _closed) = admission_fixture(Duration::from_secs(5), 1);
+        let _occupied = occupy_queue(&engine).await;
+        let caller = engine.clone();
+        let first =
+            tokio::spawn(async move { caller.request("engine.status".into(), json!({})).await });
+        await_pending(&engine, 0).await;
+        let error = engine
+            .request("network.apply".into(), json!({}))
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, "engine_busy");
+        assert!(error.message.contains("Too many"));
+        assert_eq!(queue.len(), 1);
+        first.abort();
+        assert!(first.await.unwrap_err().is_cancelled());
+        queue.recv().await.unwrap();
+        assert!(matches!(
+            queue.try_recv(),
+            Err(mpsc::error::TryRecvError::Empty)
+        ));
+    }
+
+    #[tokio::test]
+    async fn closed_queue_is_stopped_both_before_and_during_admission() {
+        let (engine, queue, _closed) = admission_fixture(Duration::from_secs(5), 1);
+        drop(queue);
+        assert_eq!(
+            engine
+                .request("engine.status".into(), json!({}))
+                .await
+                .unwrap_err()
+                .code,
+            "engine_stopped"
+        );
+
+        let (engine, mut queue, _closed) = admission_fixture(Duration::from_secs(5), 1);
+        let _occupied = occupy_queue(&engine).await;
+        let caller = engine.clone();
+        let request =
+            tokio::spawn(async move { caller.request("network.apply".into(), json!({})).await });
+        await_pending(&engine, 0).await;
+        queue.close();
+        assert_eq!(request.await.unwrap().unwrap_err().code, "engine_stopped");
+        assert_eq!(queue.recv().await.unwrap().method, "handshake");
+        assert!(queue.recv().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn shutdown_cancels_admission_even_when_a_slot_becomes_available() {
+        let (engine, mut queue, _closed) = admission_fixture(Duration::from_secs(5), 1);
+        let _occupied = occupy_queue(&engine).await;
+        let caller = engine.clone();
+        let request =
+            tokio::spawn(async move { caller.request("network.apply".into(), json!({})).await });
+        await_pending(&engine, 0).await;
+        engine.shutdown.send(true).unwrap();
+        queue.recv().await.unwrap();
+        assert_eq!(request.await.unwrap().unwrap_err().code, "engine_stopped");
+        assert!(matches!(
+            queue.try_recv(),
+            Err(mpsc::error::TryRecvError::Empty)
+        ));
+        assert_eq!(
+            engine
+                .request("handshake".into(), json!({}))
+                .await
+                .unwrap_err()
+                .code,
+            "engine_stopped"
+        );
+    }
+
+    #[tokio::test]
+    async fn lost_reply_does_not_repeat_an_admitted_mutation() {
+        let (engine, mut queue, _closed) = admission_fixture(Duration::from_secs(5), 1);
+        let caller = engine.clone();
+        let request =
+            tokio::spawn(async move { caller.request("network.apply".into(), json!({})).await });
+        let job = queue.recv().await.unwrap();
+        assert_eq!(job.method, "network.apply");
+        drop(job); // The worker disappeared after receiving the one dispatch.
+        let error = request.await.unwrap().unwrap_err();
+        assert_eq!(error.code, "engine_stopped");
+        assert!(error
+            .message
+            .contains("No operation was automatically repeated"));
+        assert!(matches!(
+            queue.try_recv(),
+            Err(mpsc::error::TryRecvError::Empty)
+        ));
+    }
 
     #[test]
     fn requires_matching_response_identity_and_exact_envelope() {
@@ -597,6 +852,8 @@ mod tests {
         let (finish, done) = oneshot::channel::<()>();
         let engine = EngineSupervisor {
             queue,
+            pending: Semaphore::new(MAX_PENDING_REQUESTS),
+            admission_timeout: ADMISSION_TIMEOUT,
             shutdown,
             task: Mutex::new(ShutdownTask {
                 handle: Some(tauri::async_runtime::spawn(async move {
@@ -628,6 +885,8 @@ mod tests {
         let (shutdown, _) = watch::channel(false);
         let engine = EngineSupervisor {
             queue,
+            pending: Semaphore::new(MAX_PENDING_REQUESTS),
+            admission_timeout: ADMISSION_TIMEOUT,
             shutdown,
             task: Mutex::new(ShutdownTask {
                 handle: Some(tauri::async_runtime::spawn(async {
@@ -638,6 +897,82 @@ mod tests {
         };
         assert_eq!(engine.shutdown().await.unwrap_err().code, "engine_shutdown");
         assert_eq!(engine.shutdown().await.unwrap_err().code, "engine_shutdown");
+    }
+
+    #[tokio::test]
+    async fn packaged_engine_accepts_concurrent_cold_start_burst() {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory =
+            std::env::temp_dir().join(format!("q22-native-startup-{}-{stamp}", std::process::id()));
+        let engine = Arc::new(EngineSupervisor::new(
+            sidecar_path().expect("Package the engine before running native tests"),
+            directory.clone(),
+        ));
+        const CALLERS: usize = QUEUE_CAPACITY * 3;
+        let barrier = Arc::new(tokio::sync::Barrier::new(CALLERS + 1));
+        let mut requests = tokio::task::JoinSet::new();
+        for index in 0..CALLERS {
+            let caller = engine.clone();
+            let barrier = barrier.clone();
+            requests.spawn(async move {
+                barrier.wait().await;
+                let method = if index == 0 {
+                    "handshake"
+                } else {
+                    "engine.status"
+                };
+                (method, caller.request(method.into(), json!({})).await)
+            });
+        }
+        barrier.wait().await;
+        let mut replies = Vec::new();
+        while let Some(reply) = requests.join_next().await {
+            replies.push(reply.unwrap());
+        }
+        engine.shutdown().await.unwrap();
+        std::fs::remove_dir_all(directory).unwrap();
+        assert_eq!(replies.len(), CALLERS);
+        for (method, result) in replies {
+            let value = result.unwrap_or_else(|error| panic!("Cold-start {method}: {error:?}"));
+            if method == "handshake" {
+                assert_eq!(value["product"], "Q22 Flight Lab");
+            } else {
+                assert_eq!(value["state"], "available");
+            }
+        }
+        assert_eq!(engine.pending.available_permits(), MAX_PENDING_REQUESTS);
+    }
+
+    #[tokio::test]
+    async fn failed_engine_start_does_not_replay_later_requests() {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory =
+            std::env::temp_dir().join(format!("q22-native-missing-{}-{stamp}", std::process::id()));
+        let engine = EngineSupervisor::new(directory.join("missing-engine"), directory.clone());
+        assert_eq!(
+            engine
+                .request("handshake".into(), json!({}))
+                .await
+                .unwrap_err()
+                .code,
+            "engine_start"
+        );
+        assert_eq!(
+            engine
+                .request("network.apply".into(), json!({}))
+                .await
+                .unwrap_err()
+                .code,
+            "engine_unavailable"
+        );
+        engine.shutdown().await.unwrap();
+        std::fs::remove_dir_all(directory).unwrap();
     }
 
     #[tokio::test]

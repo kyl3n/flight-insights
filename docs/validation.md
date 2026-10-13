@@ -2,21 +2,21 @@
 
 ## Managed analysis and private bench qualification — 13 October 2026
 
-This is the current **local development record; native CI and final installers
-for this source revision are pending**. Windows x64 and Linux x64 are the current
+This is the current **local development record; Windows/Linux native CI
+for this source revision is pending**. Windows x64 and Linux x64 are the current
 required targets. macOS remains an optional future target; the older four-target
 results below describe their own earlier commits and do not validate this slice.
 
-The latest managed Debian 13 full engine run passed **632 tests and 29 subtests**
-in 29.91 seconds, with **14 skips**: nine optional SciPy signal-reference checks
-because SciPy was unavailable, two actual Windows ACL cases, two Windows recorder
+The latest managed Debian 13 full engine run passed **638 tests and 29 subtests**
+in 31.16 seconds, with **15 skips**: nine optional SciPy signal-reference checks
+because SciPy was unavailable, three actual Windows ACL/link cases, two Windows recorder
 read-handle cases, and one Windows offline-bench wrapper case. These are explicit
 gaps in this local run, not passing checks. The transcript is retained as
-`q22-managed-analysis-pytest-final.log` in the delivery workspace.
+`q22-managed-analysis-final-pytest.log` in the delivery workspace.
 All **19 browser integration tests** and the TypeScript/Vite production build
 also passed. These browser checks use the real engine through the test bridge;
 they remain separate from the pending native WebView run. The native-helper suite
-passed **42 Rust tests**, rustfmt and Clippy with warnings denied. An independent
+passed **46 Rust tests**, rustfmt and Clippy with warnings denied. An independent
 review found no remaining concrete blocker in the implemented Linux write and
 rollback path; no privileged host mutation or hardware validation was performed.
 
@@ -29,11 +29,13 @@ complete Filter Review/PID parity or tuning changes for a real aircraft. See
 [acceptance-status.md](acceptance-status.md) for current scope.
 
 The native qualification work adds a production-WebView rendering/IPC check with
-isolated engine/browser data and a nonce-bound, natively owned report. Nine Rust
+isolated engine/browser data and a nonce-bound, natively owned report. Seventeen Rust
 lifecycle/GUI guard tests passed locally, including retained shutdown failure and
-cancelled-waiter outcomes, followed by Clippy with warnings denied. Those checks
-preceded subsequent engine integration edits; final packaged checks must run
-again at the release candidate. Both Windows/Linux workflows passed Actionlint
+cancelled-waiter outcomes, followed by Clippy with warnings denied. The final
+frozen sidecar passed expanded smoke checks from a relocated Unicode path,
+including migration, policy restart gates, real loopback acquisition, positive
+alignment, batch/control/filter outputs, recorder/archive recovery and shutdown.
+Both Windows/Linux workflows passed Actionlint
 1.7.7. The Linux installer input tests cover read-only review, approval binding,
 exclusive writes, protected/visible image paths, executable access, and FIFO
 rejection. No helper installer or elevated service was run in this environment.
@@ -47,6 +49,32 @@ and publisher signing remain separate checks. Read-only signing preflight found
 no repository environments/rulesets; credential-name and runner metadata were
 unavailable with HTTP 403, not proven absent. The user reported no Windows signing
 identity. Private unsigned testing does not require one.
+
+The separate Debian 13 preview passed payload, dependency inventory, frozen engine
+and native-supervisor verification from clean source
+`9ad0eed832b33e12a5d419d425127ec74a17096f`. Its file is
+`Q22-Flight-Lab-0.1.0-managed-analysis-9ad0eed-linux-amd64.deb`, 49,061,504 bytes,
+SHA-256 `403ca6e55d77482def1ac31c9fbf042d7e89f1ca32f30b3adcee7b8fdfefcd3f`.
+All 320 application dependency graph entries have preserved notice texts; this
+inventory is not legal sign-off. The Debian 13 runtime requirements differ from
+the Ubuntu CI baseline, and its local check does not establish GUI qualification.
+
+The initial native attempt exposed a Windows system-file hardlink test assumption,
+an excessively fast synthetic telemetry fixture, and an AppImage GUI launch that
+omitted its normal AppRun environment. Follow-up tests exercise Windows ACLs and
+hardlink rejection separately, pace the integration peer at 5 Hz using unchanged
+production freshness gates, and verify both extracted AppRun and actual AppImage
+launchers. No production safety gate or WebKit sandbox was weakened.
+
+Subsequent native diagnostics exposed two product issues: Windows performed
+repeated per-rule firewall queries within its 15-second snapshot budget, and a
+cold-start burst could fill the desktop's eight-slot request queue. Windows now
+batches filter reads while independently preserving foreign filter evidence and
+directly verifying helper-owned associations. The desktop admits at most 32
+pending requests with bounded, cancellation-safe queue waiting; it never replays
+a dispatched operation. A 24-call frozen-engine startup regression passes.
+Native CI requires three fresh successful GUI launches per packaged entrypoint;
+the first failed attempt stops verification and preserves its evidence.
 
 ### Measured synthetic import boundaries
 

@@ -1186,6 +1186,53 @@ mod tests {
         assert!(!snapshot.adapters.is_empty());
         assert_eq!(snapshot.profiles.len(), 3);
         assert!(snapshot.adapters.len() <= 256 && snapshot.routes.len() <= 8192);
+        for rule in snapshot
+            .rules
+            .iter()
+            .filter(|rule| rule.association_verified)
+        {
+            assert_eq!(
+                snapshot
+                    .firewall_filters
+                    .iter()
+                    .filter(|filter| filter.instance_id == rule.instance_id
+                        && filter.association_rule.as_deref() == Some(rule.name.as_str()))
+                    .count(),
+                7
+            );
+        }
+        if !snapshot.rules.is_empty() {
+            assert!(snapshot.rules.iter().any(|rule| rule.association_verified));
+        }
+    }
+    #[test]
+    fn bulk_filter_validation_rejects_missing_duplicate_and_changed_associations() {
+        let test = r#"
+function Assert-Rejected([scriptblock]$Action){$caught=$false;try{& $Action}catch{$caught=$true};if(-not $caught){throw 'Expected native association rejection'}}
+$good=[pscustomobject]@{InstanceID='rule-a';CimClass=[pscustomobject]@{CimClassName='MSFT_NetFirewallPortFilter'};Protocol='UDP';LocalPort=@('14550');RemotePort=@('Any');IcmpType=@('Any');DynamicTarget='Any'}
+$spec=@(Get-Q22FilterSpecs | Where-Object {$_.kind -eq 'port'})[0]
+$map=New-Q22FilterMap @($good) $spec.class
+$rule=[pscustomobject]@{InstanceID='rule-a'}
+function Get-NetFirewallPortFilter {param($AssociatedNetFirewallRule,$PolicyStore);return $script:associated}
+$script:associated=$good
+Assert-Q22Association $rule $spec $map
+Assert-Rejected {New-Q22FilterMap @($good,$good) $spec.class}
+Assert-Rejected {Assert-Q22Association ([pscustomobject]@{InstanceID='missing'}) $spec $map}
+$script:associated=$good.PSObject.Copy();$script:associated.InstanceID='different-rule'
+Assert-Rejected {Assert-Q22Association $rule $spec $map}
+$script:associated=$good.PSObject.Copy();$script:associated.LocalPort=@('9999')
+Assert-Rejected {Assert-Q22Association $rule $spec $map}
+$script:associated=@($good,$good)
+Assert-Rejected {Assert-Q22Association $rule $spec $map}
+$missing=$good.PSObject.Copy();$missing.PSObject.Properties.Remove('LocalPort')
+Assert-Rejected {Get-Q22FilterProjection $missing $spec.properties}
+@{verified=$true;rejections=6} | ConvertTo-Json -Compress
+"#;
+        let script = format!("{}\n{test}", SNAPSHOT_LIBRARY);
+        assert_eq!(
+            powershell(&script).unwrap(),
+            json!({"verified":true,"rejections":6})
+        );
     }
     #[test]
     fn exclusive_observer_rejects_second_binding_without_sending() {
