@@ -17,7 +17,8 @@ The Linux CI baseline is Ubuntu 22.04. The managed cloud is Debian 13; its local
 
 | Capability | Windows | Linux | macOS |
 | --- | --- | --- | --- |
-| Desktop UI, native file picker, local packaged engine | Implemented; see recorded CI results; installed-GUI qualification pending | Implemented; build/runtime checks passed; installed-GUI qualification pending | Implemented; see recorded CI results; installed-GUI qualification pending |
+| Desktop UI and local packaged engine | Basic installed WebView rendering/IPC/restart/shutdown passed in current CI | Basic packaged WebView rendering/IPC/restart/shutdown passed in current CI | Deferred; older CI results only |
+| Full native file picker, accessibility and upgrade qualification | Pending | Pending | Deferred |
 | Immutable files, parameter and BIN/LOG/TLOG imports, scoped metrics and comparisons | Shared engine | Shared engine | Shared engine |
 | Passive UDP recorder, armed-interval records, provisional associations and manifest history | Shared worker/engine; native qualification required | Shared worker/engine; native qualification required | Shared worker/engine; native qualification required |
 | Local insights, pinned guidance and explicit review-packet export | Shared engine; aircraft interpretation unqualified | Shared engine; aircraft interpretation unqualified | Shared engine; aircraft interpretation unqualified |
@@ -42,4 +43,4 @@ CI runs Windows and Linux by default. Manual dispatch can add both deferred Mac 
 5. Real host networking checks, occupied UDP ports, appropriate OS permission failures, and supported repair/rollback behavior on a separate test network.
 6. Publisher signing and a documented supported OS-version range before general distribution. Signing is not required for private unsigned bench testing. Mac notarization is future work.
 
-Earlier native CI executed on Windows, Linux and both Mac architectures; that historical result does not qualify later source changes. The [validation record](validation.md) links the actual runs and source commits and distinguishes them from the separate Debian 13 build. Automated checks include the bundled engine and native supervisor; clean installed GUI, supported minimum OS versions, real-device behavior and publisher signing remain release gates.
+Current native CI passed on Windows and Linux, including three fresh GUI launches per packaged entrypoint. Earlier Mac runs do not qualify the current source. The [validation record](validation.md) links exact commits and distinguishes native CI from the separate Debian 13 build. These basic rendering/IPC checks do not replace the full desktop, upgrade, accessibility, minimum-OS, real-device and publisher-signing release gates.

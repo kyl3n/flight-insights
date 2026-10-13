@@ -4,7 +4,7 @@ An offline desktop engineering workspace for Q22 flight evidence, host-network c
 
 **Managed-analysis preview:** local analysis and collection workflows are available, with explicit evidence limits. The full [acceptance plan](docs/acceptance-status.md) remains open.
 
-[Download the previous evidence-insights preview builds](https://github.com/kyl3n/flight-insights/actions/runs/38352931495). These artifacts predate the managed-analysis additions. See the [validation record](docs/validation.md) for exact source commits and checks; source changes are not proof of a newly validated installer.
+[Download the Windows and Linux managed-analysis preview](https://github.com/kyl3n/flight-insights/actions/runs/38372096954). Both native pipelines passed for `41e1974`, including repeated production WebView launches. These unsigned evaluation artifacts expire on 27 October 2026. See the [validation record](docs/validation.md) for installer links, exact source identity and remaining desktop/device qualification.
 
 **Windows x64 and Linux x64 are the current release targets.** macOS is deferred; existing Mac build configurations remain optional for future work. The common UI, evidence store and analysis semantics stay shared. See the [platform support and validation matrix](docs/platform-support.md).
 

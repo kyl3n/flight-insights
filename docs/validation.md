@@ -2,20 +2,32 @@
 
 ## Managed analysis and private bench qualification — 13 October 2026
 
-This is the current **local development record; Windows/Linux native CI
-for this source revision is pending**. Windows x64 and Linux x64 are the current
-required targets. macOS remains an optional future target; the older four-target
-results below describe their own earlier commits and do not validate this slice.
+The [native run for `41e1974`](https://github.com/kyl3n/flight-insights/actions/runs/38372096954)
+passed on both required targets, Windows x64 and Linux x64. Its exact source is
+`41e1974f1d721c05275852a599c32ec77981a208`. macOS remains a deferred future target;
+the older four-target results below describe their own earlier commits.
 
-The latest managed Debian 13 full engine run passed **640 tests and 29 subtests**
-in 34.50 seconds, with **15 skips**: nine optional SciPy signal-reference checks
+| Target | Executed package checks | Preview download |
+| --- | --- | --- |
+| Windows x64, Windows Server 2022 runner | NSIS install/uninstall, packaged supervisor, three fresh production WebView launches with IPC/restart/shutdown | [Windows artifact](https://github.com/kyl3n/flight-insights/actions/runs/38372096954/artifacts/11799349643) |
+| Linux x64, Ubuntu 22.04 runner | Debian and AppImage payload/supervisor; three fresh GUI launches each for Debian, extracted AppRun and actual AppImage launcher | [Linux artifacts](https://github.com/kyl3n/flight-insights/actions/runs/38372096954/artifacts/11799443597) |
+
+Both pipelines also passed the complete engine suite, expanded frozen smoke,
+native Rust checks, all 19 browser integration tests, dependency inventories and
+notice checks. Every required GUI launch must pass; failures are not retried.
+Artifacts include native verification reports and expire on 27 October 2026.
+They are unsigned private evaluation builds, not a general-release qualification.
+The delivered source archive adds documentation only after this CI commit.
+
+The latest managed Debian 13 full engine run passed **642 tests and 29 subtests**
+in 34.81 seconds, with **15 skips**: nine optional SciPy signal-reference checks
 because SciPy was unavailable, three actual Windows ACL/link cases, two Windows recorder
 read-handle cases, and one Windows offline-bench wrapper case. These are explicit
 gaps in this local run, not passing checks. The transcript is retained as
-`q22-managed-analysis-durable-fixture-pytest.log` in the delivery workspace.
+`q22-managed-analysis-qualified-final-pytest.log` in the delivery workspace.
 All **19 browser integration tests** and the TypeScript/Vite production build
 also passed. These browser checks use the real engine through the test bridge;
-they remain separate from the pending native WebView run. The native-helper suite
+they are separate from the production WebView checks above. The native-helper suite
 passed **46 Rust tests**, rustfmt and Clippy with warnings denied. An independent
 review found no remaining concrete blocker in the implemented Linux write and
 rollback path; no privileged host mutation or hardware validation was performed.
@@ -40,10 +52,12 @@ Both Windows/Linux workflows passed Actionlint
 exclusive writes, protected/visible image paths, executable access, and FIFO
 rejection. No helper installer or elevated service was run in this environment.
 
-The new workflow requires actual installed/extracted WebView verification on
-normal Windows/Linux runners. It is **not yet recorded as passed**. The managed
-cloud's extracted WebKit subprocess paths still prevent credible GUI qualification
-here; no sandbox or OS security was bypassed. Physical SkyPulse/SIYI streams,
+The workflow passed actual installed/extracted WebView verification on normal
+Windows/Linux runners. The managed cloud's extracted WebKit subprocess paths
+still prevent credible local GUI qualification; no sandbox or OS security was
+bypassed. Native file-picker/accessibility behavior, upgrades, desktop Windows
+minimums and other supported-OS boundaries still need their full matrix.
+Physical SkyPulse/SIYI streams,
 Mission Planner/QGroundControl coexistence, real network-manager repair/rollback,
 and publisher signing remain separate checks. Read-only signing preflight found
 no repository environments/rulesets; credential-name and runner metadata were
@@ -67,7 +81,7 @@ production freshness gates, and verify both extracted AppRun and actual AppImage
 launchers. No production safety gate or WebKit sandbox was weakened.
 
 Subsequent native diagnostics exposed two product issues: Windows performed
-repeated per-rule firewall queries within its 15-second snapshot budget, and a
+repeated per-rule firewall queries and exceeded its 15-second snapshot budget; a
 cold-start burst could fill the desktop's eight-slot request queue. Windows now
 batches filter reads while independently preserving foreign filter evidence and
 directly verifying helper-owned associations. The desktop admits at most 32
@@ -83,6 +97,13 @@ reproduces rejection under the short test budget and succeeds under production
 timing; subsequent stale/gap/identity/boot invalidation still passes. Production
 gates are unchanged. Actual Windows read-only inspection now verifies the
 documented native CIM classes, rather than deriving class names from cmdlets.
+
+Two earlier Windows packaged-verification exits did not retain actionable
+diagnostics, so their specific cause remains unconfirmed. The final run uses
+explicit UTF-8 for the verifier and its transcript wrapper, with bounded
+exception/traceback annotations and retained failure evidence. It passed all
+three Windows GUI launches and cleanup; this result does not retroactively
+explain those earlier exits.
 
 ### Measured synthetic import boundaries
 
