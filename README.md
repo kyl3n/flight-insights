@@ -4,6 +4,8 @@ An offline desktop engineering workspace for Q22 flight evidence, host-network c
 
 **Evidence-insights preview:** local analysis and collection workflows are available, with explicit evidence limits. The full [acceptance plan](docs/acceptance-status.md) remains open.
 
+[Download verified preview builds for Windows, Linux and both Mac architectures](https://github.com/kyl3n/flight-insights/actions/runs/38352931495). These builds passed automated native runtime checks; publisher signing, installed-GUI and real Q22 qualification remain open. See the [exact validation results and artifact links](docs/validation.md#evidence-insights-and-explicit-acquisition--13-october-2026).
+
 **Windows, Linux, and macOS are all required release platforms.** The common UI, local evidence store, and analysis engine must work on each. Native installers target Windows x64, Linux x64, and both Apple Silicon and Intel Macs. See the [platform support and validation matrix](docs/platform-support.md) for build commands, OS-specific capabilities, and qualification still required.
 
 ## What you can do
