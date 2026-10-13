@@ -181,8 +181,12 @@ class ReconciliationService:
                         report["skipped_count"] += 1
                         _sample(report["skipped_examples"], {"path": str(path), "reason": "symbolic_link"})
                         continue
+                    # Windows DirEntry.stat() omits file identity (st_dev and
+                    # st_ino are zero). Use fresh, non-following path metadata
+                    # both for filesystem boundaries and the later fstat check.
+                    stamp = path.stat(follow_symlinks=False)
                     if entry.is_dir(follow_symlinks=False):
-                        if entry.stat(follow_symlinks=False).st_dev != selected_device:
+                        if stamp.st_dev != selected_device:
                             report["skipped_count"] += 1
                             _sample(report["skipped_examples"], {"path": str(path), "reason": "different_filesystem_requires_explicit_selection"})
                         elif depth < config["max_depth"]:
@@ -194,7 +198,7 @@ class ReconciliationService:
                         report["skipped_count"] += 1
                         _sample(report["skipped_examples"], {"path": str(path), "reason": "not_regular_file"})
                         continue
-                    yield path, entry.stat(follow_symlinks=False)
+                    yield path, stamp
 
     @staticmethod
     def _stage(path, selected, expected, destination, remaining, cancel_check, progress, on_bytes):

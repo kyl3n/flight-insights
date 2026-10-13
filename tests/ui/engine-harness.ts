@@ -2,14 +2,17 @@
 // Explicit boundary overrides simulate failures without executing OS mutations.
 // Production has no browser bridge or alternate API server.
 import { spawn } from 'node:child_process';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import type { Page } from '@playwright/test';
 
 export async function connectEngine(page: Page, options: {boundaryOverride?: (method:string,params:Record<string,unknown>) => unknown | Promise<unknown>} = {}) {
-  const data = await mkdtemp(join(tmpdir(), 'q22-ui-evidence-'));
+  // macOS may expose its temporary directory through /var -> /private/var.
+  // Explicit folder fixtures must use the canonical path so reconciliation can
+  // retain its production policy of rejecting symlinks in selected path parents.
+  const data = await realpath(await mkdtemp(join(tmpdir(), 'q22-ui-evidence-')));
   const python = process.platform === 'win32' ? '.venv/Scripts/python.exe' : '.venv/bin/python';
   const child = spawn(resolve(python), ['-m', 'q22_engine', '--data-dir', data]);
   let sequence = 0;

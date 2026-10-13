@@ -1,9 +1,12 @@
 """Explicitly synthetic offline folder recovery; no aircraft/hardware evidence."""
 from concurrent.futures import CancelledError
+from contextlib import contextmanager
 import hashlib
 import json
+import os
 from pathlib import Path
 import shutil
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -101,6 +104,65 @@ def test_recursive_scan_is_explicit_and_symlinks_are_never_followed(prepared, tm
     linked.symlink_to(folder, target_is_directory=True)
     with pytest.raises(ValueError, match="symbolic links"):
         service.scan_folder({**params, "operation_id": str(uuid4()), "folder": str(linked)})
+
+
+def test_scan_uses_nonfollowing_path_identity_when_direntry_identity_is_zero(prepared, monkeypatch):
+    service, folder, params = prepared
+    child = folder / "nested"
+    child.mkdir()
+    (folder / "root.param").write_text("TEST_P,1\n")
+    (child / "nested.param").write_text("TEST_P,2\n")
+    original_scandir = os.scandir
+
+    class WindowsEntry:
+        def __init__(self, entry):
+            self.entry = entry
+
+        def __getattr__(self, name):
+            return getattr(self.entry, name)
+
+        def stat(self, *, follow_symlinks=True):
+            stamp = self.entry.stat(follow_symlinks=follow_symlinks)
+            return SimpleNamespace(**{name: 0 if name in {"st_dev", "st_ino", "st_nlink"} else getattr(stamp, name)
+                                      for name in dir(stamp) if name.startswith("st_")})
+
+    @contextmanager
+    def windows_entries(path):
+        with original_scandir(path) as entries:
+            yield (WindowsEntry(entry) for entry in entries)
+
+    def scandir(path):
+        return windows_entries(path) if path in (folder, child) else original_scandir(path)
+
+    monkeypatch.setattr(os, "scandir", scandir)
+    report = service.scan_folder({**params, "max_depth": 1})["report"]
+    assert report["state"] == "completed" and report["imported_count"] == 2
+    assert report["skipped_count"] == 0
+    for item in report["files"]:
+        assert service.store.raw_path(item["source"]["sha256"]).read_bytes() == Path(item["selected_path"]).read_bytes()
+
+
+def test_staging_rejects_replacement_even_when_size_and_mtime_match(prepared, monkeypatch, tmp_path):
+    service, folder, _ = prepared
+    path = folder / "original.param"
+    path.write_bytes(b"TEST_P,1\n")
+    expected = path.stat(follow_symlinks=False)
+    original_open = os.open
+    copied = []
+
+    def replace_then_open(candidate, flags):
+        if candidate == path:
+            # Keep the first inode allocated so this exercises identity rather
+            # than size/time checks, including on Windows without O_NOFOLLOW.
+            path.rename(folder / "retained-original.param")
+            path.write_bytes(b"TEST_P,2\n")
+            os.utime(path, ns=(expected.st_atime_ns, expected.st_mtime_ns))
+        return original_open(candidate, flags)
+
+    monkeypatch.setattr(os, "open", replace_then_open)
+    with pytest.raises(ValueError, match="changed since folder enumeration"):
+        service._stage(path, folder, expected, tmp_path / "staged.param", 100, None, None, copied.append)
+    assert copied == []
 
 
 def test_bounds_are_visible_and_do_not_silently_call_scan_complete(prepared):
