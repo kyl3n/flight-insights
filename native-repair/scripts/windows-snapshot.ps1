@@ -4,12 +4,24 @@
 $ErrorActionPreference='Stop'
 $ProgressPreference='SilentlyContinue'
 
+function Assert-Q22FilterClass($Row,[string]$Expected) {
+ $actual=[string]$Row.CimClass.CimClassName
+ if($actual -cne $Expected){
+  # Only bounded class metadata enters diagnostics; no rule names or IDs.
+  $display=$actual -replace '[^A-Za-z0-9_]','?'
+  if($display.Length -gt 96){$display=$display.Substring(0,96)}
+  if($display.Length -eq 0){$display='<missing>'}
+  throw "Native firewall filter class mismatch: expected=$Expected actual=$display"
+ }
+}
 function New-Q22FilterMap([object[]]$Rows,[string]$ClassName) {
  if($Rows.Count -gt 16384){throw 'Native firewall filter capacity exceeded'}
  $map=[Collections.Hashtable]::new([StringComparer]::Ordinal)
  foreach($row in $Rows){
   $id=[string]$row.InstanceID
-  if([string]::IsNullOrWhiteSpace($id) -or $id.Length -gt 1024 -or $row.CimClass.CimClassName -cne $ClassName){throw 'Native firewall filter identity/class is unavailable'}
+  if([string]::IsNullOrWhiteSpace($id)){throw 'Native firewall filter InstanceID is missing'}
+  if($id.Length -gt 1024){throw 'Native firewall filter InstanceID exceeds limit'}
+  Assert-Q22FilterClass $row $ClassName
   if($map.ContainsKey($id)){throw 'Duplicate native firewall filter identity'}
   $map.Add($id,$row)
  }
@@ -28,20 +40,25 @@ function Assert-Q22Association($Rule,$Spec,$Map) {
  $id=[string]$Rule.InstanceID
  if(-not $Map.ContainsKey($id)){throw 'Native firewall rule has no unique bulk filter'}
  $associated=@(& $Spec.command -AssociatedNetFirewallRule $Rule -PolicyStore ActiveStore | Select-Object -First 2)
- if($associated.Count -ne 1 -or [string]$associated[0].InstanceID -cne $id -or $associated[0].CimClass.CimClassName -cne $Spec.class){throw 'Native provider filter association does not match the bulk identity contract'}
+ if($associated.Count -ne 1){throw 'Native provider filter association is missing or ambiguous'}
+ Assert-Q22FilterClass $associated[0] $Spec.class
+ if([string]$associated[0].InstanceID -cne $id){throw 'Native provider associated InstanceID differs from the bulk identity contract'}
  $expected=Get-Q22FilterProjection $Map[$id] $Spec.properties | ConvertTo-Json -Depth 8 -Compress
  $actual=Get-Q22FilterProjection $associated[0] $Spec.properties | ConvertTo-Json -Depth 8 -Compress
  if($actual -cne $expected){throw 'Native associated filter changed or differs from the bulk record'}
 }
+# Provider class names are the documented OUTPUTS, not the cmdlet names:
+# MicrosoftDocs/windows-powershell-docs, docset/winserver2025-ps/NetSecurity/
+# Get-NetFirewall{Address,Port,Interface,Application,Service,InterfaceType,Security}Filter.md.
 function Get-Q22FilterSpecs {
  return @(
-  @{kind='address';command='Get-NetFirewallAddressFilter';class='MSFT_NetFirewallAddressFilter';properties=@('LocalAddress','RemoteAddress')},
-  @{kind='port';command='Get-NetFirewallPortFilter';class='MSFT_NetFirewallPortFilter';properties=@('Protocol','LocalPort','RemotePort','IcmpType','DynamicTarget')},
-  @{kind='interface';command='Get-NetFirewallInterfaceFilter';class='MSFT_NetFirewallInterfaceFilter';properties=@('InterfaceAlias')},
-  @{kind='application';command='Get-NetFirewallApplicationFilter';class='MSFT_NetFirewallApplicationFilter';properties=@('Program','Package')},
-  @{kind='service';command='Get-NetFirewallServiceFilter';class='MSFT_NetFirewallServiceFilter';properties=@('Service')},
-  @{kind='interface_type';command='Get-NetFirewallInterfaceTypeFilter';class='MSFT_NetFirewallInterfaceTypeFilter';properties=@('InterfaceType')},
-  @{kind='security';command='Get-NetFirewallSecurityFilter';class='MSFT_NetFirewallSecurityFilter';properties=@('Authentication','Encryption','OverrideBlockRules','LocalUser','RemoteUser','RemoteMachine')}
+  @{kind='address';command='Get-NetFirewallAddressFilter';class='MSFT_NetAddressFilter';properties=@('LocalAddress','RemoteAddress')},
+  @{kind='port';command='Get-NetFirewallPortFilter';class='MSFT_NetProtocolPortFilter';properties=@('Protocol','LocalPort','RemotePort','IcmpType','DynamicTarget')},
+  @{kind='interface';command='Get-NetFirewallInterfaceFilter';class='MSFT_NetInterfaceFilter';properties=@('InterfaceAlias')},
+  @{kind='application';command='Get-NetFirewallApplicationFilter';class='MSFT_NetApplicationFilter';properties=@('Program','Package')},
+  @{kind='service';command='Get-NetFirewallServiceFilter';class='MSFT_NetServiceFilter';properties=@('Service')},
+  @{kind='interface_type';command='Get-NetFirewallInterfaceTypeFilter';class='MSFT_NetInterfaceTypeFilter';properties=@('InterfaceType')},
+  @{kind='security';command='Get-NetFirewallSecurityFilter';class='MSFT_NetNetworkLayerSecurityFilter';properties=@('Authentication','Encryption','OverrideBlockRules','LocalUser','RemoteUser','RemoteMachine')}
  )
 }
 function Get-Q22NativeSnapshot {

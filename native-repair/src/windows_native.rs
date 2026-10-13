@@ -1209,7 +1209,7 @@ mod tests {
     fn bulk_filter_validation_rejects_missing_duplicate_and_changed_associations() {
         let test = r#"
 function Assert-Rejected([scriptblock]$Action){$caught=$false;try{& $Action}catch{$caught=$true};if(-not $caught){throw 'Expected native association rejection'}}
-$good=[pscustomobject]@{InstanceID='rule-a';CimClass=[pscustomobject]@{CimClassName='MSFT_NetFirewallPortFilter'};Protocol='UDP';LocalPort=@('14550');RemotePort=@('Any');IcmpType=@('Any');DynamicTarget='Any'}
+$good=[pscustomobject]@{InstanceID='rule-a';CimClass=[pscustomobject]@{CimClassName='MSFT_NetProtocolPortFilter'};Protocol='UDP';LocalPort=@('14550');RemotePort=@('Any');IcmpType=@('Any');DynamicTarget='Any'}
 $spec=@(Get-Q22FilterSpecs | Where-Object {$_.kind -eq 'port'})[0]
 $map=New-Q22FilterMap @($good) $spec.class
 $rule=[pscustomobject]@{InstanceID='rule-a'}
@@ -1226,12 +1226,17 @@ $script:associated=@($good,$good)
 Assert-Rejected {Assert-Q22Association $rule $spec $map}
 $missing=$good.PSObject.Copy();$missing.PSObject.Properties.Remove('LocalPort')
 Assert-Rejected {Get-Q22FilterProjection $missing $spec.properties}
-@{verified=$true;rejections=6} | ConvertTo-Json -Compress
+$noid=$good.PSObject.Copy();$noid.InstanceID=''
+Assert-Rejected {New-Q22FilterMap @($noid) $spec.class}
+$wrongclass=$good.PSObject.Copy();$wrongclass.CimClass=[pscustomobject]@{CimClassName='UnexpectedProviderClass'}
+$diagnostic='';try{New-Q22FilterMap @($wrongclass) $spec.class}catch{$diagnostic=$_.Exception.Message}
+if($diagnostic -cne 'Native firewall filter class mismatch: expected=MSFT_NetProtocolPortFilter actual=UnexpectedProviderClass'){throw 'Class mismatch diagnostic is missing or unsafe'}
+@{verified=$true;rejections=8} | ConvertTo-Json -Compress
 "#;
         let script = format!("{}\n{test}", SNAPSHOT_LIBRARY);
         assert_eq!(
             powershell(&script).unwrap(),
-            json!({"verified":true,"rejections":6})
+            json!({"verified":true,"rejections":8})
         );
     }
     #[test]

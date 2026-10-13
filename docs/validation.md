@@ -52,9 +52,9 @@ identity. Private unsigned testing does not require one.
 
 The separate Debian 13 preview passed payload, dependency inventory, frozen engine
 and native-supervisor verification from clean source
-`9ad0eed832b33e12a5d419d425127ec74a17096f`. Its file is
-`Q22-Flight-Lab-0.1.0-managed-analysis-9ad0eed-linux-amd64.deb`, 49,061,504 bytes,
-SHA-256 `403ca6e55d77482def1ac31c9fbf042d7e89f1ca32f30b3adcee7b8fdfefcd3f`.
+`d9be4b675f2488ec77628d366cd6f9b771aa55f0`. Its file is
+`Q22-Flight-Lab-0.1.0-managed-analysis-d9be4b6-linux-amd64.deb`, 49,078,956 bytes,
+SHA-256 `3b8616841a0c821e69ed0d3d628a7a4d339441aaa3d2e39bc6f4b9433fdb9ffe`.
 All 320 application dependency graph entries have preserved notice texts; this
 inventory is not legal sign-off. The Debian 13 runtime requirements differ from
 the Ubuntu CI baseline, and its local check does not establish GUI qualification.
