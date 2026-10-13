@@ -87,10 +87,23 @@ def verify_gui(binary: Path, directory: Path, *, expected_engine: Path | None, e
     try:
         run([str(binary), "--verify-gui", "--data-dir", str(isolated.resolve()),
              "--report", str(report_path.resolve()), "--nonce", nonce], cwd=directory, env=env, timeout=90)
-    except RuntimeError:
-        if (os.environ.get("GITHUB_ACTIONS") == "true" and report_path.is_file()
-                and report_path.stat().st_size <= 128 * 1024):
-            shutil.copyfile(report_path, ROOT / f"native-verification-gui-failure-{nonce[:16]}.json")
+    except RuntimeError as error:
+        if report_path.is_file() and report_path.stat().st_size <= 128 * 1024:
+            if os.environ.get("GITHUB_ACTIONS") == "true":
+                shutil.copyfile(report_path, ROOT / f"native-verification-gui-failure-{nonce[:16]}.json")
+            try:
+                failed = json.loads(report_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                failed = None
+            if (isinstance(failed, dict) and failed.get("schema_version") == 1
+                    and failed.get("nonce") == nonce):
+                # Put bounded report evidence first so GitHub's annotation
+                # truncation cannot hide it behind the process invocation.
+                summary = {key: failed.get(key) for key in (
+                    "native_gui_rendering", "error", "shutdown_error",
+                    "owned_engine_shutdown_completed", "diagnostic")}
+                details = json.dumps(summary, ensure_ascii=True)[:3000]
+                raise RuntimeError(f"Native GUI invocation report: {details}\n{error}") from error
         raise
     if not report_path.is_file() or report_path.stat().st_size > 128 * 1024:
         raise RuntimeError("Installed GUI did not produce bounded invocation-specific evidence")

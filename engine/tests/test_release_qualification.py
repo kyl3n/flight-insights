@@ -52,6 +52,30 @@ def test_gui_qualification_rejects_sidecar_outside_installed_bundle(tmp_path, mo
     with pytest.raises(RuntimeError, match="outside its verified installed bundle"):
         verify.verify_gui(tmp_path / "application", tmp_path, expected_engine=expected)
 
+@pytest.mark.parametrize("matching_nonce", [True, False])
+def test_gui_failure_exposes_only_matching_bounded_report_before_process_output(tmp_path, monkeypatch, matching_nonce):
+    verify = script("scripts/verify-native-bundle.py")
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    def fake_process(command, **kwargs):
+        nonce = command[command.index("--nonce") + 1] if matching_nonce else "stale"
+        Path(command[command.index("--report") + 1]).write_text(json.dumps({
+            "schema_version": 1, "nonce": nonce, "native_gui_rendering": "failed",
+            "error": "WebView self-test failed during engine_restart",
+            "diagnostic": {"phase": "engine_restart", "error": "bounded failure"},
+            "engine_path": "not included in diagnostic summary", "evidence": {"private": "omit"},
+            "owned_engine_shutdown_completed": True,
+        }))
+        raise RuntimeError("Verification command exited 1")
+    monkeypatch.setattr(verify, "run", fake_process)
+    with pytest.raises(RuntimeError) as caught:
+        verify.verify_gui(tmp_path / "application", tmp_path, expected_engine=None)
+    message = str(caught.value)
+    assert "Verification command exited 1" in message
+    assert ("engine_restart" in message) is matching_nonce
+    assert "engine_path" not in message and "private" not in message
+    if matching_nonce:
+        assert message.startswith("Native GUI invocation report:")
+
 def test_unprotected_signing_ref_stops_before_touching_os_credential_tools(monkeypatch):
     preflight = script("src-tauri/signing/preflight.py")
     monkeypatch.setenv("GITHUB_REF_TYPE", "tag")

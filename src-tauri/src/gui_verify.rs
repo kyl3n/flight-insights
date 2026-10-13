@@ -34,6 +34,7 @@ pub struct Evidence {
     handshake: Value,
     status: Value,
     restart_handshake: Value,
+    phase: String,
     error: Option<String>,
 }
 
@@ -97,8 +98,23 @@ impl Verification {
 }
 
 fn validate(evidence: &Evidence) -> Result<(), String> {
-    if evidence.error.is_some() {
-        return Err("WebView self-test reported an initialization or IPC failure.".into());
+    if !matches!(
+        evidence.phase.as_str(),
+        "waiting_for_ui"
+            | "animation_frames"
+            | "handshake"
+            | "engine_status"
+            | "engine_restart"
+            | "completion"
+    ) {
+        return Err("WebView self-test reported an unknown phase.".into());
+    }
+    if let Some(error) = &evidence.error {
+        return Err(format!(
+            "WebView self-test failed during {}: {}",
+            evidence.phase,
+            error.chars().take(1024).collect::<String>()
+        ));
     }
     if evidence.title.len() > 256
         || !evidence.title.contains("Q22 Flight Lab")
@@ -138,6 +154,35 @@ pub async fn finish(
     verification: Arc<Verification>,
     result: Result<Value, String>,
 ) {
+    finish_with_diagnostic(app, verification, result, None).await;
+}
+
+fn diagnostic(evidence: &Evidence) -> Value {
+    // Preserve only bounded qualification fields, never arbitrary IPC payloads,
+    // stack traces, data paths, invocation tokens or application records.
+    let text = |value: &str| value.chars().take(1024).collect::<String>();
+    let field = |value: &Value, name: &str| value.get(name).and_then(Value::as_str).map(text);
+    json!({
+        "phase":evidence.phase.chars().take(32).collect::<String>(),
+        "error":evidence.error.as_deref().map(text),
+        "title":evidence.title.chars().take(256).collect::<String>(),
+        "root_children":evidence.root_children,"navigation_buttons":evidence.navigation_buttons,
+        "rendered_width":evidence.rendered_width,"rendered_height":evidence.rendered_height,
+        "animation_frames":evidence.animation_frames,"engine_connected":evidence.engine_connected,
+        "handshake_product":field(&evidence.handshake,"product"),
+        "handshake_protocol_version":evidence.handshake.get("protocol_version").and_then(Value::as_u64),
+        "engine_state":field(&evidence.status,"state"),
+        "restart_product":field(&evidence.restart_handshake,"product"),
+        "restart_protocol_version":evidence.restart_handshake.get("protocol_version").and_then(Value::as_u64),
+    })
+}
+
+async fn finish_with_diagnostic(
+    app: AppHandle,
+    verification: Arc<Verification>,
+    result: Result<Value, String>,
+    diagnostic: Option<Value>,
+) {
     if verification.completed.swap(true, Ordering::SeqCst) {
         return;
     }
@@ -152,6 +197,7 @@ pub async fn finish(
         "external_network_actions_requested":false, "security_bypasses":false,
         "nonce":verification.nonce,
         "evidence":result.as_ref().ok(), "error":result.as_ref().err(),
+        "diagnostic":diagnostic,
         "limitations":["Basic native WebView rendering and IPC; not physical display, hardware-stream, permission-dialog or accessibility qualification."]
     });
     let written = (|| -> Result<(), String> {
@@ -182,6 +228,7 @@ pub async fn native_gui_smoke_complete(
     if nonce != verification.nonce || verification.completed() {
         return Err("GUI verification invocation does not match.".into());
     }
+    let details = diagnostic(&evidence);
     let result = validate(&evidence).map(|()| {
         json!({
             "title":evidence.title, "root_children":evidence.root_children,
@@ -192,7 +239,7 @@ pub async fn native_gui_smoke_complete(
             "restart_handshake":evidence.restart_handshake,
         })
     });
-    finish(app, verification, result).await;
+    finish_with_diagnostic(app, verification, result, Some(details)).await;
     Ok(())
 }
 
@@ -233,7 +280,7 @@ mod tests {
             "title":"Q22 Flight Lab", "root_children":1,"navigation_buttons":6,
             "rendered_width":880,"rendered_height":640,"animation_frames":2,
             "engine_connected":true,"handshake":{"product":"Q22 Flight Lab","protocol_version":1},
-            "status":{"state":"available"},"restart_handshake":{"product":"Q22 Flight Lab","protocol_version":1},"error":null
+            "status":{"state":"available"},"restart_handshake":{"product":"Q22 Flight Lab","protocol_version":1},"phase":"completion","error":null
         })).unwrap();
         assert!(validate(&evidence).is_ok());
         evidence.rendered_width = 0.0;
@@ -244,5 +291,12 @@ mod tests {
         evidence.engine_connected = true;
         evidence.restart_handshake = json!({"product":"Other","protocol_version":1});
         assert!(validate(&evidence).is_err());
+        evidence.phase = "engine_restart".into();
+        evidence.error = Some("x".repeat(2000));
+        let details = diagnostic(&evidence);
+        assert_eq!(details["phase"], "engine_restart");
+        assert_eq!(details["error"].as_str().unwrap().len(), 1024);
+        assert!(details.get("handshake").is_none());
+        assert!(validate(&evidence).unwrap_err().contains("engine_restart"));
     }
 }
