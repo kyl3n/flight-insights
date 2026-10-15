@@ -142,7 +142,8 @@ def test_partial_update_keeps_bundled_fallback_and_does_not_expose_proxy_excepti
     assert any("could not be reached" in item for item in result["warnings"])
 
 
-@pytest.mark.parametrize("body", [b"[]", b"{\"object\": []}", b"{\"object\": {\"type\":\"tree\",\"sha\":\"bad\"}}", b"not json", b"x" * (research.MAX_METADATA_BYTES + 1)])
+@pytest.mark.parametrize("body", [b"[]", b"{\"object\": []}", b"{\"object\": {\"type\":\"tree\",\"sha\":\"bad\"}}", b"not json", b"x" * (research.MAX_METADATA_BYTES + 1)],
+                         ids=["array", "invalid_object", "invalid_revision", "invalid_json", "oversized_metadata"])
 def test_malformed_or_oversized_revision_response_cannot_publish_source_notes(store, body):
     result = ResearchService(store, fetcher=lambda *a, **k: body).dispatch("research.refresh", {"topic": "vibration", "allow_online": True})
     assert result["state"] == "failed"
@@ -151,7 +152,8 @@ def test_malformed_or_oversized_revision_response_cannot_publish_source_notes(st
     assert any("failed validation" in item for item in result["warnings"])
 
 
-@pytest.mark.parametrize("content", [b"<html>upstream error</html>", b"x\x00y", b"\xff\xff", b"", b"x" * (research.MAX_SOURCE_BYTES + 1)])
+@pytest.mark.parametrize("content", [b"<html>upstream error</html>", b"x\x00y", b"\xff\xff", b"", b"x" * (research.MAX_SOURCE_BYTES + 1)],
+                         ids=["html_error", "nul_byte", "invalid_utf8", "empty", "oversized_source"])
 def test_invalid_source_text_does_not_replace_pinned_guidance_or_publish_notes(store, content):
     fetcher = OfficialFetcher()
     fetcher.content = content

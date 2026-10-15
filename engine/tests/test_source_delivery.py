@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+from types import SimpleNamespace
 import zipfile
 
 import pytest
@@ -95,6 +96,57 @@ def test_source_delivery_rejects_concurrent_edit_without_publishing(checkout, tm
     with pytest.raises(ValueError, match="changed"):
         SOURCE.package(checkout, tmp_path / "delivery.zip")
     assert not list(tmp_path.glob("delivery*"))
+
+
+def stat_fixture(value, **changes):
+    fields = ("st_dev", "st_ino", "st_mode", "st_size", "st_mtime_ns", "st_ctime_ns")
+    return SimpleNamespace(**({field: getattr(value, field) for field in fields} | changes))
+
+
+def test_source_read_accepts_stable_windows_path_and_handle_metadata_differences(checkout, monkeypatch):
+    # CPython's Windows path stat uses birth time for ctime and filename-based
+    # executable bits, while fstat uses change time and attribute-only modes.
+    # A stable edited file must not be rejected because those APIs differ.
+    target = checkout / "README.md"
+    target.write_bytes(b"Edited source\n")
+    original = SOURCE.os.fstat
+
+    def windows_handle(fd):
+        value = original(fd)
+        return stat_fixture(value, st_ctime_ns=value.st_ctime_ns + 1000,
+                            st_mode=value.st_mode ^ 0o111)
+
+    monkeypatch.setattr(SOURCE.os, "fstat", windows_handle)
+    data, entry, identity = SOURCE.read_source(checkout, "README.md")
+    assert data == b"Edited source\n"
+    assert entry["sha256"] == hashlib.sha256(data).hexdigest()
+    assert identity == SOURCE.file_identity(target.stat())
+
+
+@pytest.mark.parametrize("changed_api", ["path", "handle"])
+def test_source_read_retains_change_time_checks_within_each_stat_api(checkout, monkeypatch, changed_api):
+    # A same-size mutation with a restored modification timestamp can still
+    # change ctime. Do not solve Windows compatibility by dropping ctime from
+    # either API's before/after check.
+    target = checkout / "README.md"
+    calls = 0
+    original_path_stat, original_fstat = Path.stat, SOURCE.os.fstat
+
+    def changed(value):
+        nonlocal calls
+        calls += 1
+        return stat_fixture(value, st_ctime_ns=value.st_ctime_ns + (1000 if calls > 1 else 0))
+
+    def path_stat(path, *args, **kwargs):
+        value = original_path_stat(path, *args, **kwargs)
+        return changed(value) if path == target else value
+
+    if changed_api == "path":
+        monkeypatch.setattr(Path, "stat", path_stat)
+    else:
+        monkeypatch.setattr(SOURCE.os, "fstat", lambda fd: changed(original_fstat(fd)))
+    with pytest.raises(ValueError, match="changed during capture"):
+        SOURCE.read_source(checkout, "README.md")
 
 
 @pytest.mark.parametrize("initially_dirty", [False, True])

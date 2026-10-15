@@ -100,6 +100,14 @@ def file_identity(item: os.stat_result) -> tuple[int, ...]:
     return (item.st_dev, item.st_ino, item.st_mode, item.st_size, item.st_mtime_ns, item.st_ctime_ns)
 
 
+def path_handle_identity(item: os.stat_result) -> tuple[int, ...]:
+    # CPython 3.12 on Windows reports creation time as stat(path).st_ctime,
+    # but change time as fstat(fd).st_ctime. Path stat also derives executable
+    # bits from the filename; fstat does not. Compare those fields only within
+    # the same API below, retaining every full identity check independently.
+    return (item.st_dev, item.st_ino, stat.S_IFMT(item.st_mode), item.st_size, item.st_mtime_ns)
+
+
 def read_source(root: Path, name: str, mode_override: int | None = None) -> tuple[bytes, dict, tuple[int, ...]]:
     path = root / name
     before = path.stat(follow_symlinks=False)
@@ -107,12 +115,13 @@ def read_source(root: Path, name: str, mode_override: int | None = None) -> tupl
         raise ValueError(f"Source file is not regular or exceeds the 64 MiB limit: {name}")
     with path.open("rb") as stream:
         opened = os.fstat(stream.fileno())
-        if (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino):
+        if path_handle_identity(opened) != path_handle_identity(before):
             raise ValueError(f"Source path changed before capture: {name}")
         data = stream.read(MAX_FILE_BYTES + 1)
         after = os.fstat(stream.fileno())
-    if (len(data) > MAX_FILE_BYTES or file_identity(before) != file_identity(after)
-            or file_identity(after) != file_identity(path.stat(follow_symlinks=False))):
+    if (len(data) > MAX_FILE_BYTES or len(data) != opened.st_size
+            or file_identity(opened) != file_identity(after)
+            or file_identity(before) != file_identity(path.stat(follow_symlinks=False))):
         raise ValueError(f"Source file changed during capture: {name}")
     mode = mode_override if mode_override is not None else (0o100755 if before.st_mode & 0o111 else 0o100644)
     return data, {"path": name, "bytes": len(data), "sha256": hashlib.sha256(data).hexdigest(),
