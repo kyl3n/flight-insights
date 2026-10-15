@@ -6,6 +6,10 @@ import math
 import random
 
 from . import guidance
+from .performance_advice import build_performance_advice
+from .insight_context import attach_flight_context
+from .flight_configuration import report_configuration
+from .flight_health import FlightHealthAnalyzer
 from .control_analysis import ControlAnalyzer
 from .control_analysis import quantile
 from .filter_models import filter_model
@@ -15,7 +19,7 @@ from .parameters import MAX_PARAMETERS, MAX_TIME_SECONDS, NAME, finite, text_fie
 VERSION = "q22-offline-insights/2"
 MAX_FINDINGS = 100
 MAX_SERIES = 256
-PARAMETER_PREFIXES = ("INS_", "ATC_", "PSC_", "MOT_", "BATT", "SERVO", "RC")
+PARAMETER_PREFIXES = ("INS_", "ATC_", "PSC_", "MOT_", "BATT", "SERVO", "RC", "FFT_", "LOG_", "SCHED_")
 LIMITATIONS = [
     "Findings describe this selected source, boot and interval; they do not establish aircraft airworthiness or causation.",
     "Observed parameters are incomplete evidence, not proof of a complete unchanged configuration or validated firmware build.",
@@ -468,6 +472,7 @@ class InsightService:
         power, tracking, voltage = (Trace(start, end, gap) for _ in range(3))
         spectrum = Spectrum(params.get("spectrum"), origin_s=origin / 1e6, start=start, end=end, gap=gap)
         control = ControlAnalyzer(params.get("control"), start, end, gap, profile["declared_firmware"], profile["flight_phase"])
+        health = FlightHealthAnalyzer(start, end, gap, firmware=profile["declared_firmware"])
         model = filter_model(params["filter_model"]) if params.get("filter_model") is not None else {
             "status": "unavailable", "reason": "No explicit static filter model was selected; aircraft settings are never inferred from a spectrum.", "response": []}
         findings, warnings, changes, current, at_start = [], [], [], {}, {}
@@ -512,6 +517,7 @@ class InsightService:
             stamp = event.get("time_us")
             t = (int(stamp) - origin) / 1e6 if stamp is not None else None
             kind, message = event.get("kind"), event.get("message_type")
+            health.observe(event, t)
             if kind == "diagnostic":
                 if event.get("metric_barrier"):
                     barriers += 1
@@ -821,6 +827,7 @@ class InsightService:
                 "band_start_hz": bins[0]["frequency_hz"], "band_end_hz": bins[-1]["frequency_hz"],
                 "interpretation": "Additional hypothetical static filtering of the logged waveform, PSD multiplied by |H|². Not a measured pre/post comparison or prediction of the aircraft's effective pipeline."}
         report = {"algorithm_version": VERSION, "scope": scope, "operating_profile": profile, "metrics": metrics,
+                  "health": health.finish(),
                   "control": control.finish(bool(observed_kinds & {"accelerometer_clipping", "vibration_excursion", "clipping_counter_reset"})),
                   "filter_model": model,
                   "modeled_spectrum": modeled_spectrum,
@@ -850,4 +857,7 @@ class InsightService:
                                         "barrier_count": barriers, "parameter_state": parameter_state,
                                         "vibration_records": observed_vibe, "clipping_observed_deltas": clip_deltas,
                                         "observed_peak_absolute_roll_error_deg": peak_error, "load_step_voltage_drop": sag}}
+        report["flight_context"] = attach_flight_context(self.store, report, params.get("flight_record_id"), cancel_check=cancel_check)
+        report["configuration"] = report_configuration(self.store, report, cancel_check=cancel_check)
+        report["performance_advice"] = build_performance_advice(report, self.store, cancel_check=cancel_check)
         return {"report": report}

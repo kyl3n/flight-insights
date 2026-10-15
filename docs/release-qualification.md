@@ -5,6 +5,12 @@ build means a labelled evaluation build with an explicit capability list. It doe
 not qualify Q22 flight operation or complete the supplied handoff. Record actual
 results in [validation.md](validation.md) and attach the evidence described below.
 
+The [current product direction](current-product-direction.md) supersedes older
+baseline and COM-setup assumptions. New users start with current preflight
+settings; historical pre-FACt/FACt files are optional evidence. Existing field
+equipment/GCS retains serial setup and Flight Lab receives UDP. Direct serial
+transport and macOS remain deferred.
+
 ## Result and artifact identity
 
 Every test record must include the source commit, dirty-tree status, application
@@ -27,6 +33,76 @@ unexpected outputs; do not replace expected values to make a failing case pass.
 
 New decoder, repair or release code needs its own recorded results. Never carry a
 previous milestone's passing count forward as evidence for a later build.
+
+## Delivery gates and available evidence
+
+Keep the following outcomes separate. Completing a local build does not complete
+the installed-platform or hardware gates.
+
+| Gate | Work that can be completed in the development workspace | Additional evidence needed |
+| --- | --- | --- |
+| Reviewable source | Finish the declared features, pass their targeted/full regression checks, preserve handoff hashes, and create a source archive with per-file hashes | Review of any remaining unsupported capability before calling the full specification complete |
+| Linux evaluation artifact | Freeze source, build the matching frozen engine and Linux native shell, package with the correct distribution configuration, and verify the actual bundle | Clean installed tests on each advertised Linux distribution, offline use, upgrades, accessibility and hardware behavior |
+| Windows evaluation artifact | Retain the configured native CI workflow and source needed to build it | An actual Windows runner with access to the frozen source, a current build/test/packaged-WebView result and clean desktop installation evidence |
+| Publisher-signed release | Review protected release configuration and prepare exact artifacts/checksums without exposing signing material | Authorized publisher keys, protected signing runners/environment/tag rules and final signature verification on the signed artifacts |
+| Qualified flight insights | Exercise supported algorithms, provenance and failure cases with clearly synthetic fixtures | Matched real pre/post parameters, BIN/TLOG, exact firmware/hardware/software context and controlled repeated flights where a benefit is claimed |
+| Qualified field operation | Implement bounded UDP/readback/recovery workflows and deterministic failure tests | Actual GCS/digiQ/serial-to-UDP topology, camera/radio capabilities, disconnect/reconnect and host sleep/permission evidence |
+
+At the 15 October development audit, the attached handoff ZIP contained
+specification documents only. The available flight/parameter fixtures were
+synthetic; no matched real-flight bundle was supplied. The most recent observed
+native CI run was the 13 October build for `41e1974`, not the current edited
+source. Recheck these observations before release instead of treating them as
+permanent capability claims.
+
+The read-only `scripts/release-preflight.py` inspects GitHub protection, variable
+names and runner metadata without reading secret values, dispatching workflows
+or publishing. The 15 October inspection found no `release-signing` environment
+or active release-tag ruleset. Variable and runner metadata were unavailable;
+their readiness remains unknown. Private-key readiness requires the separate
+protected-runner preflight. An unsigned local evaluation build can proceed
+without claiming publisher signing.
+
+## Freeze source and preserve delivery identity
+
+Coordinate source edits before packaging so the tested code, frozen engine and
+frontend belong to the same checkpoint. Do not build against files being edited
+by another worker. Build the frozen engine on the corresponding OS/architecture;
+Linux cannot produce the Windows PyInstaller runtime by changing a target flag.
+
+Use the existing package and verification tools for installers. The managed
+Debian 13 build must use `src-tauri/tauri.debian13.conf.json`; it does not qualify
+the Ubuntu 22.04 CI baseline. Preserve the bundle verification report even when
+a native GUI check is unavailable or fails. Never replace a failed GUI result
+with a browser-test pass.
+
+After the source checkpoint is stable, create a separate source delivery:
+
+```bash
+python3 scripts/package-source.py --output /workspace/artifacts/Q22-Flight-Lab-0.2.0-source.zip
+```
+
+Choose a new output name for each delivery. The helper includes tracked and
+untracked source files, records the base Git commit, index identity and dirty-tree
+state, and preserves each file's bytes/hash/executable mode in
+`SOURCE-MANIFEST.json`. Tracked executable modes come from the Git index when
+`core.filemode=false`. Its source-tree digest covers the ordered file manifest;
+a sidecar receipt hashes the ZIP. Ignored dependencies, generated runtime/build
+outputs and local evidence are excluded. Private/unfamiliar paths, symbolic links,
+unmerged index entries and existing output files cause refusal.
+
+Pause all source writers before capture and keep them paused until delivery
+finishes. The helper checks file contents and identities, Git state and source
+paths again before publishing, and rejects changes it observes. These checks do
+not lock the checkout or create an atomic filesystem snapshot; an uncoordinated
+writer can still race the final check. A successful archive is not evidence that
+concurrent editing was safe.
+
+Retain the source ZIP, manifest and checksum alongside installer checksums and
+verification reports. A source archive alone does not prove an installer was
+built from it. If documentation changes after the executable build, record that
+distinction and show that executable source is unchanged; never label a dirty
+working tree as the base commit alone.
 
 ## Native platform qualification
 
@@ -90,11 +166,21 @@ Begin Q22 qualification with one matched controller BIN/LOG, GCS TLOG and actual
 parameter readback, plus the exact board/build, flight interval, battery monitor
 mapping/calibration and recorded flight conditions. Import logs through
 **Evidence → Flight log** and a plain `.param`/`.params` export through
-**Parameter snapshot**; retain app-acquired rich readback JSON in Collection
-acquisition history. Choose
-one source and clock segment before creating each scoped session. A separate
-readback import does not automatically verify the log's parameter history; keep
-that association evidence with the sample bundle.
+**Parameter snapshot**. App-acquired rich readback JSON is retained as an original
+acquisition artifact. Promotion into the catalog as a typed parameter snapshot
+and association with an exact verified managed flight are implemented. Verify
+original hashes, typed values, full index/count coverage, firmware/component
+identity and the acquisition's capture evidence before treating a snapshot as
+usable for full comparison. Partial or conflicted captures must retain their
+limitations. A bounded parameter preview is not the stored full parameter set.
+
+Choose one source and clock segment before creating each scoped session. Attach
+pre/postflight readbacks only through freshly verified aircraft identity,
+alignment evidence, temporal membership and the exact managed-flight record
+span. A standalone import does not establish that association. Even a complete,
+flight-associated readback is non-atomic and does not prove that reboot-dependent
+values were active throughout flight; effective configuration remains unknown.
+Keep the association and capture evidence with the sample bundle.
 
 | Scenario | Required observable result |
 | --- | --- |
@@ -114,13 +200,131 @@ ID, boot epoch and units for each selected signal. Preserve original bytes and
 parser versions even when an analysis is rerun. Generated fixtures can exercise
 all branches, but real Q22 logs remain necessary to validate the target hardware.
 
-Preserve accepted “Q22 original - pre-FACt” and “Q22 with FACt tune”
+If supplied, preserve “Q22 original - pre-FACt” and “Q22 with FACt tune”
 as separate immutable sources, retaining original bytes and legacy Brian aliases.
-Do not reconstruct a missing original. Validate
+They are optional and must not block a fresh installation or current-flight
+comparison. Do not reconstruct a missing original. Validate
 Cube Orange+ and DEF H7 independently, including firmware build, sensor IDs,
 motor/output/ESC mapping and battery calibration. One modified flight does not
 establish causality; matched repeated flights and flight-level uncertainty are
 required before claiming a tuning benefit.
+
+## Descriptive flight-health qualification
+
+The implemented health report summarizes bounded, schema-qualified DataFlash
+observations in five domains. Qualify each domain against the pinned upstream
+definitions and an independent expected result, then repeat with real target
+logs. Record firmware, source/clock scope, units and multipliers, raw record
+references, parser/algorithm versions, sample exclusions and source revision/hash.
+Matching field names do not validate the exact installed firmware build.
+
+| Domain | Required observable result |
+| --- | --- |
+| GNSS: GPS/GPA | Receiver instances stay separate; fix codes, satellite counts, dilution and reported accuracy retain their documented meanings. Binary/text fixed-point values agree after one scaling application. Receiver fix alone does not establish navigation use or position integrity. |
+| Estimator: XKF3/XKF4 | EKF3 cores stay separate; signed innovations retain their units. Logged consistency indicators and fault/timeout masks remain descriptive. Crossing 1 does not establish a configured failsafe, raw covariance or a unique failure cause. |
+| ESC | Motor speed, current, voltage and temperature require qualified units. Compare only complete observed instance sets at exact shared boot timestamps within the retained frame bound. Duplicate, missing or truncated instance evidence must not create an apparently complete spread. |
+| Scheduler: PM | Long-loop fractions use each recorded window's valid counts; load uses its recorded percent scaling. Missing/unknown loop-time units remain unavailable. A long loop does not by itself prove a lost control update. |
+| Board power/temperature: POWR/MCU | Retain qualified rail/temperature samples and raw power flags. Board topology and acceptable limits remain aircraft-specific; sampled minima and log endings do not establish a brownout. |
+
+Exercise missing fields, unknown units, contradictory scaling, sentinels,
+nonfinite/oversized values, duplicate/reordered times, clock boundaries and
+corruption. Preserve explicit exclusions and gaps without inventing healthy
+zeros. Enumerations and bitmasks expose code counts with no arithmetic mean;
+their numeric ordering is not a health score. Verify memory bounds and visible
+channel/finding/frame truncation on long or adversarial inputs.
+
+ESC telemetry support, per-field freshness, expected instance count and physical
+motor/output mapping remain unknown without separate evidence. Withhold ambiguous
+zero-valued optional fields. Shared log timestamps do not establish simultaneous
+fresh sensor measurements, and an observed spread does not identify a motor
+fault. In both reports and the UI, unavailable data must remain unknown rather
+than green/passed. An observed domain is not an airworthiness verdict.
+
+## Current-settings and software-context qualification
+
+Start with a fresh data directory and no historical tunes. Exercise a one-way
+forwarded feed and a separately configured bidirectional path as distinct cases.
+Record the actual GCS version and its forwarding controls; examples in the UI
+must never become automatically detected addresses or capabilities.
+
+1. Establish current parameters while disarmed through the reviewed path. Verify
+   identity, times, decoded/expected counts, conflicts and freshness. One-way
+   forwarding must explain why a full readback cannot be requested while still
+   allowing passive recording.
+2. Change a parameter or invalidate freshness after readback. Exercise repeated
+   arm/disarm intervals and a readback crossing an arm cycle using a simulator or
+   fixture. Earlier capture eligibility must not silently carry into the next
+   flight. Reboot-required values remain uncertain until supported evidence
+   establishes activation.
+3. Inspect and record environment context, then change setup declarations or
+   software between captures. Each earlier flight must retain its original
+   detected and operator-declared evidence. A recognized process name is not an
+   exact version or proof of control-path ownership.
+4. Import a historical log without recorded host context. Its environment must
+   remain unknown; current analysis-host data cannot fill that gap. Link recorded
+   context only through verified source, clock and matching managed-flight scope.
+5. Compare two compatible scoped reports. Verify parameter changes, metric units,
+   sample coverage, other context changes and source/version-scoped explanations.
+   Mixed configuration, changed payload/calibration and insufficient coverage
+   must remain visible in interpretation.
+6. Review an improvement option against pinned sources and the exact controller/
+   ESC firmware. Require explicit prerequisites, alternatives, tradeoffs and a
+   measurement plan. For notch/RPM/bidirectional-DShot advice, inspect mechanical
+   faults/clipping, actual telemetry and supported board/output capabilities.
+   Missing inputs must not yield an unsupported numeric tune or a causal claim.
+
+The minimum field evidence is one correctly matched flight bundle. Establishing
+a measured improvement requires comparable repeated flights, not just successful
+software tests or one before/after pair.
+
+## Research and repeated-flight experiment qualification
+
+Explicit official-source updates, an offline research cache and immutable
+repeated-flight experiment plans/evaluations are implemented. Their presence
+does not establish complete solution coverage or a validated aircraft tune.
+
+1. Open and search research while offline. Bundled reviewed excerpts and cached
+   source notes must remain available with revision, retrieval time and content
+   hashes. Trigger an update explicitly and verify that only the supported
+   official documentation paths are requested; flight data, parameter values,
+   identifiers and local search terms must remain local.
+2. Exercise timeout, cancellation, rate limiting, oversized/invalid responses,
+   partial updates and damaged cache entries. Preserve completed immutable notes
+   and show the update outcome. Newly fetched passages remain unreviewed for the
+   app and unvalidated for the aircraft; an update must not replace pinned
+   reviewed advice, change applicability or apply parameter values. Confirm that
+   supported topics are presented as bounded coverage rather than all possible
+   performance solutions.
+3. Save an experiment with explicit reference/candidate report IDs, flight phase,
+   parameter hypothesis, metric units, desired changes, regression limits,
+   coverage threshold and minimum repeated-flight count. A revised plan must
+   create a new linked revision; evaluation must preserve earlier plans and
+   results. All selected observations, failed criteria and counterexamples remain
+   available for review.
+4. Evaluate comparable repeated flights with verified aircraft/flight identities
+   and the planned minimum number of distinct flights per group, never fewer
+   than two. Multiple
+   intervals from one flight cannot count as independent repeats; a flight cannot
+   appear in both groups. Require consistent units, acquisition/calibration and
+   algorithm semantics, matched phase and sufficient known sample coverage.
+   Missing identity, inadequate coverage or mixed synthetic/real evidence must
+   block an improvement result rather than silently dropping observations.
+5. Check full typed preflight parameter hypotheses against their preserved,
+   flight-associated readbacks; separately supported logged observations retain
+   their narrower scope. Unverified or mismatched planned settings must remain
+   explicit. Neither path establishes activation of reboot-dependent settings.
+   Explicit matched pairs must cover every selected report exactly once; group
+   medians or paired changes must preserve adverse observations and confounders.
+6. Independently calculate goal/regression outcomes, including a zero-change
+   goal, a failed regression limit, a counterexample and insufficient evidence.
+   An observed improvement requires a positive change in each requested goal
+   direction and all declared decision criteria. It remains descriptive evidence;
+   it does not prove causation, statistical independence or an optimal tune.
+
+These procedures and synthetic results do not supply the missing matched real
+flight data, a current-source Windows build or verified publisher signatures.
+Retain those as outstanding delivery/qualification evidence under the audit above
+until their actual artifacts and results are recorded.
 
 ## Dual-network hardware bench
 

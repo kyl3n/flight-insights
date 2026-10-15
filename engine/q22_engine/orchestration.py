@@ -34,6 +34,7 @@ LIMITATIONS = [
     "Selected log closure is an operator declaration; bytes remain provisional until separate content reconciliation.",
 ]
 TERMINAL = {"complete", "partial", "interrupted", "failed", "cancelled"}
+CONTINUITY_KEYS = ("source_id", "uid", "boot_epoch", "gap_count", "firmware_identity", "gap_observation", "latest_armed_interval_id")
 
 
 def _json(value):
@@ -277,10 +278,57 @@ class OrchestrationService:
         heartbeat = source.get("heartbeat_evidence", {})
         identity = context["observations"]["identity"]
         return {"source_id": capture.get("selected_source_id"), "uid": source.get("uid"),
+                "latest_armed_interval_id": context["intervals"][-1]["uuid"] if context["intervals"] else None,
                 "boot_epoch": heartbeat.get("boot_epoch"), "gap_count": capture.get("coverage", {}).get("gap_count", 0),
                 "firmware_identity": _hash(identity["event"].get("firmware_identity")) if identity else None,
                 "parameter_observation": context["observations"]["parameter"]["sequence"] if context["observations"]["parameter"] else None,
                 "gap_observation": context["observations"]["link_gap"]["sequence"] if context["observations"]["link_gap"] else None}
+
+    @staticmethod
+    def _preflight_anchor(context):
+        return "after:" + context["intervals"][-1]["uuid"] if context["intervals"] else "watch_start"
+
+    def _preflight_eligible(self, request, context, policy):
+        age = (time.monotonic_ns() - int(request["finished_monotonic_ns"])) / 1e9
+        return (request["anchor"] == self._preflight_anchor(context)
+                and self._gate(context, policy)["allowed"]
+                and request.get("completion_token") == self._token(context)
+                and request.get("completeness") == "complete_for_scope"
+                and request.get("consistency") == "no_observed_conflict"
+                and 0 <= age <= policy["preflight_freshness_s"]
+                and not request.get("revoked") and request.get("freshness") != "invalidated")
+
+    def _preflight_status(self, run):
+        """Describe the current arm cycle without starting or reviving requests."""
+        policy = self.store.get_document("acquisition_policy", run["policy_id"])["policy"]
+        context = self._context(run["id"])
+        requests, _ = self._rows("request", run["id"], limit=256)
+        anchor = self._preflight_anchor(context)
+        current = next((item for item in requests if item["role"] == "preflight_parameters" and item["anchor"] == anchor), None)
+        result = {"state": "waiting", "current_for_next_flight": False, "anchor": anchor,
+                  "request_id": current["id"] if current else None,
+                  "decoded_count": current.get("decoded_count") if current else None,
+                  "expected_count": current.get("expected_count") if current else None,
+                  "completeness": current.get("completeness", "unknown") if current else "unknown",
+                  "historical_applicability": "unknown"}
+        if not run["runtime_authorized"]:
+            result.update(state="suspended", reason="This policy is no longer authorized. Review and approve a new Prepare & watch to request current parameters.")
+        elif not policy["preflight_parameters"]:
+            result.update(state="not_enabled", reason="Preflight readback is disabled. Select a policy with preflight readback for the next Prepare & watch.")
+        elif not self._gate(context, policy)["allowed"]:
+            result.update(state="waiting_for_live_evidence", reason=self._gate(context, policy)["reason"] + " Readback waits; passive recording continues.")
+        elif current is None:
+            result["reason"] = "A separate current readback will be requested for this arm cycle after any postflight readback finishes. No earlier flight snapshot is reused."
+        elif current["state"] == "complete" and self._preflight_eligible(current, context, policy):
+            result.update(state="complete", current_for_next_flight=True,
+                          reason="All parameters reported for this scope were read within the freshness budget. This non-atomic readback does not prove the settings effective throughout a flight.")
+        elif current["state"] == "complete":
+            result.update(state="stale", reason="This readback is no longer current. While disarmed, stop this watch and approve a new Prepare & watch for a fresh readback. Earlier evidence is retained.")
+        elif current["state"] in TERMINAL:
+            result.update(state=current["state"], reason="Current parameters are incomplete or unavailable. Resolve the request error below, then approve a new Prepare & watch while disarmed; no failed request is silently retried.")
+        else:
+            result.update(state=current["state"], reason=current.get("reason") or "Waiting for the separate bidirectional endpoint to finish the full current readback. Keep the aircraft disarmed.")
+        return result
 
     @staticmethod
     def _gate(context, policy):
@@ -369,13 +417,22 @@ class OrchestrationService:
                 changed = {"state": acquisition["state"] if acquisition else "interrupted",
                            "finished_monotonic_ns": str(time.monotonic_ns())}
                 if acquisition:
+                    parameter_capture = acquisition.get("parameter_capture", {})
                     changed.update(acquisition_id=acquisition["id"], source_refs=acquisition.get("source_refs", []),
-                                   completeness=acquisition.get("parameter_capture", {}).get("completeness"),
-                                   consistency=acquisition.get("parameter_capture", {}).get("consistency"),
+                                   completeness=parameter_capture.get("completeness"),
+                                   consistency=parameter_capture.get("consistency"),
+                                   decoded_count=parameter_capture.get("decoded_count"),
+                                   expected_count=parameter_capture.get("expected_count"),
                                    atomic=False, recovery_warning=acquisition.get("transport_evidence", {}).get("recovery_warning"),
                                    reason=acquisition.get("interruption_reason") or acquisition.get("archive_error"))
-                    if latest["role"] == "preflight_parameters":
-                        changed["completion_token"] = self._token(self._context(request["capture_session_id"]))
+                    if "parameters" in latest["role"]:
+                        context = self._context(request["capture_session_id"])
+                        token = self._token(context)
+                        if any(latest.get("trigger_token", {}).get(key) != token[key] for key in CONTINUITY_KEYS):
+                            changed.update(revoked=True, freshness="invalidated", applicability="unknown",
+                                           reason="Observed arm cycle or source continuity changed during this readback; retained evidence is not a current preflight snapshot.")
+                        if latest["role"] == "preflight_parameters":
+                            changed["completion_token"] = token
                 self._save("request", latest | changed)
 
     def _finish_stopped_run(self, run, listing=None):
@@ -430,7 +487,7 @@ class OrchestrationService:
                 if "parameters" in request["role"] and request["state"] in ("queued", "running"):
                     token = self._token(context)
                     if any(request.get("trigger_token", {}).get(key) != token[key]
-                           for key in ("source_id", "uid", "boot_epoch", "gap_count", "firmware_identity", "gap_observation")):
+                           for key in CONTINUITY_KEYS):
                         self._save("request", request | {"revoked": True, "freshness": "invalidated", "applicability": "unknown"})
                         if request.get("job_id"):
                             self.jobs.dispatch("jobs.cancel", {"job_id": request["job_id"]})
@@ -439,10 +496,7 @@ class OrchestrationService:
                     if job["state"] in ("failed", "cancelled", "interrupted"):
                         self._save("request", request | {"state": job["state"], "reason": job.get("error", {}).get("message")})
                 if request["role"] == "preflight_parameters" and request["state"] == "complete":
-                    age = (time.monotonic_ns() - int(request["finished_monotonic_ns"])) / 1e9
-                    unchanged = request.get("completion_token") == self._token(context)
-                    eligible = (gate["allowed"] and unchanged and 0 <= age <= policy["preflight_freshness_s"]
-                                and not request.get("revoked") and request.get("freshness") != "invalidated")
+                    eligible = self._preflight_eligible(request, context, policy)
                     self._save("request", request | {"freshness": "within_declared_budget" if eligible else "invalidated",
                         "applicability": "provisional_review_only" if eligible else "unknown",
                         "freshness_budget_s": policy["preflight_freshness_s"]})
@@ -478,7 +532,7 @@ class OrchestrationService:
                         self._start(run, request, policy, context, "acquisition.parameters.capture", {"role": "postflight"})
                         return
             if policy["preflight_parameters"]:
-                anchor = "watch_start" if not intervals else "after:" + intervals[-1]["uuid"]
+                anchor = self._preflight_anchor(context)
                 request = self._request(run, "preflight_parameters", anchor)
                 self._start(run, request, policy, context, "acquisition.parameters.capture", {"role": "preflight"})
 
@@ -546,6 +600,7 @@ class OrchestrationService:
                 run.update(runtime_authorized=run["id"] in self._active and not self._active[run["id"]]["revoked"],
                            restart_replay_allowed=False,
                            authorization_state="runtime_approved" if run["id"] in self._active and not self._active[run["id"]]["revoked"] else "suspended_requires_new_prepare")
+                run["preflight_readiness"] = self._preflight_status(run)
             return {"runs": runs, "requests": requests, "request_total": total, "run_total": run_total,
                     "next_offset": offset + limit if max(total, run_total) > offset + limit else None,
                     "adapter": ADAPTER, "limitations": LIMITATIONS, "recovery_warnings": self.recovery_warnings}

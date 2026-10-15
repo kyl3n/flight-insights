@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { confirm } from '@tauri-apps/plugin-dialog';
 import { errorMessage, isDesktop, request, type CollectionStatus, type Session, type Snapshot } from './api';
@@ -7,10 +7,15 @@ import Collection from './Collection';
 import Compare from './Compare';
 import Evidence from './Evidence';
 import Insights from './Insights';
+import ConnectionSetup from './ConnectionSetup';
+import { getSetupSavedAt, SETTINGS_CHANGED } from './connectionSettings';
 import { Badge, Icon } from './ui';
+import './analysis-workflows.css';
+const Experiments=lazy(()=>import('./Experiments'));
+const Research=lazy(()=>import('./Research'));
 
-type Page = 'overview'|'collection'|'network'|'compare'|'evidence'|'insights';
-const pages: {id:Page;label:string;icon:string}[] = [{id:'overview',label:'Overview',icon:'overview'},{id:'collection',label:'Prepare & watch',icon:'evidence'},{id:'network',label:'Network checks',icon:'network'},{id:'insights',label:'Flight insights',icon:'compare'},{id:'compare',label:'Compare',icon:'compare'},{id:'evidence',label:'Evidence',icon:'evidence'}];
+type Page = 'overview'|'setup'|'collection'|'network'|'compare'|'evidence'|'insights'|'experiments'|'research';
+const pages: {id:Page;label:string;icon:string}[] = [{id:'overview',label:'Overview',icon:'overview'},{id:'setup',label:'Connection setup',icon:'network'},{id:'collection',label:'Prepare & watch',icon:'evidence'},{id:'network',label:'Network checks',icon:'network'},{id:'insights',label:'Flight insights',icon:'compare'},{id:'compare',label:'Compare',icon:'compare'},{id:'experiments',label:'Flight experiments',icon:'compare'},{id:'research',label:'Research library',icon:'evidence'},{id:'evidence',label:'Evidence',icon:'evidence'}];
 
 function App() {
   const [page,setPage] = useState<Page>('overview'); const [ready,setReady] = useState(false);
@@ -19,6 +24,8 @@ function App() {
   const [snapshots,setSnapshots] = useState<Snapshot[]>([]); const [sessions,setSessions] = useState<Session[]>([]);
   const [engineStatus,setEngineStatus] = useState<Record<string,unknown> | null>(null);
   const [collectionStatus,setCollectionStatus]=useState<CollectionStatus|null>(null);
+  const [setupSavedAt,setSetupSavedAt]=useState(getSetupSavedAt);
+  useEffect(()=>{const changed=()=>setSetupSavedAt(getSetupSavedAt());window.addEventListener(SETTINGS_CHANGED,changed);return()=>window.removeEventListener(SETTINGS_CHANGED,changed);},[]);
   const observer=collectionStatus?.active_capture_session||collectionStatus?.capture_sessions.find(capture=>capture.status==='observing');
   useEffect(()=>{
     if(!observer||!isDesktop())return;
@@ -65,11 +72,13 @@ function App() {
         {observer&&<div className="observer-strip"><div><strong>{collectionStatus?.status_unavailable?'Observer status unavailable · keep app open':'App observer recording'}</strong><span>{observer.profile.aircraft_id} · {observer.watcher_state.replaceAll('_',' ')} · evidence {collectionStatus?.readiness.state}</span></div><button className="button secondary small" onClick={()=>setPage('collection')}>View collection</button></div>}
         {error && <div className="error-banner" role="alert"><Icon name="info"/><div><strong>Operation could not complete</strong><p>{error}</p></div><button className="icon-button" aria-label="Dismiss error" onClick={() => setError('')}><Icon name="close"/></button></div>}
         {busy && <div className="working-status" role="status" aria-live="polite"><span className="spinner"/>{busy}…</div>}
-        <div hidden={page !== 'overview'}><Overview ready={ready} snapshots={snapshots} sessions={sessions} navigate={setPage} engineStatus={engineStatus}/></div>
-        <div hidden={page !== 'collection'}><Collection ready={ready} busy={busy} run={run} onStatus={setCollectionStatus} onEvidence={()=>setPage('evidence')}/></div>
-        <div hidden={page !== 'network'}><Network ready={ready} busy={busy} run={run} engineGeneration={engineGeneration}/></div>
+        <div hidden={page !== 'overview'}><Overview ready={ready} snapshots={snapshots} sessions={sessions} navigate={setPage} engineStatus={engineStatus} setupSaved={Boolean(setupSavedAt)}/></div>
+        {page === 'setup' && <ConnectionSetup ready={ready} observerActive={Boolean(observer)} onCollection={()=>setPage('collection')} onNetwork={()=>setPage('network')} onEvidence={()=>setPage('evidence')}/>}
+        <div hidden={page !== 'collection'}><Collection ready={ready} busy={busy} run={run} onStatus={setCollectionStatus} onEvidence={()=>setPage('evidence')} onSetup={()=>setPage('setup')}/></div>
+        <div hidden={page !== 'network'}><Network ready={ready} busy={busy} run={run} engineGeneration={engineGeneration} onSetup={()=>setPage('setup')}/></div>
         <div hidden={page !== 'insights'}><Insights ready={ready} active={page==='insights'} busy={busy} run={run} onImport={()=>setPage('evidence')}/></div>
         <div hidden={page !== 'compare'}><Compare ready={ready} busy={busy} run={run} snapshots={snapshots} sessions={sessions} onImport={() => setPage('evidence')}/></div>
+        {(page==='experiments'||page==='research')&&<Suspense fallback={<div className="working-status" role="status">Loading workspace…</div>}>{page==='experiments'?<Experiments ready={ready} busy={busy} run={run} onInsights={()=>setPage('insights')}/>:<Research ready={ready} busy={busy} run={run} observerActive={Boolean(observer)}/>}</Suspense>}
         <div hidden={page !== 'evidence'}><Evidence ready={ready} busy={busy} run={run} snapshots={snapshots} sessions={sessions} refresh={refresh} onCollection={()=>setPage('collection')}/></div>
         <footer className="workspace-footer"><span>Q22 Flight Lab · Local engineering workspace</span><span>Milestone build · Hardware validation pending</span></footer>
       </main>
@@ -77,8 +86,9 @@ function App() {
   </div>;
 }
 
-function Overview({ready,snapshots,sessions,navigate,engineStatus}: {ready:boolean;snapshots:Snapshot[];sessions:Session[];navigate:(page:Page)=>void;engineStatus:Record<string,unknown>|null}) {
+function Overview({ready,snapshots,sessions,navigate,engineStatus,setupSaved}: {ready:boolean;snapshots:Snapshot[];sessions:Session[];navigate:(page:Page)=>void;engineStatus:Record<string,unknown>|null;setupSaved:boolean}) {
   return <div className="stack"><div className="page-title"><div><span className="eyebrow">FLIGHT ENGINEERING, WITH EVIDENCE</span><h1>Your flight workspace</h1><p>Connect your sources. Preserve the configuration. Understand the next flight.</p></div><Badge>Observe · preserve · compare</Badge></div>
+    <section className="setup-welcome"><span className="setup-welcome-icon"><Icon name="network" size={25}/></span><div><h2>{setupSaved ? 'Your connection settings are saved' : 'Start with a guided connection setup'}</h2><p>{setupSaved ? 'Review your addresses and ports whenever your equipment changes. Saved settings do not confirm a live connection.' : 'We’ll walk you through digiQ addresses and telemetry ports, record your flight software, and help establish current settings before the first flight.'}</p></div><button className="button primary" onClick={()=>navigate('setup')}>{setupSaved ? 'Review connection setup' : 'Set up connections'}<Icon name="arrow"/></button></section>
     <section className="overview-hero"><div className="hero-copy"><div className="hero-kicker"><span className="short-rule"/>START WITH WHAT YOU KNOW</div><h2>Better decisions begin<br/>with the right evidence.</h2><p>Bring network health, flight performance, and ArduPilot settings into one local workspace. Every result begins with your actual sources.</p><button className="button primary" onClick={() => navigate('collection')}>Prepare &amp; watch<Icon name="arrow"/></button></div><div className="hero-diagram" aria-label="Workflow: source evidence, associate flight and parameters, then compare" role="img"><div className="diagram-orbit orbit-one"/><div className="diagram-orbit orbit-two"/><div className="diagram-core"><svg viewBox="0 0 80 80" fill="none" aria-hidden="true"><path d="m25 25 30 30m0-30L25 55" stroke="currentColor" strokeWidth="4"/><rect x="30" y="30" width="20" height="20" rx="6" stroke="currentColor" strokeWidth="2"/><circle cx="22" cy="22" r="13" stroke="currentColor" strokeWidth="2"/><circle cx="58" cy="22" r="13" stroke="currentColor" strokeWidth="2"/><circle cx="22" cy="58" r="13" stroke="currentColor" strokeWidth="2"/><circle cx="58" cy="58" r="13" stroke="currentColor" strokeWidth="2"/></svg><span>Q22</span></div><div className="diagram-node node-one"><span><Icon name="network"/></span>Sources</div><div className="diagram-node node-two"><span><Icon name="evidence"/></span>Configuration</div><div className="diagram-node node-three"><span><Icon name="compare"/></span>Flight evidence</div><span className="diagram-caption">CONNECTED EVIDENCE, CLEARER CONTEXT</span></div></section>
     <section className="workspace-status" aria-label="Workspace evidence status"><div><span className="status-icon"><Icon name="network"/></span><div><span>Local analysis engine</span><strong>{ready ? 'Connected' : 'Not connected'}</strong></div><Badge tone={ready ? 'good' : 'neutral'}>{ready ? 'Ready' : 'Unavailable'}</Badge></div><div><span className="status-icon"><Icon name="evidence"/></span><div><span>Parameter snapshots</span><strong>{snapshots.length ? `${snapshots.length} imported` : 'Awaiting import'}</strong></div></div><div><span className="status-icon"><Icon name="compare"/></span><div><span>Flight evidence</span><strong>{sessions.length ? `${sessions.length} sessions imported` : 'Awaiting import'}</strong></div></div></section>
     <div className="section-title"><h2>Move from setup to understanding</h2><span>Two connected workflows</span></div>

@@ -1,0 +1,13 @@
+.research-sources,.experiment-results{display:grid;gap:20px}
+.research-source{padding:20px;border:1px solid var(--border,#dce3ed);border-radius:10px;background:var(--surface,#fff)}
+.research-source h3{margin:0}.research-excerpt{margin:16px 0;padding:14px 18px;border-left:3px solid #5a80c4;background:#f5f8fd}
+.research-excerpt p{white-space:pre-wrap;overflow-wrap:anywhere;margin:0 0 10px}.research-excerpt cite{font-size:12px;color:#66758f;font-style:normal}
+.experiment-report-list{max-height:260px;overflow:auto;border:1px solid var(--border,#dce3ed);border-radius:8px;padding:10px}
+.experiment-report-list label{padding:8px;align-items:flex-start}.experiment-report-list small{display:block;color:#6d7b91;margin-top:4px}
+.experiment-criteria{display:grid;grid-template-columns:minmax(160px,2fr) minmax(100px,1fr) minmax(110px,1fr) minmax(90px,1fr) auto;gap:10px;align-items:end;margin:12px 0}
+.experiment-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:18px 0}.experiment-summary>div{background:#f5f8fd;border:1px solid #e4eaf4;border-radius:8px;padding:14px}.experiment-summary strong,.experiment-summary small{display:block}
+.workflow-next{display:flex;flex-wrap:wrap;gap:12px;align-items:center}.experiment-workspace fieldset{border:0;padding:0;margin:0;min-width:0}
+.experiment-workspace fieldset:disabled{opacity:.75}.experiment-results td{vertical-align:top}.experiment-results td small{display:block;margin-top:5px}
+.flight-health td{vertical-align:top}.flight-health td small{display:block;max-width:280px;margin-top:5px;color:#66758f}.flight-health .recommendation{margin-bottom:16px}.flight-health .line-between{flex-wrap:wrap;gap:10px}
+.experiment-parameter-checks{margin:20px 0;padding:16px;border:1px solid var(--border,#dce3ed);border-radius:8px}.experiment-parameter-checks td{overflow-wrap:anywhere;max-width:340px}.experiment-parameter-checks h4{margin-top:0}
+@media(max-width:760px){.experiment-criteria{grid-template-columns:1fr 1fr}.experiment-criteria>label:first-child{grid-column:1/-1}.experiment-summary{grid-template-columns:1fr}.research-source{padding:14px}.research-excerpt{padding:12px}.research-source .line-between{align-items:flex-start;gap:12px;flex-wrap:wrap}}

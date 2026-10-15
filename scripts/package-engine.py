@@ -157,6 +157,10 @@ def frozen_inventory(binary: Path) -> dict:
                 "q22_engine.rtp_diagnostics", "q22_engine.radio_history", "q22_engine.catalog",
                 "q22_engine.alignment", "q22_engine.orchestration", "q22_engine.imu_batches",
                 "q22_engine.control_analysis", "q22_engine.filter_models",
+                "q22_engine.flight_environment", "q22_engine.software_versions",
+                "q22_engine.flight_configuration", "q22_engine.flight_health",
+                "q22_engine.insight_context", "q22_engine.insight_comparison",
+                "q22_engine.performance_advice", "q22_engine.experiments", "q22_engine.research",
                 "q22_engine.network_helper", "q22_engine.network_helper_windows"}
     if not required.issubset(modules):
         raise RuntimeError(f"Frozen runtime missing required modules: {sorted(required - set(modules))}")
@@ -269,6 +273,7 @@ def smoke(binary: Path) -> None:
             smoke_logs(rpc, Path(directory))
             acquisitions = smoke_acquisition(rpc, Path(directory))
             report = smoke_insights(rpc, Path(directory))
+            smoke_analysis_workflows(rpc, acquisitions[0], report)
             smoke_control_and_alignment(rpc, Path(directory))
             capture = smoke_recorder(rpc, Path(directory), binary)
         finally:
@@ -821,6 +826,34 @@ def smoke_insights(rpc: SmokeRPC, directory: Path) -> dict:
             or len(raw) != exported["byte_size"] or hashlib.sha256(raw).hexdigest() != exported["sha256"]):
         raise RuntimeError("Local review export differs from its exact preview or integrity receipt")
     return report
+
+
+def smoke_analysis_workflows(rpc: SmokeRPC, readback: dict, report: dict) -> None:
+    """Exercise new entrypoints in the frozen runtime without internet access."""
+    environment = rpc.call("environment.inspect", {})
+    if not environment.get("content_sha256") or not environment["software"]["engine"].get("version"):
+        raise RuntimeError("Frozen environment observation lost version or immutable provenance")
+    promoted = rpc.job("parameters.promote_readback", {"acquisition_id": readback["id"]})["snapshot"]
+    if promoted.get("parameter_count") != 2 or promoted.get("acquisition_id") != readback["id"]:
+        raise RuntimeError("Frozen readback promotion did not preserve the acquired parameter set")
+    compared = rpc.job("insights.compare", {"before_report_id": report["id"], "after_report_id": report["id"]})
+    if compared.get("causal_attribution") is not False or not any(row["code"] == "same_report" for row in compared["confounders"]):
+        raise RuntimeError("Frozen comparison lost duplicate-report evidence limits")
+    plan = rpc.call("experiments.create", {"name": "Synthetic empty packaging plan",
+        "hypothesis": "Missing flights must never be reported as an improvement.", "flight_phase": "hover",
+        "reference_report_ids": [], "candidate_report_ids": [],
+        "goals": [{"metric": "mean_power_w", "unit": "W", "direction": "lower", "minimum_change": 1}]})["experiment"]
+    outcome = rpc.job("experiments.evaluate", {"experiment_id": plan["id"]})["evaluation"]
+    if outcome.get("status") != "insufficient_evidence" or outcome.get("causal_attribution") is not False:
+        raise RuntimeError("Frozen experiment manufactured improvement from missing evidence")
+    saved = rpc.call("experiments.detail", {"experiment_id": plan["id"]})
+    if not saved["evaluations"] or saved["evaluations"][0]["id"] != outcome["id"]:
+        raise RuntimeError("Frozen experiment evaluation was not retained")
+    research = rpc.call("research.query", {"topic": "bidirectional_dshot"})
+    if not research.get("results") or any(row.get("cache_state") != "bundled" or not row.get("sha256") for row in research["results"]):
+        raise RuntimeError("Frozen offline research library lacks bundled source provenance")
+    if not report.get("performance_advice") or len(report.get("health", {}).get("domains", [])) != 5 or "configuration" not in report:
+        raise RuntimeError("Frozen report omitted advice, health domains or configuration evidence")
 
 
 def smoke_control_and_alignment(rpc: SmokeRPC, directory: Path) -> None:

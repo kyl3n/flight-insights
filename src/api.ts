@@ -1,4 +1,8 @@
 import { invoke } from '@tauri-apps/api/core';
+import type { FlightEnvironmentContext, FlightEnvironmentSnapshotData } from './FlightEnvironment';
+import type { PerformanceAdviceData, ParameterExplanation } from './PerformanceAdvice';
+import type { FlightConfigurationData } from './FlightConfiguration';
+import type { FlightHealthData } from './FlightHealth';
 
 export const isDesktop = () => '__TAURI_INTERNALS__' in window;
 export async function request<T>(method: string, params: Record<string, unknown> = {}): Promise<T> {
@@ -43,6 +47,8 @@ export interface ParameterDiff {
   counts: {changed: number; added: number; removed: number}; limitations: string[]; truncated?:boolean;
 }
 export interface Comparison {
+  parameter_explanations?:ParameterExplanation[];
+  parameter_explanations_truncated?:boolean;
   status: string; parameter_diff: ParameterDiff;
   metrics: {name: string; unit: string; before: number | null; after: number | null; absolute_change: number | null; percent_change: number | null;before_coverage_fraction?:number;after_coverage_fraction?:number}[];
   confounders: {field: string; reason: string; before: unknown; after: unknown}[]; limitations: string[];
@@ -125,6 +131,7 @@ export interface RecoveryReceipt extends RepairPlan {
 export interface RecoveryResponse {status:'ready'|'unavailable';repairs:RecoveryReceipt[];warnings:string[]}
 export interface CollectionProfile {
   aircraft_id:string;aircraft_profile_version:string;connection_profile_version:string;
+  environment_context?:FlightEnvironmentContext;
   connection:{local_address:string;listen_port:number;expected_sender:string;system_id:number;component_id:number;expected_uid?:string;feed_origin:'live_forwarded';synthetic:boolean};
   required_sources:string[];
 }
@@ -161,7 +168,8 @@ export interface RecorderStatus {
 }
 export interface FlightBundleDetail {
   flight_record:FlightRecord;armed_interval:Record<string,unknown>;capture_session:CaptureSession;
-  manifest:{revision:number;artifacts:ArtifactAssociation[];collection_completeness:CollectionCompleteness;parameter_evidence:FlightRecord['parameter_evidence'];limitations:string[];[key:string]:unknown};
+  environment_snapshot?:FlightEnvironmentSnapshotData;
+  manifest:{revision:number;artifacts:ArtifactAssociation[];collection_completeness:CollectionCompleteness;parameter_evidence:FlightRecord['parameter_evidence'];environment_snapshot?:FlightEnvironmentSnapshotData;limitations:string[];[key:string]:unknown};
   revisions:{revision:number;created_at:string;reason:string}[];associations:ArtifactAssociation[];
   retrieval_requests:{id?:string;role?:string;state:string;recovery_action:string;observed_path_or_null:string|null;[key:string]:unknown}[];
   association_total?:number;association_offset?:number;associations_truncated?:boolean;revision_total?:number;revisions_truncated?:boolean;
@@ -171,6 +179,10 @@ export interface InsightEvidence {time_s?:number|null;time_us?:string|null;recor
 export interface InsightFinding {id:string;kind:string;severity:string;title:string;evidence:InsightEvidence;details:Record<string,unknown>;citation_ids:string[]}
 export interface GuidanceCitation {id:string;title:string;summary:string;evidence_requirements:string[];limitations:string[];parameter_families:string[];firmware_scope:string;references:{source_id:string;repository:string;revision:string;path:string;url:string;sha256:string;retrieved_at:string;line_start?:number;line_end?:number}[]}
 export interface InsightReport {
+  health?:FlightHealthData;
+  configuration?:FlightConfigurationData;
+  performance_advice?:PerformanceAdviceData;
+  flight_context?:{status:string;reason?:string;flight_record_id?:string;environment_snapshot?:FlightEnvironmentSnapshotData;limitations:string[]};
   id:string;created_at?:string;algorithm_version:string;control?:ControlEvidence;filter_model?:FilterModelEvidence;modeled_spectrum?:{status:string;reason?:string;bins?:{frequency_hz:number;observed_psd:number;modeled_psd:number|null}[];observed_band_power?:number;modeled_band_power?:number;band_power_unit?:string;band_attenuation_db?:number;band_start_hz?:number;band_end_hz?:number;interpretation?:string;[key:string]:unknown};
   scope:{log_id:string;source_sha256:string;synthetic:boolean;source_key:string;boot_epoch:number;time_domain:string;origin_time_us:string|null;interval_start_s:number;interval_end_s:number;max_gap_s:number;battery_id:string|null};
   operating_profile:Record<string,unknown>;metrics:Record<string,Metric>;

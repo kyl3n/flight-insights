@@ -21,6 +21,7 @@ ALGORITHM = "q22-explicit-csv-metrics/1"
 PARAMETER_PARSER = "mission-planner-qgc-parameters/1"
 MAX_PARAMETERS = 50000
 MAX_DIFF = 1000
+MAX_PARAMETER_EXPLANATIONS = 128
 MAX_TIME_SECONDS = (2 ** 53 - 1) / 1_000_000
 NAME = re.compile(r"[A-Z][A-Z0-9_]{0,63}\Z")
 NUMBER = re.compile(r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?\Z")
@@ -147,6 +148,13 @@ def bounded_page(key: str, documents: list[dict], offset: int, limit: int) -> di
 
 def parameter_diff(before: dict, after: dict) -> dict:
     issues = [f"{key} differs" for key in ("aircraft_id", "board", "firmware") if before[key] != after[key]]
+    preserved_readbacks = any(snapshot.get("acquisition_id") for snapshot in (before, after))
+    if preserved_readbacks:
+        for label, snapshot in (("before", before), ("after", after)):
+            if snapshot.get("usable_for_full_comparison") is not True:
+                issues.append(f"{label} does not establish a complete, consistent requested readback")
+        if before.get("hardware_uid") != after.get("hardware_uid"):
+            issues.append("reported hardware UID differs or is unavailable")
     changed, added, removed = [], [], []
     old, new = before["parameters"], after["parameters"]
     for name in sorted(old.keys() | new.keys()):
@@ -155,16 +163,33 @@ def parameter_diff(before: dict, after: dict) -> dict:
             added.append({**annotation, "value": new[name]["value"]})
         elif name not in new:
             removed.append({**annotation, "value": old[name]["value"]})
-        elif Decimal(old[name]["value"]) != Decimal(new[name]["value"]):
-            changed.append({**annotation, "before": old[name]["value"], "after": new[name]["value"]})
+        else:
+            typed = all(row.get("canonical_token") is not None and row.get("mav_param_type") is not None for row in (old[name], new[name]))
+            differs = ((old[name]["mav_param_type"], old[name]["canonical_token"]) != (new[name]["mav_param_type"], new[name]["canonical_token"])) if typed else Decimal(old[name]["value"]) != Decimal(new[name]["value"])
+            if differs:
+                changed.append({**annotation, "before": old[name]["value"], "after": new[name]["value"],
+                    **({"before_type": old[name]["mav_param_type"], "after_type": new[name]["mav_param_type"],
+                        "before_token": old[name]["canonical_token"], "after_token": new[name]["canonical_token"]} if typed else {})})
     counts = {"changed": len(changed), "added": len(added), "removed": len(removed)}
+    retained, remaining = [], 1024 * 1024
+    for rows in (changed, added, removed):
+        output = []
+        for row in rows[:MAX_DIFF]:
+            size = len(json.dumps(row, separators=(",", ":")).encode())
+            if size > remaining:
+                break
+            output.append(row)
+            remaining -= size
+        retained.append(output)
     return {"before_id": before["id"], "after_id": after["id"],
             "compatibility": {"compatible": not issues, "issues": issues,
-                              "identity_basis": "operator-declared exact board/firmware identity"},
-            "changed": changed[:MAX_DIFF], "added": added[:MAX_DIFF], "removed": removed[:MAX_DIFF],
-            "counts": counts, "truncated": any(n > MAX_DIFF for n in counts.values()),
+                              "identity_basis": "reported UID and firmware; not authenticated" if preserved_readbacks else "operator-declared exact board/firmware identity"},
+            "changed": retained[0], "added": retained[1], "removed": retained[2],
+            "counts": counts, "truncated": any(len(rows) != len(output) for rows, output in zip((changed, added, removed), retained)),
             "limitations": ["Units, bitmask labels, ranges and applicability remain unavailable until matching firmware metadata is validated.",
-                            "A snapshot diff never authorizes copying calibration or applying values to an aircraft."]}
+                            "A snapshot diff never authorizes copying calibration or applying values to an aircraft."] +
+                           (["Missing values in incomplete readbacks mean unobserved evidence, not removed or added aircraft settings.",
+                             "Readback values do not establish in-flight activation times or reboot applicability."] if preserved_readbacks else [])}
 
 
 def performance_metrics(path: Path, start: float, end: float, max_gap: float, *, break_before_column=None, cancel_check=None) -> dict:
@@ -322,15 +347,22 @@ class ParameterService:
     def __init__(self, store: Store):
         self.store = store
 
-    def dispatch(self, method: str, params: dict) -> dict:
+    def dispatch(self, method: str, params: dict, cancel_check=None, progress=None) -> dict:
         methods = {"parameters.import": self.import_parameters, "parameters.list": self.list_parameters,
+                   "parameters.promote_readback": self.promote_readback,
                    "parameters.diff": self.diff, "sessions.import": self.import_session,
                    "sessions.list": self.list_sessions, "comparison.run": self.compare}
         if method not in methods:
             raise ValueError(f"Unsupported parameter/session method: {method}")
         if not isinstance(params, dict):
             raise ValueError("Method params must be an object.")
+        if method == "parameters.promote_readback":
+            return self.promote_readback(params, cancel_check=cancel_check, progress=progress)
         return methods[method](params)
+
+    def promote_readback(self, params, *, cancel_check=None, progress=None):
+        from .flight_configuration import FlightConfigurationService
+        return FlightConfigurationService(self.store).promote(params, cancel_check=cancel_check, progress=progress)
 
     def import_parameters(self, params):
         metadata = identity(params)
@@ -430,6 +462,11 @@ class ParameterService:
         return bounded_page("sessions", sessions, offset, limit)
 
     def compare(self, params):
+        # Keep the shared explanation layer out of parameter-parser imports.
+        # These are hypotheses about meaning, never an attribution of measured
+        # changes to the setting or a parameter command.
+        from .performance_advice import explain_parameter_change
+
         before = self.store.get_document("session", text_field(params, "before_session_id"))
         after = self.store.get_document("session", text_field(params, "after_session_id"))
         before_snapshot = self.store.get_document("snapshot", before["snapshot_id"])
@@ -486,9 +523,16 @@ class ParameterService:
             metrics.append({"name": name, "unit": old["unit"], "before": a, "after": b,
                             "absolute_change": delta, "percent_change": percent,
                             "before_coverage_fraction": old["coverage_fraction"], "after_coverage_fraction": new["coverage_fraction"]})
+        diff = parameter_diff(before_snapshot, after_snapshot)
+        firmware = before_snapshot["firmware"] if before_snapshot["firmware"] == after_snapshot["firmware"] else None
+        explanations = [explain_parameter_change(item["name"], item["before"], item["after"], firmware)
+                        for item in diff["changed"][:MAX_PARAMETER_EXPLANATIONS]]
         return {"before_session_id": before["id"], "after_session_id": after["id"],
                 "status": "confounded" if confounders else "descriptive_only", "synthetic": before["synthetic"] or after["synthetic"],
-                "parameter_diff": parameter_diff(before_snapshot, after_snapshot), "metrics": metrics,
+                "parameter_diff": diff, "metrics": metrics,
+                "parameter_explanations": explanations,
+                "parameter_explanations_truncated": diff["counts"]["changed"] > len(explanations),
+                "parameter_explanations_limit": MAX_PARAMETER_EXPLANATIONS,
                 "confounders": confounders, "independent_flight_count": None,
                 "limitations": ["Observed association is not causation. No tuning values or aircraft writes are generated.",
                                 "One selected interval per input is not a repeated-trial experiment; no statistical confidence interval is claimed.",

@@ -23,15 +23,17 @@ from .store import Store
 MAX_REQUEST = 1024 * 1024
 MAX_RESPONSE = 4 * 1024 * 1024
 METHODS = (
-    "handshake", "engine.status", "sources.capabilities", "network.inspect",
+    "handshake", "engine.status", "sources.capabilities", "network.inspect", "environment.inspect",
     "catalog.status", "catalog.verify",
     "network.probe", "network.plan", "network.apply", "network.rollback", "network.recovery",
     "network.profile", "network.capabilities", "network.bench_opt_in",
     "session.preview", "session.prepare_and_watch", "session.status", "session.detail", "session.stop",
     "associations.evaluate", "associations.review",
-    "parameters.import", "parameters.list", "parameters.diff", "sessions.import",
+    "parameters.import", "parameters.list", "parameters.diff", "parameters.promote_readback", "sessions.import",
     "sessions.list", "comparison.run", "logs.import", "logs.list", "logs.detail", "logs.session",
-    "insights.report", "insights.list", "insights.detail", "insights.review_packet", "insights.export_review",
+    "insights.report", "insights.list", "insights.detail", "insights.compare", "insights.review_packet", "insights.export_review",
+    "experiments.create", "experiments.list", "experiments.detail", "experiments.evaluate",
+    "research.status", "research.query", "research.refresh",
     "acquisition.preview", "acquisition.parameters.capture", "acquisition.logs.list", "acquisition.logs.download",
     "acquisition.list", "acquisition.detail",
     "orchestration.preview", "orchestration.policy.save", "orchestration.policy.list",
@@ -63,6 +65,8 @@ class Engine:
                                       repair_backend=NativeRepairBackend())
         self.logs = None
         self.insights = InsightReports(self.store)
+        self.experiments = None
+        self.research = None
         self.acquisition = None
         self.orchestration = None
         self.reconciliation = None
@@ -83,13 +87,17 @@ class Engine:
         if self.orchestration is not None:
             self.orchestration.close()
         self.collection.close()
+        self.collection.collection.environment.close()
         self.jobs.close()
 
     def call(self, method: str, params: dict) -> dict:
         if method == "handshake":
+            self.collection.collection.environment.note_client(params)
             return {"protocol_version": 1, "engine_version": __version__,
                     "product": "Q22 Flight Lab", "milestone": "managed-analysis-preview",
                     "capabilities": list(METHODS), "limitations": LIMITATIONS}
+        if method == "environment.inspect":
+            return self.collection.collection.environment.inspect(params.get("environment_context"))
         if method == "engine.status":
             return {"state": "available", "protocol_version": 1,
                     "engine_version": __version__, "uptime_s": round(time.monotonic() - self.started, 2),
@@ -103,6 +111,10 @@ class Engine:
                 {"kind": "tlog", "state": "available", "limits": "Recorded MAVLink only; source and boot epochs remain separate."},
                 {"kind": "live_recording", "state": "available", "limits": "Explicit separate passive UDP feed; read-only requests use a separate reviewed bidirectional endpoint. UDP replay protection remains unavailable."},
                 {"kind": "insights", "state": "available", "limits": "Scoped measurements, versioned guidance and explicit evidence gaps; no automatic tuning or aircraft writes."},
+                {"kind": "flight_environment", "state": "available", "limits": "Immutable capture/flight OS and allowlisted software observations; supported native metadata only, with pending or unavailable versions kept explicit."},
+                {"kind": "flight_configuration", "state": "available", "limits": "Preserved typed readbacks linked through revalidated flight alignment; complete enumeration does not establish atomic effective in-flight configuration."},
+                {"kind": "flight_experiments", "state": "available", "limits": "Immutable plans, repeated-flight and paired comparisons, goals, regressions and counterexamples; no causal or statistical-independence claim."},
+                {"kind": "research_library", "state": "available", "limits": "Offline official excerpts and explicit optional source updates; downloaded material remains unreviewed and cannot replace tuning rules."},
                 {"kind": "read_only_acquisition", "state": "experimental", "limits": "Explicit direct bidirectional endpoint, fresh disarmed identity/clock gates; real GCS/hardware qualification pending."},
                 {"kind": "collection_policies", "state": "experimental", "limits": "Explicit per-capture approval; gated pre/postflight readbacks and selected post-stop log transfers. No startup/restart replay or automatic aircraft commands."},
                 {"kind": "evidence_alignment", "state": "available", "limits": "Bounded imported catalog, identity/clock/armed-interval corroboration and reviewed attachment. Verified rule matches do not establish cryptographic identity or complete historical settings."},
@@ -155,9 +167,25 @@ class Engine:
         if method.startswith(("session.", "associations.")):
             return self.collection.dispatch(method, params)
         if method.startswith("insights."):
-            if method == "insights.report":
+            if method in {"insights.report", "insights.compare"}:
                 return self.jobs.start(method, params, self.insights.dispatch)
             return self.insights.dispatch(method, params)
+        if method.startswith("experiments."):
+            if self.experiments is None:
+                from .experiments import ExperimentService
+                self.experiments = ExperimentService(self.store)
+            if method == "experiments.evaluate":
+                return self.jobs.start(method, params, self.experiments.dispatch)
+            return self.experiments.dispatch(method, params)
+        if method.startswith("research."):
+            if self.research is None:
+                from .research import ResearchService
+                self.research = ResearchService(self.store)
+            if method == "research.refresh":
+                if self.collection.recorder.status().get("active"):
+                    raise ValueError("Stop recording before updating reference sources. Cached research remains available during recording.")
+                return self.jobs.start(method, params, self._research_job)
+            return self.research.dispatch(method, params)
         if method.startswith("acquisition."):
             self._acquirer()
             if method in {"acquisition.parameters.capture", "acquisition.logs.list", "acquisition.logs.download"}:
@@ -184,7 +212,17 @@ class Engine:
             if method in ("logs.import", "logs.session"):
                 return self.jobs.start(method, params, self.logs.dispatch)
             return self.logs.dispatch(method, params)
+        if method == "parameters.promote_readback":
+            return self.jobs.start(method, params, self.parameters.dispatch)
         return self.parameters.dispatch(method, params)
+
+    def _research_job(self, method, params, cancel_check=None, progress=None):
+        # A queued or running internet update must yield the shared worker when
+        # recording begins, so it cannot hold up a preflight readback policy.
+        def cancelled():
+            return bool((cancel_check and cancel_check()) or self.collection.recorder.status().get("active"))
+
+        return self.research.dispatch(method, params, cancel_check=cancelled, progress=progress)
 
     def _acquirer(self):
         if self.acquisition is None:

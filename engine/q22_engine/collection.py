@@ -15,6 +15,7 @@ import threading
 from uuid import uuid4
 
 from .store import Store
+from .flight_environment import EnvironmentDetector, unavailable_snapshot, validate_context
 
 
 REQUIRED_SOURCES = ("app_mavlink_capture", "onboard_bin", "preflight_parameters", "postflight_parameters")
@@ -60,8 +61,9 @@ def _clock(value, label, nullable=False):
 
 
 class CollectionService:
-    def __init__(self, store: Store):
+    def __init__(self, store: Store, *, environment=None):
         self.store = store
+        self.environment = environment if environment is not None else EnvironmentDetector()
         self._lock = threading.RLock()
         self._parameters = {}
         with store._connect() as db:
@@ -122,6 +124,8 @@ class CollectionService:
         if row is None:
             raise ValueError(f"Unknown collection {kind} or revision.")
         value = json.loads(row[0])
+        if kind in ("capture", "interval", "flight_record", "manifest") and "environment_snapshot" not in value:
+            value["environment_snapshot"] = unavailable_snapshot(scope="capture_start" if kind == "capture" else "armed_interval_start")
         if kind == "capture" and revision is None:
             runtime = db.execute("SELECT data FROM collection_runtime WHERE capture_id=?", (identity,)).fetchone()
             if runtime:
@@ -207,11 +211,23 @@ class CollectionService:
         if not isinstance(required, list) or not required or any(x not in REQUIRED_SOURCES for x in required):
             raise ValueError("required_sources must contain supported evidence roles.")
         profile.update(connection=connection, required_sources=sorted(set(required)))
+        if "environment_context" in params:
+            profile["environment_context"] = validate_context(params["environment_context"])
         return {"profile": profile, "applicability_fingerprint": _hash(profile),
                 "capabilities": {"managed_observation": True, "automatic_armed_intervals": True,
                                  "active_parameter_readback": False, "onboard_log_retrieval": False,
                                  "verified_retrospective_match": True},
                 "readiness": self.readiness(), "limitations": LIMITATIONS}
+
+    def _environment_snapshot(self, profile, scope):
+        # Detection is local and bounded; even an unexpected detector failure
+        # must never discard an otherwise qualified observed arm transition.
+        context = profile.get("environment_context")
+        try:
+            return copy.deepcopy(self.environment.inspect(context, scope=scope))
+        except Exception as error:
+            return unavailable_snapshot("detector_failed:" + type(error).__name__, scope=scope,
+                                        context=context, observed=True)
 
     def _operation(self, db, method, params, profile):
         operation_id = _text(params.get("operation_id"), "operation_id")
@@ -243,6 +259,7 @@ class CollectionService:
                 raise ValueError("Stop the existing observation session before preparing another.")
             capture = self._put(db, "capture", {
                 "uuid": str(uuid4()), "profile": profile,
+                "environment_snapshot": self._environment_snapshot(profile, "capture_start"),
                 "aircraft_profile_version": profile["aircraft_profile_version"],
                 "connection_profile_version": profile["connection_profile_version"],
                 "applicability_fingerprint": preview["applicability_fingerprint"],
@@ -336,6 +353,7 @@ class CollectionService:
         self._parameters.pop((capture["uuid"], event["source_id"]), None)
         interval = self._put(db, "interval", {
             "uuid": interval_id, "capture_session_id": capture["uuid"], "aircraft_id": aircraft_id,
+            "environment_snapshot": self._environment_snapshot(capture["profile"], "armed_interval_start"),
             "display_number": number, "boot_epochs": [event.get("boot_epoch", "unknown")],
             "source_id": event["source_id"], "identity_evidence": source.get("identity_evidence"), "arm_evidence": self._evidence(event), "disarm_evidence": None,
             "started_already_armed": already, "start_status": "unknown" if already else "observed_transition",
@@ -347,6 +365,7 @@ class CollectionService:
         })
         self._put(db, "flight_record", {
             "id": record_id, "armed_interval_id": interval_id, "capture_session_id": capture["uuid"],
+            "environment_snapshot": interval["environment_snapshot"],
             "aircraft_profile_version": capture["profile"]["aircraft_profile_version"],
             "classification": "unknown", "airborne_segment_ids": [], "evidence_manifest_revisions": [],
             "notes": [], "comparison_context": {"eligibility": "unknown", "reasons": ["Airborne segments and historical parameter applicability are unverified."]},
@@ -550,6 +569,7 @@ class CollectionService:
                         "present": present, "missing": sorted(set(required) - set(present))}
         manifest = self._put(db, "manifest", {
             "id": record["id"], "flight_record_id": record["id"], "armed_interval_id": interval["uuid"],
+            "environment_snapshot": interval["environment_snapshot"],
             "capture_session_id": capture["uuid"], "reason": reason, "artifacts": associations,
             "collection_completeness": completeness, "parameter_evidence": interval["parameter_evidence"],
             "association_summary": {state: sum(a["state"] == state for a in associations) for state in ("verified", "provisional", "rejected", "missing")},
@@ -818,6 +838,8 @@ class CollectionService:
         interval = self._get(db, "interval", record["armed_interval_id"])
         manifest = self._get(db, "manifest", record["id"])
         return {key: record[key] for key in ("id", "armed_interval_id", "capture_session_id", "classification", "latest_manifest_revision")} | {
+            "environment_snapshot": interval["environment_snapshot"],
+        } | {
             key: interval[key] for key in ("display_number", "processing_state", "started_already_armed", "arm_evidence", "disarm_evidence")
         } | {key: manifest[key] for key in ("collection_completeness", "association_summary")} | {"parameter_evidence": self._compact_parameter_evidence(manifest["parameter_evidence"]), "missing_sources": manifest["collection_completeness"]["missing"]}
 
@@ -865,6 +887,7 @@ class CollectionService:
             summary["missing_sources"] = manifest["collection_completeness"]["missing"]
             summary["latest_manifest_revision"] = manifest["revision"]
             return {"flight_record": record | summary, "armed_interval": self._get(db, "interval", record["armed_interval_id"]),
+                    "environment_snapshot": manifest["environment_snapshot"],
                     "capture_session": self._public_capture(self._get(db, "capture", record["capture_session_id"]), detailed=True),
                     "manifest": manifest, "revisions": revisions, "revision_total": record["latest_manifest_revision"],
                     "revisions_truncated": record["latest_manifest_revision"] > len(revisions),

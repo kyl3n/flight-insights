@@ -1,5 +1,159 @@
 # Validation record
 
+## Flight Insights Preview 0.2.0 — 15 October 2026
+
+This checkpoint adds full typed readback preservation and flight-linked
+comparisons/advice, supported Windows/Linux software-version discovery,
+immutable repeated-flight experiments, an offline research library with explicit
+official-source updates, and descriptive DataFlash health observations. The
+earlier sections below describe earlier executables and remain historical.
+
+The build uses the edited working tree based on
+`c1f0ee6ac6393fbdfc5aadadfe6ba6c1a7b5bcb4`, **not that commit alone**. App and
+engine versions are 0.2.0. Executable source/build-manifest hashes are retained in
+`/workspace/artifacts/flight-insights-0.2.0-build-inputs.json`. They were unchanged
+between the source freeze and final artifact verification. The separate source
+delivery contains the uncommitted additions and per-file manifest needed to
+recover this checkpoint; it does not rely on the earlier unavailable chat.
+
+| Executed check | Result |
+| --- | --- |
+| Full Python engine suite | **941 passed**, **29 subtests passed**, **15 skipped**, 88.84 seconds |
+| Full real-engine browser integration suite | **39 passed**, 5.1 minutes |
+| Native desktop supervisor and lifecycle suite | **17 Rust tests passed**, using the newly frozen engine |
+| TypeScript and production frontend build | Passed; non-fatal Vite 500 kB chunk-size advisory remains |
+| Native formatting and lint | rustfmt and Clippy with warnings denied passed |
+| Frozen engine inventory and expanded smoke | Passed, including the new readback, comparison, experiment, environment and offline research entrypoints |
+| Debian 13 x64 evaluation installer | Built; packaged originals, frozen runtime, relocated Unicode-path supervisor, restart and shutdown verified |
+| Dependency inventory | 320 application dependencies; no unresolved dependency notice texts |
+| Production WebView launch in this cloud | **Blocked/failed** on the first required launch; missing system WebKit child-process path, detailed below |
+| Handoff preservation | All 11 original SHA-256 entries verified |
+
+The 15 Python skips are nine optional SciPy reference checks and six Windows-only
+ACL, file-handle or wrapper checks. These are not passed Windows checks.
+All aircraft, acquisition, flight and browser source-update fixtures are explicitly
+synthetic. Separate read-only live research verification fetched the official
+wiki revision `cadd485473937a2dc2264f98e54fbedc892c21dc` and two ESC source files
+through the configured proxy, retaining source hashes. No flight data or search
+terms were sent.
+
+New failure-path coverage includes immutable pending/observed app versions,
+package replacement and executable checksum mismatches, exact typed values and
+complete readbacks beyond display previews, partial/ambiguous/damaged flight
+linkage, repeated-flight identity and paired goals, counterexamples, unit and
+coverage mismatch, missing health schemas, cancellation during original-file
+hashing or failed network reads, and delayed UI results after selection changes.
+Promotion, comparisons and experiments run in cancellable background jobs. The
+shared worker can still queue a preflight request behind another analysis;
+queued/failed evidence is never labelled a completed preflight readback.
+
+The unsigned local artifact is
+`/workspace/artifacts/Q22-Flight-Lab-0.2.0-debian13-amd64.deb`, with SHA-256
+`91423a534e943aefffe2cd113a4a1192255054e4da42e2dc9284259a15f5a4c5`.
+The embedded engine SHA-256 is
+`753d217cdce9a27db8e57adbe4c747528b266acfd6157582312a9dddff371c04`.
+Its declared dependencies are libc6 >= 2.39, libwebkit2gtk-4.1-0 and libgtk-3-0.
+This is a Debian 13 evaluation build, not the Ubuntu CI baseline. Successful
+bundle evidence is retained in `native-verification-0.2.0-linux.json`.
+
+The separate `--require-gui --gui-repetitions 3` check failed launch 1/3 with
+`/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess` missing. This
+workspace uses extracted native dependency packages and cannot write the system
+library directory. No failed launch was retried or sandbox weakened. The failed
+attempt receipt and stderr are retained under `/workspace/artifacts/`; the
+successful payload/supervisor check does **not** establish graphical installation.
+
+Logs use the `flight-insights-0.2.0-` prefix. Research, experiment, readback,
+comparison and health screenshots were captured and visually reviewed.
+The source ZIP and its external manifest/checksum are generated with
+`scripts/package-source.py` after documentation is finalized. No current-source
+Windows installer, AppImage, publisher signature, clean desktop upgrade result,
+physical digiQ/GCS/ESC qualification or real-flight performance validation is
+claimed. No updated installer has been published to GitHub. Numerical
+aircraft-specific tuning, complete dynamic firmware/filter parity and the
+remaining full-handoff capabilities stay open in [acceptance-status.md](acceptance-status.md).
+
+## Current configuration and performance explanations — 15 October 2026
+
+The updated [product direction](current-product-direction.md) is implemented as a
+local evidence and explanation foundation. It removes historical tune and COM
+setup prerequisites, preserves a fresh environment observation per managed armed
+interval, promotes current pre/postflight readback guidance, and adds sourced
+parameter explanations to saved-report and scoped-session comparisons.
+
+Executed against this working tree in the managed Debian 13 environment:
+
+| Check | Result |
+| --- | --- |
+| Full Python engine suite | **743 passed**, **29 subtests passed**, **15 skipped**, 54.90 seconds |
+| Full browser integration suite | **33 passed**, 3.0 minutes, using the real engine through the test transport |
+| React/TypeScript production build | Passed; Vite retains its non-fatal 500 kB chunk-size advisory |
+| Packaged Python engine | Frozen runtime build, inventory and existing expanded smoke checks passed |
+| Native desktop transport | **17 Rust tests passed**, including the packaged engine handshake and new RPC allowlist parity |
+| Native formatting/lint | rustfmt and Clippy with warnings denied passed |
+| Source/document checks | `git diff --check` and updated-document local links passed |
+
+After the final current-settings onboarding wording change, the production build
+and all four existing workflow browser tests passed again.
+
+The Python skips are nine optional SciPy reference checks and six Windows-only
+ACL, file-handle or wrapper checks. These are not passing platform checks. The
+final frozen engine SHA-256 is
+`ea012fa1649ac5b002c47ee223006f27e3317bef2582c4b3aa95711aae2f2034`.
+
+New coverage exercises fresh-install collection without a historical baseline,
+capture/flight environment provenance, missing exact software versions, immutable
+history across updates and restarts, rapid arm/disarm readback revocation, exact
+managed-flight source/clock/record containment, and rejection of damaged or
+competing linkage evidence. Comparisons exercise actual decoded parameter
+changes, metric units and coverage, compatible versus incompatible spectra,
+conditional explanations, unsupported parameters and bounded output. Browser
+regressions cover late setup saves, intentional declaration removal, delayed
+flight/revision refreshes, and retained report history. Device fixtures and
+loopback aircraft traffic are synthetic; they are never real-aircraft acceptance.
+
+The recorded-context and performance-comparison screens were visually reviewed.
+Logs and screenshots are retained under `/workspace/artifacts/` with the prefix
+`flight-insights-current-context-` or the dated feature name.
+
+No updated installer or cloud/GitHub publication was produced. Exact GCS-version
+discovery, complete effective parameter history, aircraft-specific numeric tuning,
+live online research and actual digiQ/GCS/ESC flight qualification remain open.
+The new advice uses reviewed, revision-pinned ArduPilot sources offline and does
+not claim exhaustive solution coverage or causal proof. Older installed previews
+remain unchanged.
+
+## Guided connection setup — 15 October 2026
+
+Resumed from `c1f0ee6ac6393fbdfc5aadadfe6ba6c1a7b5bcb4`, verified against the live
+GitHub `main` reference. See [the development checkpoint](resuming-development.md)
+and [setup walkthrough](connection-setup.md).
+
+The guided-setup working tree passed TypeScript checking and the Vite production
+build. Vite reports a non-fatal 500 kB chunk-size advisory (the application JS is
+506.25 kB before gzip). The full browser suite passed **26 tests** in 2.6 minutes,
+followed by **two added regression tests** in 11.4 seconds: **28 distinct browser
+tests passed**, including all nine new guided-setup cases. The two later tests
+verify that an older observer-start response cannot overwrite newer saved
+settings, and that successful `inspected` adapter results are not labelled
+incomplete. `git diff --check` also passed.
+
+New coverage includes shared profile/source persistence and reload, malformed
+IPv4/port/source-ID rejection, explicit probing without automatic recording or
+host changes, honest no-packet and inspection-failure results, offline setup,
+COM/baud reminders without a serial connection, and invalidation of an obsolete
+observer preview/approval. The existing 19 analysis, acquisition, collection,
+import and recovery tests also passed. The delayed-start test starts and stops a
+real loopback observer through the engine, delaying only the native response.
+Selected OS/device outcomes in other setup tests are explicit boundary fixtures.
+Desktop and 360-pixel layouts were captured and visually reviewed.
+
+No new native installer, production WebView qualification, hardware connection,
+or physical COM/GCS/radio/camera test was executed for this change. The Python and
+Rust protocols are unchanged. The October 13 preview downloads below contain
+their original source and do not include the new setup guide. General release
+and real-aircraft acceptance remain open.
+
 ## Managed analysis and private bench qualification — 13 October 2026
 
 The [native run for `41e1974`](https://github.com/kyl3n/flight-insights/actions/runs/38372096954)

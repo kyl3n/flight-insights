@@ -37,6 +37,16 @@ class InsightReports:
             summaries = [{key: report.get(key) for key in ("id", "created_at", "scope", "status", "algorithm_version")}
                          | {"finding_count": len(report.get("findings", []))} for report in reports[:limit]]
             return {"reports": summaries, "next_offset": offset + limit if len(reports) > limit else None}
+        if method == "insights.compare":
+            from .insight_comparison import compare_reports
+            identifiers = []
+            for key in ("before_report_id", "after_report_id"):
+                identifier = params.get(key)
+                if not isinstance(identifier, str) or not identifier or len(identifier) > 100:
+                    raise ValueError(f"A valid {key} is required.")
+                identifiers.append(identifier)
+            before, after = (self.store.get_document("insight_report", identifier) for identifier in identifiers)
+            return compare_reports(before, after, self.store, cancel_check=cancel_check, progress=progress)
         report_id = params.get("report_id")
         if not isinstance(report_id, str) or not report_id or len(report_id) > 100:
             raise ValueError("A valid report_id is required.")
