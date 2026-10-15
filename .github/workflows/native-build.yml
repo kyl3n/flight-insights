@@ -71,7 +71,8 @@ jobs:
             if ($errors.Count -gt 0) { $errors | Format-List; throw ('Bench script has PowerShell syntax errors: '+$relative) }
           }
       - name: Engine tests
-        run: python scripts/ci-check.py engine-test-output.txt uv run --frozen pytest
+        timeout-minutes: 20
+        run: python scripts/ci-check.py engine-test-output.txt uv run --frozen pytest -v -o faulthandler_timeout=120 --durations=25
       - name: Frozen sidecar smoke
         run: python scripts/ci-check.py engine-package-output.txt uv run --frozen python scripts/package-engine.py --target ${{ matrix.target }}
       - name: Preserve engine failure evidence
@@ -150,6 +151,20 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           python -c 'from pathlib import Path; import shutil; app, = Path("src-tauri/target/${{ matrix.target }}/release/bundle/macos").glob("*.app"); shutil.make_archive(str(app), "gztar", root_dir=app.parent, base_dir=app.name)'
+      - name: Save compact native verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-evidence-${{ matrix.target }}
+          if-no-files-found: ignore
+          retention-days: 14
+          path: |
+            engine-test-output.txt
+            engine-package-output.txt
+            native-check-*.txt
+            native-verification-*.json
+            src-tauri/binaries/*.sha256
+            src-tauri/binaries/*.inventory.json
       - name: Save unsigned preview installers and engine checksum
         uses: actions/upload-artifact@v4
         with:
