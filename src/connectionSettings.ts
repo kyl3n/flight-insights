@@ -7,6 +7,10 @@ export interface SetupDraft {
   localAddress: string;
   senderAddress: string;
   observerPort: string;
+  readbackEnabled: boolean;
+  remotePort: string;
+  appSystemId: string;
+  appComponentId: string;
   systemId: string;
   componentId: string;
   uid: string;
@@ -34,6 +38,8 @@ const DRAFT_KEY = 'q22.connection-setup.v1';
 const PROFILE_KEY = 'q22.collection-profile.v1';
 const SOURCES_KEY = 'q22.network-sources.v1';
 const requiredSources = ['app_mavlink_capture', 'onboard_bin', 'preflight_parameters', 'postflight_parameters'];
+const defaultAppSystemId = 254;
+const defaultAppComponentId = 191;
 
 function readJson(key: string): unknown {
   try { return JSON.parse(localStorage.getItem(key) || 'null'); } catch { return null; }
@@ -59,11 +65,12 @@ function unusedSourceId(sources: NetworkSource[], base: string): string {
 
 export function loadSetupDraft(): SetupDraft {
   const draft: SetupDraft = {
-    mode: 'local_gcs', aircraft: '', localAddress: '127.0.0.1', senderAddress: '127.0.0.1',
+    mode: 'network', aircraft: '', localAddress: '', senderAddress: '',
     observerPort: '14551', systemId: '1', componentId: '1', uid: '', aircraftVersion: '1', connectionVersion: '1',
+    readbackEnabled: true, remotePort: '', appSystemId: String(defaultAppSystemId), appComponentId: String(defaultAppComponentId),
     synthetic: false, radioEnabled: false, radioHost: '', radioPort: '80',
     cameraEnabled: false, cameraHost: '', cameraPort: '554', cameraPath: '/',
-    gcs: 'mission_planner', serialPort: '', baudRate: '',
+    gcs: 'other', serialPort: '', baudRate: '',
   };
   const saved = object(object(readJson(DRAFT_KEY))?.draft);
   if (saved) {
@@ -72,6 +79,13 @@ export function loadSetupDraft(): SetupDraft {
     }
     if (!['local_gcs', 'network', 'serial_gcs', 'offline'].includes(draft.mode)) draft.mode = 'local_gcs';
     if (draft.mode === 'serial_gcs') draft.mode = 'local_gcs';
+    if (draft.mode === 'local_gcs') {
+      if (typeof saved.localAddress !== 'string') draft.localAddress = '127.0.0.1';
+      if (typeof saved.senderAddress !== 'string') draft.senderAddress = '127.0.0.1';
+    }
+    // Previous releases configured a receive-only observer. Never silently
+    // enable requests when migrating an existing connection.
+    if (typeof saved.readbackEnabled !== 'boolean') draft.readbackEnabled = false;
     if (!['mission_planner', 'qgroundcontrol', 'other'].includes(draft.gcs)) draft.gcs = 'mission_planner';
   }
 
@@ -89,6 +103,11 @@ export function loadSetupDraft(): SetupDraft {
     ];
     for (const [key, value] of fields) if (typeof value === 'string' || typeof value === 'number') Object.assign(draft, { [key]: String(value) });
     if (typeof connection.synthetic === 'boolean') draft.synthetic = connection.synthetic;
+    const readback = object(connection.readback);
+    draft.readbackEnabled = Boolean(readback);
+    if (typeof readback?.remote_port === 'number') draft.remotePort = String(readback.remote_port);
+    draft.appSystemId = typeof readback?.client_system_id === 'number' ? String(readback.client_system_id) : String(defaultAppSystemId);
+    draft.appComponentId = typeof readback?.client_component_id === 'number' ? String(readback.client_component_id) : String(defaultAppComponentId);
     if (!saved) draft.mode = draft.localAddress.startsWith('127.') && draft.senderAddress.startsWith('127.') ? 'local_gcs' : 'network';
   }
 
@@ -144,12 +163,20 @@ export function validateSetup(draft: SetupDraft, scope: 'devices' | 'telemetry' 
       (validAddress(draft.localAddress) && draft.localAddress.trim().startsWith('127.')) ||
       (validAddress(draft.senderAddress) && draft.senderAddress.trim().startsWith('127.'))
     )) errors.push('A feed from another device needs this computer’s network adapter address and the remote sender’s address. 127.x.x.x only reaches the same computer; choose Ground station on this computer for local forwarding.');
-    if (!integerIn(draft.observerPort, 1024, 65535)) errors.push('Observer UDP port must be a whole number from 1024 to 65535.');
-    else if (Number(draft.observerPort) === 14550) errors.push('Choose a separate observer UDP port, such as 14551. Keep port 14550 available for the controlling GCS.');
+    if (!integerIn(draft.observerPort, 1024, 65535)) errors.push('App UDP port must be a whole number from 1024 to 65535.');
     if (!integerIn(draft.systemId, 1, 255)) errors.push('MAVLink system ID must be a whole number from 1 to 255.');
     if (!integerIn(draft.componentId, 1, 255)) errors.push('Autopilot component ID must be a whole number from 1 to 255.');
     const uid = draft.uid.trim();
     if (uid && (!/^[0-9]{1,24}$/.test(uid) || BigInt(uid) < 1n || BigInt(uid) > 18446744073709551615n)) errors.push('Controller UID must be a nonzero decimal uint64 (at most 18446744073709551615), or leave it blank if unknown.');
+    if (draft.readbackEnabled && !integerIn(draft.remotePort, 1, 65535)) errors.push('Aircraft link UDP port must be the return-capable port configured on your radio or MAVLink router (1–65535).');
+    if (draft.readbackEnabled && !uid) errors.push('Enter the controller UID to capture parameters automatically, or turn off automatic parameter capture to record telemetry only.');
+    if (draft.readbackEnabled) {
+      const appSystemId = draft.appSystemId.trim() || String(defaultAppSystemId);
+      const appComponentId = draft.appComponentId.trim() || String(defaultAppComponentId);
+      if (!integerIn(appSystemId, 1, 255)) errors.push('App MAVLink system ID must be a whole number from 1 to 255, or leave it blank for 254.');
+      else if (Number(appSystemId) === Number(draft.systemId)) errors.push('App MAVLink system ID must differ from the aircraft’s MAVLink system ID. Change it under Aircraft IDs and advanced settings.');
+      if (!integerIn(appComponentId, 1, 255)) errors.push('App MAVLink component ID must be a whole number from 1 to 255, or leave it blank for 191.');
+    }
   }
   if (scope !== 'telemetry') {
     if (draft.radioEnabled) {
@@ -176,6 +203,11 @@ export function setupProfile(draft: SetupDraft): CollectionProfile {
       local_address: draft.localAddress.trim(), expected_sender: draft.senderAddress.trim(), listen_port: Number(draft.observerPort),
       system_id: Number(draft.systemId), component_id: Number(draft.componentId), feed_origin: 'live_forwarded', synthetic: draft.synthetic,
       ...(draft.uid.trim() ? { expected_uid: BigInt(draft.uid.trim()).toString() } : {}),
+      ...(draft.readbackEnabled ? {readback: {
+        remote_port: Number(draft.remotePort),
+        ...(Number(draft.appSystemId.trim() || defaultAppSystemId) !== defaultAppSystemId ? {client_system_id: Number(draft.appSystemId)} : {}),
+        ...(Number(draft.appComponentId.trim() || defaultAppComponentId) !== defaultAppComponentId ? {client_component_id: Number(draft.appComponentId)} : {}),
+      }} : {}),
     },
     required_sources: [...requiredSources],
     ...(draft.environmentContext ? {environment_context: draft.environmentContext} : {}),

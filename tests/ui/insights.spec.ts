@@ -4,6 +4,7 @@ import { mkdir, readFile } from 'node:fs/promises';
 import { createSocket } from 'node:dgram';
 import { createServer } from 'node:http';
 import { connectEngine } from './engine-harness';
+import { openWorkspace } from './navigation';
 
 async function imported(engine:Awaited<ReturnType<typeof connectEngine>>,file:string){
   const response=await engine.rpc('logs.import',{path:resolve('fixtures/logs',file),label:`Synthetic UI ${file}`,synthetic:true}) as any;
@@ -22,7 +23,7 @@ test('real insight report preserves vibration evidence, guidance, loaded paramet
     const log=await imported(engine,'synthetic-insights.log');
     const {snapshot}=await engine.rpc('parameters.import',{path:resolve('fixtures/parameters/synthetic-after.parm'),label:'Synthetic loaded settings',aircraft_id:'synthetic-test',board:'synthetic-board',firmware:'Copter-4.7.1',source_kind:'current_readback',observed_at:'2026-10-13T00:00:00Z',synthetic:true}) as any;
     await page.goto('/');await expect(page.getByText('Engine connected',{exact:true})).toBeVisible();
-    await page.getByRole('navigation').getByRole('button',{name:'Flight insights',exact:true}).click();
+    await openWorkspace(page, 'Flight insights');
     await page.getByRole('combobox',{name:'Insight log',exact:true}).selectOption(log.id);
     await page.getByRole('combobox',{name:'Insight source',exact:true}).selectOption('dataflash');
     await page.getByRole('combobox',{name:'Insight clock segment',exact:true}).selectOption('0');
@@ -73,9 +74,10 @@ test('real insight report preserves vibration evidence, guidance, loaded paramet
     await page.setViewportSize({width:640,height:900});
     expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(640);
     await page.screenshot({path:testInfo.outputPath('flight-insights-compact.png'),fullPage:true});
+    const savedReportId = await page.getByRole('combobox',{name:'Preserved insight report',exact:true}).inputValue();
     await page.reload({timeout:10_000});await expect(page.getByText('Engine connected',{exact:true})).toBeVisible();
-    await page.getByRole('navigation').getByRole('button',{name:'Flight insights',exact:true}).click();
-    await expect(page.getByRole('combobox',{name:'Preserved insight report',exact:true}).locator('option')).toHaveCount(2);
+    await openWorkspace(page, 'Flight insights');
+    await expect(page.getByRole('combobox',{name:'Preserved insight report',exact:true}).locator(`option[value="${savedReportId}"]`)).toHaveCount(1);
     expect(engine.calls.filter(call=>call.method==='insights.report')).toHaveLength(1);
     expect(engine.calls.some(call=>/acquisition\.|network\.apply|associations\.evaluate/.test(call.method))).toBeFalsy();
   }finally{await engine.close();}
@@ -86,7 +88,7 @@ test('telemetry without VIBE or raw gyro remains unavailable and does not invent
   try{
     const log=await imported(engine,'synthetic-flight.tlog');
     await page.goto('/');await expect(page.getByText('Engine connected',{exact:true})).toBeVisible();
-    await page.getByRole('navigation').getByRole('button',{name:'Flight insights',exact:true}).click();
+    await openWorkspace(page, 'Flight insights');
     await page.getByRole('combobox',{name:'Insight log',exact:true}).selectOption(log.id);
     await page.getByRole('combobox',{name:'Insight source',exact:true}).selectOption('1:1');
     await page.getByRole('combobox',{name:'Insight clock segment',exact:true}).selectOption('0');
@@ -113,7 +115,7 @@ test('acquisition previews are read-only and log transfers require a fresh expli
     const {capture_session}=await engine.rpc('session.prepare_and_watch',{...preview.profile,...operation}) as any;
     await engine.rpc('session.stop',{capture_session_id:capture_session.uuid,...operation,operation_id:crypto.randomUUID()});
     await page.goto('/');await expect(page.getByText('Engine connected',{exact:true})).toBeVisible();
-    await page.getByRole('navigation').getByRole('button',{name:'Prepare & watch',exact:true}).click();
+    await openWorkspace(page, 'Prepare & watch');
     await page.getByText('Read-only aircraft acquisition · explicit bidirectional path',{exact:true}).click();
     await page.getByLabel('Dedicated acquisition UDP port',{exact:true}).fill(String(port));
     await page.getByLabel('Approved bidirectional remote IPv4',{exact:true}).fill('127.0.0.1');
@@ -147,7 +149,7 @@ test('explicit raw radio capture preserves actual loopback responses without int
   const engine=await connectEngine(page);
   try{
     await page.goto('/');await expect(page.getByText('Engine connected',{exact:true})).toBeVisible();
-    await page.getByRole('navigation').getByRole('button',{name:'Network checks',exact:true}).click();
+    await openWorkspace(page, 'Network checks');
     await page.getByLabel('Device IPv4',{exact:true}).fill('127.0.0.1');
     await page.getByLabel('Device port',{exact:true}).fill(String(port));
     await page.getByRole('button',{name:'Add source',exact:true}).click();
@@ -194,7 +196,7 @@ test('a delayed review packet cannot authorize export of a newer background repo
     await expect.poll(async()=>{firstJob=(await engine.rpc('jobs.get',{job_id:first.job.id}) as any).job;return firstJob.state;}).toBe('succeeded');
     oldReportId=firstJob.result.report.id;
     await page.goto('/');await expect(page.getByText('Engine connected',{exact:true})).toBeVisible();
-    await page.getByRole('navigation').getByRole('button',{name:'Flight insights',exact:true}).click();
+    await openWorkspace(page, 'Flight insights');
     const saved=page.getByRole('combobox',{name:'Preserved insight report',exact:true});
     await saved.selectOption(oldReportId);
     const report=page.getByRole('region',{name:'Preserved flight insight report'});

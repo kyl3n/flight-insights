@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { connectEngine } from './engine-harness';
+import { openWorkspace } from './navigation';
 import type { NetworkInspection } from '../../src/api';
 
 test('source configuration survives reload without probing and fits compact screens', async ({page},testInfo) => {
@@ -7,14 +8,14 @@ test('source configuration survives reload without probing and fits compact scre
   try {
     await page.goto('/');
     await expect(page.getByText('Engine connected',{exact:true})).toBeVisible();
-    await page.getByRole('navigation').getByRole('button',{name:'Network checks'}).click();
+    await openWorkspace(page, 'Network checks');
     await page.getByLabel('Device IPv4',{exact:true}).fill('10.0.0.2');
     await page.getByRole('button',{name:'Add source',exact:true}).click();
     await expect(page.getByText('1 configured',{exact:true})).toBeVisible();
     expect(engine.calls.some(call => ['network.inspect','network.probe','network.apply','network.rollback'].includes(call.method))).toBeFalsy();
     await page.reload();
     await expect(page.getByText('Engine connected',{exact:true})).toBeVisible();
-    await page.getByRole('navigation').getByRole('button',{name:'Network checks'}).click();
+    await openWorkspace(page, 'Network checks');
     await expect(page.getByText('1 configured',{exact:true})).toBeVisible();
     await expect(page.getByRole('button',{name:'Remove digiQ / SkyPulse 10.0.0.2'})).toBeVisible();
     await expect(page.getByText('No inspection yet',{exact:true})).toBeVisible();
@@ -56,7 +57,7 @@ test('simulated native failure restores durable repair recovery and requires exp
   try {
     await page.goto('/');
     await expect(page.getByText('Engine connected',{exact:true})).toBeVisible();
-    await page.getByRole('navigation').getByRole('button',{name:'Network checks'}).click();
+    await openWorkspace(page, 'Network checks');
     await page.getByLabel('Device IPv4',{exact:true}).fill('10.0.0.2');
     await page.getByRole('button',{name:'Add source',exact:true}).click();
     await page.getByRole('button',{name:'Inspect computer',exact:true}).click();
@@ -73,7 +74,7 @@ test('simulated native failure restores durable repair recovery and requires exp
     await expect(page.getByRole('button',{name:'Undo this repair',exact:true})).toBeVisible();
     crashNextInspection=true;
     await page.getByRole('button',{name:'Inspect computer',exact:true}).click();
-    await expect(page.getByText('Local engine is not connected',{exact:true})).toBeVisible();
+    await expect(page.getByText('Engine disconnected',{exact:true})).toBeVisible();
     await page.getByText('Engine recovery',{exact:true}).click();
     await expect(page.getByRole('button',{name:'Restart analysis engine',exact:true})).toBeDisabled();
     expect(engine.calls.some(call => call.method === 'engine.restart')).toBeFalsy();
@@ -83,7 +84,7 @@ test('simulated native failure restores durable repair recovery and requires exp
     await expect(page.getByText('Recovered from local journal',{exact:true})).toBeVisible();
     await page.reload();
     await expect(page.getByText('Engine connected',{exact:true})).toBeVisible();
-    await page.getByRole('navigation').getByRole('button',{name:'Network checks'}).click();
+    await openWorkspace(page, 'Network checks');
     await expect(page.getByText('Recovered from local journal',{exact:true})).toBeVisible();
     await expect(page.getByText("'synthetic-network-command' 'remove' '10.0.0.10'",{exact:true})).toBeVisible();
     await expect(page.getByRole('button',{name:'Undo this repair',exact:true})).toBeDisabled();
@@ -113,7 +114,7 @@ test('experimental helper requires session opt-in and a fresh exact native plan 
   }});
   try{
     await page.goto('/');await expect(page.getByText('Engine connected',{exact:true})).toBeVisible();
-    await page.getByRole('navigation').getByRole('button',{name:'Network checks',exact:true}).click();
+    await openWorkspace(page, 'Network checks');
     const enable=page.getByRole('button',{name:'Enable experimental bench repairs',exact:true});
     await expect(enable).toBeDisabled();
     await expect(page.getByText('Qualification: Not established',{exact:true})).toBeVisible();
@@ -142,7 +143,7 @@ test('experimental helper requires session opt-in and a fresh exact native plan 
     await page.getByRole('button',{name:'Disable experimental repair session',exact:true}).click();
     await expect(enable).toBeDisabled();
     await page.reload();await expect(page.getByText('Engine connected',{exact:true})).toBeVisible();
-    await page.getByRole('navigation').getByRole('button',{name:'Network checks',exact:true}).click();
+    await openWorkspace(page, 'Network checks');
     await expect(enable).toBeDisabled();
     expect(engine.calls.filter(call=>call.method==='network.bench_opt_in').map(call=>call.params)).toEqual([{enabled:true},{enabled:false}]);
     expect(engine.calls.filter(call=>call.method==='network.apply')).toHaveLength(1);

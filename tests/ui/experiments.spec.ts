@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test';
 import { resolve } from 'node:path';
 import type { EngineJob, FlightLog, InsightReport } from '../../src/api';
 import { connectEngine } from './engine-harness';
+import { openWorkspace } from './navigation';
 
 async function completedJob(engine: Awaited<ReturnType<typeof connectEngine>>, method: string, params: Record<string, unknown>) {
   let {job} = await engine.rpc(method, params) as {job: EngineJob};
@@ -26,7 +27,7 @@ test('saved experiment revisions evaluate real reports while unverified interval
     }
     await page.goto('/');
     await expect(page.getByText('Engine connected', {exact: true})).toBeVisible();
-    await page.getByRole('navigation').getByRole('button', {name: 'Flight experiments', exact: true}).click();
+    await openWorkspace(page, 'Flight experiments');
     const experiments = page.locator('.experiment-workspace');
     await experiments.getByRole('textbox', {name: 'Experiment name', exact: true}).fill('Matched synthetic hover review');
     await experiments.getByRole('textbox', {name: 'Hypothesis and controlled conditions', exact: true}).fill('Compare power at the same declared hover phase; verify distinct flights and conditions before interpreting a change.');
@@ -111,7 +112,7 @@ test('a completed background evaluation cannot replace a newly opened experiment
       parameter_hypothesis: [], goals: [{metric: 'mean_power_w', unit: 'W', direction: 'lower', minimum_change: 10}], regression_limits: [], pairs: []}) as any;
     await page.goto('/');
     await expect(page.getByText('Engine connected', {exact: true})).toBeVisible();
-    await page.getByRole('navigation').getByRole('button', {name: 'Flight experiments', exact: true}).click();
+    await openWorkspace(page, 'Flight experiments');
     const experiments = page.locator('.experiment-workspace');
     await experiments.getByRole('combobox', {name: 'Saved experiment', exact: true}).selectOption(experiment.id);
     await experiments.getByRole('button', {name: 'Evaluate saved experiment', exact: true}).click();

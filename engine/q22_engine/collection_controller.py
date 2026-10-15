@@ -1,4 +1,4 @@
-"""Connect trusted passive capture to the durable catalog; never send aircraft traffic."""
+"""Connect recorder-owned observation and readback to the durable flight catalog."""
 from __future__ import annotations
 
 from concurrent.futures import CancelledError
@@ -30,11 +30,21 @@ class CollectionController:
     @staticmethod
     def _worker_config(profile):
         connection = profile["connection"]
-        return {"bind_host": connection["local_address"], "bind_port": connection["listen_port"],
+        config = {"bind_host": connection["local_address"], "bind_port": connection["listen_port"],
                 "allowed_sources": [connection["expected_sender"]],
                 "expected_system_id": connection["system_id"],
                 "expected_component_id": connection["component_id"],
                 "feed_origin": connection["feed_origin"], "synthetic": connection["synthetic"]}
+        if connection.get("readback"):
+            config["readback"] = {"feed_origin": "direct_bidirectional", "transport": "shared_recorder",
+                "local_address": connection["local_address"], "local_port": connection["listen_port"],
+                "remote_address": connection["expected_sender"], "remote_port": connection["readback"]["remote_port"],
+                "system_id": connection["system_id"], "component_id": connection["component_id"],
+                "expected_uid": connection["expected_uid"]}
+            for key in ("client_system_id", "client_component_id"):
+                if key in connection["readback"]:
+                    config["readback"][key] = connection["readback"][key]
+        return config
 
     def _refresh(self):
         current = self.recorder.status()
@@ -68,6 +78,19 @@ class CollectionController:
                 or current.get("event_backlog_bytes", 0) > 256 * 1024):
             result.update(flight_state="unknown", identity_verified=False, heartbeat_age_s=None)
         return result
+
+    def shared_bootstrap_ready(self, connection):
+        if not self.recorder.shared_bootstrap_ready(connection):
+            return False
+        capture_id = self.recorder.status().get("capture_session_id")
+        with self.collection._lock, self.store._connect() as db:
+            capture = self.collection._get(db, "capture", capture_id)
+            source = capture.get("source_states", {}).get(capture.get("selected_source_id"), {})
+            return (capture["status"] == "observing" and bool(capture.get("selected_source_id"))
+                    and not capture.get("source_ambiguity") and not capture.get("active_armed_interval_id")
+                    and not source.get("heartbeat_evidence") and not source.get("identity_conflict")
+                    and not source.get("continuity_lost")
+                    and source.get("uid") in (None, connection["expected_uid"]))
 
     def dispatch(self, method, params):
         if method == "session.status":

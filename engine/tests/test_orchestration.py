@@ -546,6 +546,29 @@ def test_future_schema_guard_precedes_recovery_writes(h):
         db.execute("UPDATE orchestration_schema SET version=1")
 
 
+def test_opt_in_refresh_keeps_prior_evidence_respects_cooldown_and_request_budget(h):
+    h.prepare(automatic_preflight_refresh=True, preflight_freshness_s=1, max_requests_per_capture=2)
+    h.qualify()
+    h.tick()
+    first = h.wait("preflight_parameters")
+    h.service._save("request", first | {"finished_monotonic_ns": str(time.monotonic_ns() - 2_000_000_000)})
+    h.tick()
+    assert len(h.rows()) == 1  # stale, but below the minimum refresh cooldown
+    first = h.rows()[0]
+    h.service._save("request", first | {"finished_monotonic_ns": str(time.monotonic_ns() - 31_000_000_000)})
+    h.qualify()
+    h.tick()
+    refreshed = h.wait("preflight_parameters")
+    assert refreshed["id"] != first["id"] and refreshed["anchor"] == first["anchor"]
+    assert refreshed["refresh_attempt"] == 1
+    assert h.service._get("request", first["id"])["acquisition_id"] == first["acquisition_id"]
+    h.service._save("request", refreshed | {"finished_monotonic_ns": str(time.monotonic_ns() - 31_000_000_000)})
+    h.qualify()
+    h.tick()
+    assert len(h.rows()) == 2
+    assert "budget reached" in h.service._get("run", h.capture["uuid"])["reason"]
+
+
 def test_actual_engine_rpc_policy_lifecycle_and_restart(tmp_path):
     """Actual recorder subprocess plus UDP peer; every aircraft value is synthetic."""
     import socket

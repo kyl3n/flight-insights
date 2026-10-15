@@ -1,6 +1,6 @@
 [package]
 name = "q22-flight-lab"
-version = "0.2.0"
+version = "0.3.0"
 description = "Q22 Flight Lab offline desktop workspace"
 authors = ["Q22 Flight Lab contributors"]
 edition = "2021"

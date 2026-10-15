@@ -5,11 +5,12 @@ import { resolve } from 'node:path';
 import type { CollectionStatus, FlightBundleDetail } from '../../src/api';
 import type { FlightEnvironmentSnapshotData } from '../../src/FlightEnvironment';
 import { connectEngine } from './engine-harness';
+import { openWorkspace } from './navigation';
 
 const feedApproval = 'I configured this separate live feed and approved its sender and aircraft source IDs. It is not log replay.';
 
 async function openCollection(page: Page) {
-  await page.getByRole('navigation').getByRole('button', {name: 'Prepare & watch', exact: true}).click();
+  await openWorkspace(page, 'Prepare & watch');
 }
 
 const inspection: FlightEnvironmentSnapshotData = {

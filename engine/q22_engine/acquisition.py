@@ -1,4 +1,4 @@
-"""Explicit, bounded MAVLink readback over a separate bidirectional UDP socket.
+"""Explicit, bounded MAVLink readback over a dedicated or recorder-owned socket.
 
 Only generated dialect code is used. This is not an autopilot controller and does
 not provide a GCS heartbeat. Receipt/UID checks do not authenticate unsigned UDP.
@@ -30,6 +30,8 @@ MAGIC = b"Q22ACQ1\0"
 RECORD = struct.Struct(">BQQ4sHI")  # direction, receipt/send clocks, endpoint, payload length
 WINDOW = 65520  # multiple of LOG_DATA's 90 byte payload
 ALLOWED_MESSAGES = frozenset({20, 21, 76, 117, 119, 122})
+APP_SYSTEM_ID = 254
+APP_COMPONENT_ID = 191
 LIMITATIONS = [
     "Experimental direct UDP adapter; real Q22 hardware and firmware behavior are unqualified.",
     "CRC, source endpoint and matching reported UID do not authenticate the vehicle or universally prevent replay; signatures are not verified.",
@@ -97,6 +99,11 @@ def _connection(value):
     if not isinstance(value, dict) or value.get("feed_origin") != "direct_bidirectional":
         raise ValueError("Use an explicitly configured direct_bidirectional endpoint, not a one-way forwarded recorder feed.")
     result = {"feed_origin": "direct_bidirectional"}
+    transport = value.get("transport")
+    if transport is not None:
+        if transport not in {"shared_recorder", "dedicated_udp"}:
+            raise ValueError("transport must be shared_recorder or dedicated_udp.")
+        result["transport"] = transport
     for name in ("local_address", "remote_address"):
         try:
             address = ipaddress.IPv4Address(value.get(name))
@@ -109,11 +116,46 @@ def _connection(value):
         result[name] = _integer(value.get(name), name, 1, 65535)
     for name in ("system_id", "component_id"):
         result[name] = _integer(value.get(name), name, 1, 255)
+    # Keep omitted defaults omitted in saved fingerprints, including historical
+    # policies. Effective client IDs are separately recorded in each attempt.
+    for name in ("client_system_id", "client_component_id"):
+        if value.get(name) is not None:
+            result[name] = _integer(value[name], name, 1, 255)
+    if _client_identity(result)[0] == result["system_id"]:
+        raise ValueError("App MAVLink system ID must differ from the selected vehicle system ID; change the advanced app identity.")
     uid = value.get("expected_uid")
     if not isinstance(uid, str) or not uid.isascii() or not uid.isdecimal() or len(uid) > 20 or not 0 < int(uid) < 2**64:
         raise ValueError("expected_uid must be an explicitly declared nonzero uint64 decimal string.")
     result["expected_uid"] = str(int(uid))
     return result
+
+
+def _client_identity(connection):
+    return (connection.get("client_system_id", APP_SYSTEM_ID),
+            connection.get("client_component_id", APP_COMPONENT_ID))
+
+
+def _same_connection(left, right):
+    if not isinstance(left, dict) or not isinstance(right, dict):
+        return False
+    defaults = {"client_system_id": APP_SYSTEM_ID, "client_component_id": APP_COMPONENT_ID}
+    return (defaults | left) == (defaults | right)
+
+
+def _validate_outgoing(message, connection, bootstrap=False, *, check_source=False):
+    """The adapter and the recorder's socket owner enforce the same allowlist."""
+    message_id = message.get_msgId()
+    if check_source and (message.get_srcSystem(), message.get_srcComponent()) != _client_identity(connection):
+        raise ValueError("Outgoing request source differs from the configured app MAVLink identity.")
+    if message_id not in ALLOWED_MESSAGES:
+        raise ValueError("Outgoing MAVLink message is outside the read-only allowlist.")
+    if message.target_system != connection["system_id"] or message.target_component != connection["component_id"]:
+        raise ValueError("Outgoing readback target differs from the selected source.")
+    if message_id == 76:
+        if message.command != 512 or message.confirmation != 0 or message.param1 != 148 or any(getattr(message, f"param{i}") != 0 for i in range(2, 8)):
+            raise ValueError("Only hardcoded AUTOPILOT_VERSION message requests are permitted.")
+    elif bootstrap:
+        raise ValueError("Only the version bootstrap may omit matching UID evidence.")
 
 
 def _limits(value):
@@ -136,7 +178,7 @@ def _limits(value):
 
 
 class _Link:
-    def __init__(self, directory, connection, limits, kind, cancel_check, external_gate):
+    def __init__(self, directory, connection, limits, kind, cancel_check, external_gate, shared_transport=None):
         from pymavlink.dialects.v20 import ardupilotmega as mavlink
         mavlink.MAVLINK_IGNORE_CRC = False
         self.mavlink, self.connection, self.limits = mavlink, connection, limits
@@ -152,7 +194,8 @@ class _Link:
         self.trace_hash = hashlib.sha256(MAGIC)
         self.decoder = mavlink.MAVLink(None)
         self.decoder.robust_parsing = True
-        self.encoder = mavlink.MAVLink(None, srcSystem=255, srcComponent=190)
+        self.client_system_id, self.client_component_id = _client_identity(connection)
+        self.encoder = mavlink.MAVLink(None, srcSystem=self.client_system_id, srcComponent=self.client_component_id)
         self.heartbeat = self.identity = self.boot = None
         self.capabilities = 0
         self.firmware_identity = None
@@ -169,10 +212,19 @@ class _Link:
         self.late_data_validator = None
         self.last_external_check = 0.0
         self.initial_gate_observations = None
+        self.shared_transport = shared_transport
+        self.transport_kind = "dedicated_udp"
 
     def open(self):
         self.check_external()
         connection = self.connection
+        if connection.get("transport") == "shared_recorder":
+            if self.shared_transport is None:
+                raise ValueError("Shared recorder access is unavailable in this acquisition service.")
+            self.socket = self.shared_transport(connection, self.limits)
+            if self.socket is not None:
+                self.transport_kind = "shared_recorder"
+                return
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         if os.name == "nt":
             self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
@@ -225,7 +277,8 @@ class _Link:
         drained = 0
         self.socket.settimeout(0)
         try:
-            while select.select([self.socket], [], [], 0)[0]:
+            while (self.socket.has_pending() if self.transport_kind == "shared_recorder"
+                   else bool(select.select([self.socket], [], [], 0)[0])):
                 self.pending.extend(self.poll(require_ready=False, refresh_identity=False, drain=True))
                 drained += 1
                 if drained >= 256 or len(self.pending) > 4096:
@@ -234,15 +287,7 @@ class _Link:
             self.socket.settimeout(.05)
         self.gate(bootstrap=bootstrap)
         message_id = message.get_msgId()
-        if message_id not in ALLOWED_MESSAGES:
-            raise ValueError("Outgoing MAVLink message is outside the read-only allowlist.")
-        if message.target_system != self.connection["system_id"] or message.target_component != self.connection["component_id"]:
-            raise ValueError("Outgoing readback target differs from the selected source.")
-        if message_id == 76:
-            if message.command != 512 or message.confirmation != 0 or message.param1 != 148 or any(getattr(message, f"param{i}") != 0 for i in range(2, 8)):
-                raise ValueError("Only hardcoded AUTOPILOT_VERSION message requests are permitted.")
-        elif bootstrap:
-            raise ValueError("Only the version bootstrap may omit matching UID evidence.")
+        _validate_outgoing(message, self.connection, bootstrap)
         if self.sent >= 50000:
             raise AcquisitionStopped("Acquisition request budget reached.")
         encoded = message.pack(self.encoder)
@@ -289,7 +334,8 @@ class _Link:
             payload, endpoint = self.socket.recvfrom(65535)
         except (socket.timeout, BlockingIOError):
             return []
-        mono_ns, utc_us = time.monotonic_ns(), time.time_ns() // 1000
+        mono_ns, utc_us = (self.socket.receipt if self.transport_kind == "shared_recorder"
+                           else (time.monotonic_ns(), time.time_ns() // 1000))
         at = mono_ns / 1e9
         raw_ref = self._record(0, payload, endpoint, mono_ns, utc_us)
         self.received += 1
@@ -308,6 +354,9 @@ class _Link:
             name = message.get_type()
             if name == "BAD_DATA":
                 self.gate_reason = "Corrupt or unsupported MAVLink bytes from the selected endpoint; continuity is unknown."
+                raise AcquisitionStopped(self.gate_reason)
+            if (message.get_srcSystem(), message.get_srcComponent()) == (self.client_system_id, self.client_component_id):
+                self.gate_reason = "Incoming traffic uses the app MAVLink identity; another sender or routed echo conflicts with this connection. Change the advanced app identity or router configuration."
                 raise AcquisitionStopped(self.gate_reason)
             if (message.get_srcSystem(), message.get_srcComponent()) != (self.connection["system_id"], self.connection["component_id"]):
                 continue
@@ -397,6 +446,10 @@ class _Link:
 
     def evidence(self):
         return {"received_datagrams": self.received, "decoded_selected_frames": self.frames,
+                "transport": self.transport_kind,
+                "client_identity": {"system_id": self.client_system_id, "component_id": self.client_component_id},
+                "receive_clock": "recorder_original_receipt" if self.transport_kind == "shared_recorder" else "socket_receipt",
+                "outgoing_clock": "request_submission" if self.transport_kind == "shared_recorder" else "socket_submission",
                 "sent_messages": self.sent, "outgoing_types": self.send_types,
                 "signature_present": self.signed, "signature_verified": False,
                 "identity_basis": "reported_uid_match_not_authenticated",
@@ -411,8 +464,9 @@ class _Link:
 
 
 class AcquisitionService:
-    def __init__(self, store: Store, external_gate=None):
+    def __init__(self, store: Store, external_gate=None, shared_transport=None):
         self.store, self.external_gate = store, external_gate
+        self.shared_transport = shared_transport
         self.directory = store.root / "acquisitions"
         self.directory.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
@@ -491,7 +545,7 @@ class AcquisitionService:
         limits = _limits(params.get("limits"))
         return {"connection": connection, "limits": limits,
                 "applicability_fingerprint": hashlib.sha256(_json(connection).encode()).hexdigest(),
-                "prerequisites": ["Dedicated exclusive local UDP port, distinct from the passive recorder.",
+                "prerequisites": ["Shared mode uses the configured recorder socket; legacy dedicated mode requires a separate exclusive local UDP port.",
                                   "Remote endpoint must already stream selected disarmed autopilot heartbeats and time_boot_ms data.",
                                   "An internal read-only AUTOPILOT_VERSION request obtains the declared UID before any parameter/log request.",
                                   "Explicit log-transfer side-effect confirmation is required for listing/downloading."],
@@ -569,7 +623,7 @@ class AcquisitionService:
                     "owner_process": {"pid": os.getpid(), "created_at": psutil.Process().create_time()},
                     "association_state": "provisional", "historical_applicability": "unknown", "limitations": LIMITATIONS}
         _write_metadata(directory / "attempt.json", document | {"state": "in_progress"})
-        link = _Link(directory, connection, limits, kind, cancel_check, self.external_gate)
+        link = _Link(directory, connection, limits, kind, cancel_check, self.external_gate, self.shared_transport)
         cancelled = None
         try:
             link.open()

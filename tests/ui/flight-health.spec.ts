@@ -3,6 +3,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import type { EngineJob, FlightLog, InsightReport } from '../../src/api';
 import { connectEngine } from './engine-harness';
+import { openWorkspace } from './navigation';
 
 test('health review displays schema-qualified observations, exact source records, and unavailable unqualified measurements', async ({page}, testInfo) => {
   const engine = await connectEngine(page);
@@ -47,7 +48,7 @@ test('health review displays schema-qualified observations, exact source records
     const report = (await completed('insights.report', {log_id: log.id, source_key: 'dataflash', boot_epoch: 0, interval_start_s: 0, interval_end_s: 2})).report as InsightReport;
     await page.goto('/');
     await expect(page.getByText('Engine connected', {exact: true})).toBeVisible();
-    await page.getByRole('navigation').getByRole('button', {name: 'Flight insights', exact: true}).click();
+    await openWorkspace(page, 'Flight insights');
     await page.getByRole('combobox', {name: 'Preserved insight report', exact: true}).selectOption(report.id);
     const health = page.locator('.flight-health');
     await expect(health.getByRole('heading', {name: 'Navigation, ESC, and system observations', exact: true})).toBeVisible();

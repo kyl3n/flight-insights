@@ -18,12 +18,12 @@ from uuid import uuid4
 
 import psutil
 
-from .acquisition import _connection, _limits, _text, _integer
+from .acquisition import _connection, _limits, _text, _integer, _client_identity
 from .jobs import TERMINAL as JOB_TERMINAL
 
 VERSION = 1
 ADAPTER = {"id": "explicit_direct_udp_v1", "qualification": "experimental_not_hardware_qualified",
-           "request_channel": "separate_direct_bidirectional_udp", "one_way_forwarding_supported": False,
+           "request_channel": "shared_recorder_or_dedicated_bidirectional_udp", "one_way_forwarding_supported": False,
            "vehicle_authentication": "unverified", "requires_operator_opt_in": True}
 LIMITATIONS = [
     "Saved policies never authorize startup or restart traffic; each Prepare and watch requires explicit approval.",
@@ -150,6 +150,7 @@ class OrchestrationService:
         policy = {"aircraft_id": _text(raw.get("aircraft_id"), "aircraft_id"),
                   "connection": _connection(raw.get("connection")), "limits": _limits(raw.get("limits"))}
         for key, default in (("synthetic", False), ("preflight_parameters", False), ("postflight_parameters", False),
+                             ("automatic_preflight_refresh", False),
                              ("confirm_log_transfer_side_effects", False)):
             if type(raw.get(key, default)) is not bool:
                 raise ValueError(f"{key} must be boolean.")
@@ -198,7 +199,14 @@ class OrchestrationService:
             raise ValueError("Policy aircraft/provenance does not match the observation profile.")
         if any(str(connection[key]) != str(observe.get(key)) for key in ("system_id", "component_id", "expected_uid")):
             raise ValueError("Both endpoint profiles must explicitly select the same UID/system/component.")
-        if observe["listen_port"] == connection["local_port"] and observe["local_address"] == connection["local_address"]:
+        shared = connection.get("transport") == "shared_recorder"
+        if shared:
+            if (observe["listen_port"] != connection["local_port"] or observe["local_address"] != connection["local_address"]
+                    or observe["expected_sender"] != connection["remote_address"]
+                    or observe.get("readback", {}).get("remote_port") != connection["remote_port"]
+                    or _client_identity(observe.get("readback", {})) != _client_identity(connection)):
+                raise ValueError("Shared readback policy must match the single configured app connection.")
+        elif observe["listen_port"] == connection["local_port"] and observe["local_address"] == connection["local_address"]:
             raise ValueError("Acquisition and passive recording require separate local ports.")
         if policy["log_retrieval"] != "disabled" and approval.get("confirm_log_transfer_side_effects") is not True:
             raise ValueError("This prepare must acknowledge possible onboard logging suspension.")
@@ -277,9 +285,15 @@ class OrchestrationService:
         capture, source = context["capture"], context["source"]
         heartbeat = source.get("heartbeat_evidence", {})
         identity = context["observations"]["identity"]
+        boot_epoch = heartbeat.get("boot_epoch")
+        if boot_epoch is None and capture["profile"]["connection"].get("readback"):
+            selected = [item for item in context["recorder"].get("sources", [])
+                        if item.get("source_id") == capture.get("selected_source_id")]
+            if len(selected) == 1 and selected[0].get("boot_epoch") is not None:
+                boot_epoch = str(selected[0]["boot_epoch"])
         return {"source_id": capture.get("selected_source_id"), "uid": source.get("uid"),
                 "latest_armed_interval_id": context["intervals"][-1]["uuid"] if context["intervals"] else None,
-                "boot_epoch": heartbeat.get("boot_epoch"), "gap_count": capture.get("coverage", {}).get("gap_count", 0),
+                "boot_epoch": boot_epoch, "gap_count": capture.get("coverage", {}).get("gap_count", 0),
                 "firmware_identity": _hash(identity["event"].get("firmware_identity")) if identity else None,
                 "parameter_observation": context["observations"]["parameter"]["sequence"] if context["observations"]["parameter"] else None,
                 "gap_observation": context["observations"]["link_gap"]["sequence"] if context["observations"]["link_gap"] else None}
@@ -297,6 +311,21 @@ class OrchestrationService:
                 and request.get("consistency") == "no_observed_conflict"
                 and 0 <= age <= policy["preflight_freshness_s"]
                 and not request.get("revoked") and request.get("freshness") != "invalidated")
+
+    @staticmethod
+    def _bootstrap_token(request, token, policy):
+        """Permit the one initially missing identity to become the declared UID.
+
+        Shared readback must be able to request AUTOPILOT_VERSION before the GCS
+        has broadcast it. Once observed, this identity is pinned like every other
+        acquisition; a mismatch or a later firmware change still revokes it.
+        """
+        original = request.get("trigger_token", {})
+        if (policy["connection"].get("transport") == "shared_recorder"
+                and original.get("uid") is None and original.get("firmware_identity") is None
+                and token.get("uid") == policy["connection"]["expected_uid"]):
+            return original | {"uid": token["uid"], "firmware_identity": token.get("firmware_identity")}
+        return original
 
     def _preflight_status(self, run):
         """Describe the current arm cycle without starting or reviving requests."""
@@ -323,11 +352,14 @@ class OrchestrationService:
             result.update(state="complete", current_for_next_flight=True,
                           reason="All parameters reported for this scope were read within the freshness budget. This non-atomic readback does not prove the settings effective throughout a flight.")
         elif current["state"] == "complete":
-            result.update(state="stale", reason="This readback is no longer current. While disarmed, stop this watch and approve a new Prepare & watch for a fresh readback. Earlier evidence is retained.")
+            reason = ("This readback is no longer current. Automatic refresh waits for fresh disarmed evidence and a 30-second minimum cooldown; the capture request budget still applies."
+                      if policy.get("automatic_preflight_refresh") else
+                      "This readback is no longer current. While disarmed, stop this watch and approve a new Prepare & watch for a fresh readback. Earlier evidence is retained.")
+            result.update(state="stale", reason=reason)
         elif current["state"] in TERMINAL:
             result.update(state=current["state"], reason="Current parameters are incomplete or unavailable. Resolve the request error below, then approve a new Prepare & watch while disarmed; no failed request is silently retried.")
         else:
-            result.update(state=current["state"], reason=current.get("reason") or "Waiting for the separate bidirectional endpoint to finish the full current readback. Keep the aircraft disarmed.")
+            result.update(state=current["state"], reason=current.get("reason") or "Reading the current settings through the app connection. Keep the aircraft disarmed.")
         return result
 
     @staticmethod
@@ -337,15 +369,26 @@ class OrchestrationService:
                 or recorder.get("capture_session_id") != capture["uuid"] or recorder.get("callback_error")
                 or recorder.get("event_backlog_bytes", 0) > 256 * 1024):
             return {"allowed": False, "reason": "Recorder health/ownership is not current."}
+        if (capture.get("selected_source_id") and not source.get("heartbeat_evidence")
+                and not capture.get("source_ambiguity") and not capture.get("active_armed_interval_id")
+                and not source.get("identity_conflict") and not source.get("continuity_lost")
+                and source.get("uid") in (None, policy["connection"]["expected_uid"])):
+            from .recorder import shared_bootstrap_ready
+            if shared_bootstrap_ready(recorder, policy["connection"]):
+                return {"allowed": True, "reason": "Fresh disarmed shared socket permits initial UID discovery; parameter requests still require independently verified UID and boot clock."}
         if (context["safety"].get("armed_state") != "disarmed" or capture.get("source_ambiguity")
                 or source.get("identity_conflict") or source.get("continuity_lost")
-                or str(source.get("uid")) != policy["connection"]["expected_uid"]
+                or (str(source.get("uid")) != policy["connection"]["expected_uid"]
+                    and not (policy["connection"].get("transport") == "shared_recorder" and source.get("uid") is None))
                 or source.get("heartbeat_evidence", {}).get("boot_epoch") in (None, "unknown")):
             return {"allowed": False, "reason": "Fresh disarmed source/UID/clock-segment evidence is unavailable."}
         return {"allowed": True, "reason": "Observer is freshly disarmed; direct acquisition independently checks UID and boot clock."}
 
-    def _request(self, run, role, anchor, flight_record_id=None):
-        identity = _hash({"run": run["id"], "role": role, "anchor": anchor})
+    def _request(self, run, role, anchor, flight_record_id=None, refresh_attempt=0):
+        key = {"run": run["id"], "role": role, "anchor": anchor}
+        if refresh_attempt:
+            key["refresh_attempt"] = refresh_attempt
+        identity = _hash(key)
         try:
             return self._get("request", identity)
         except ValueError:
@@ -355,6 +398,7 @@ class OrchestrationService:
                 raise ValueError("Approved request limit reached; no further automatic requests will be started.")
             return self._save("request", {"id": identity, "capture_session_id": run["id"],
                 "flight_record_id": flight_record_id, "role": role, "anchor": anchor, "state": "waiting",
+                "refresh_attempt": refresh_attempt,
                 "operation_id": str(uuid4()), "job_id": None, "acquisition_id": None,
                 "association_state": "provisional", "historical_applicability": "unknown",
                 "freshness": "unknown", "applicability": "unknown"})
@@ -426,9 +470,21 @@ class OrchestrationService:
                                    atomic=False, recovery_warning=acquisition.get("transport_evidence", {}).get("recovery_warning"),
                                    reason=acquisition.get("interruption_reason") or acquisition.get("archive_error"))
                     if "parameters" in latest["role"]:
+                        if params["connection"].get("transport") == "shared_recorder":
+                            # The recorder journal and catalog reader are separate.
+                            # Capture our own reply events before freezing the token
+                            # so they do not trigger a spurious refresh immediately.
+                            synchronize = getattr(self.controller.recorder, "synchronize_events", None)
+                            if synchronize is None or not synchronize():
+                                changed.update(freshness="invalidated", applicability="unknown", revoked=True,
+                                               reason="Recorder event processing has not caught up with this readback; current settings remain unconfirmed.")
                         context = self._context(request["capture_session_id"])
                         token = self._token(context)
-                        if any(latest.get("trigger_token", {}).get(key) != token[key] for key in CONTINUITY_KEYS):
+                        run = self._get("run", request["capture_session_id"])
+                        policy = self.store.get_document("acquisition_policy", run["policy_id"])["policy"]
+                        trigger = self._bootstrap_token(latest, token, policy)
+                        changed["trigger_token"] = trigger
+                        if any(trigger.get(key) != token[key] for key in CONTINUITY_KEYS):
                             changed.update(revoked=True, freshness="invalidated", applicability="unknown",
                                            reason="Observed arm cycle or source continuity changed during this readback; retained evidence is not a current preflight snapshot.")
                         if latest["role"] == "preflight_parameters":
@@ -486,7 +542,10 @@ class OrchestrationService:
             for request in requests:
                 if "parameters" in request["role"] and request["state"] in ("queued", "running"):
                     token = self._token(context)
-                    if any(request.get("trigger_token", {}).get(key) != token[key]
+                    trigger = self._bootstrap_token(request, token, policy)
+                    if trigger != request.get("trigger_token"):
+                        request = self._save("request", request | {"trigger_token": trigger})
+                    if any(trigger.get(key) != token[key]
                            for key in CONTINUITY_KEYS):
                         self._save("request", request | {"revoked": True, "freshness": "invalidated", "applicability": "unknown"})
                         if request.get("job_id"):
@@ -533,7 +592,16 @@ class OrchestrationService:
                         return
             if policy["preflight_parameters"]:
                 anchor = self._preflight_anchor(context)
-                request = self._request(run, "preflight_parameters", anchor)
+                candidates = [row for row in pending if row["role"] == "preflight_parameters" and row["anchor"] == anchor]
+                request = candidates[0] if candidates else self._request(run, "preflight_parameters", anchor)
+                if (policy.get("automatic_preflight_refresh") and request["state"] == "complete"
+                        and not self._preflight_eligible(request, context, policy)
+                        and (time.monotonic_ns() - int(request["finished_monotonic_ns"])) / 1e9 >= 30):
+                    if len(pending) >= policy["max_requests_per_capture"]:
+                        self._save("run", run | {"reason": "Automatic readback request budget reached; existing evidence is retained."})
+                        return
+                    request = self._request(run, "preflight_parameters", anchor,
+                                            refresh_attempt=request.get("refresh_attempt", 0) + 1)
                 self._start(run, request, policy, context, "acquisition.parameters.capture", {"role": "preflight"})
 
     def select_retrieval(self, params):

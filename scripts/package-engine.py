@@ -161,6 +161,7 @@ def frozen_inventory(binary: Path) -> dict:
                 "q22_engine.flight_configuration", "q22_engine.flight_health",
                 "q22_engine.insight_context", "q22_engine.insight_comparison",
                 "q22_engine.performance_advice", "q22_engine.experiments", "q22_engine.research",
+                "q22_engine.flight_library", "q22_engine.shared_transport",
                 "q22_engine.network_helper", "q22_engine.network_helper_windows"}
     if not required.issubset(modules):
         raise RuntimeError(f"Frozen runtime missing required modules: {sorted(required - set(modules))}")
@@ -276,6 +277,7 @@ def smoke(binary: Path) -> None:
             smoke_analysis_workflows(rpc, acquisitions[0], report)
             smoke_control_and_alignment(rpc, Path(directory))
             capture = smoke_recorder(rpc, Path(directory), binary)
+            smoke_flight_library(rpc, Path(directory))
         finally:
             rpc.close()
         try:
@@ -297,7 +299,7 @@ def smoke(binary: Path) -> None:
         if (network.get("platform") != platform.system() or not network.get("interfaces")
                 or network.get("status") not in {"inspected", "partial"}):
             raise RuntimeError("Frozen runtime failed native interface inspection")
-        print("Frozen engine smoke passed: v1 catalog migration/integrity, Unicode and BIN/LOG/TLOG imports, Parquet metrics, native interfaces, saved-policy no-traffic/restart gate, synthetic bidirectional readback/list/download, vibration/power and batch-IMU/RATE/static-filter reports, positive content alignment, review export, receive-only recorder, verified archives, persistence/recovery, clean EOF worker exit. Synthetic evidence only; no hardware qualification.")
+        print("Frozen engine smoke passed: v1 catalog migration/integrity, Unicode and BIN/LOG/TLOG imports, Parquet metrics, native interfaces, saved-policy no-traffic/restart gate, synthetic bidirectional readback/list/download, vibration/power and batch-IMU/RATE/static-filter reports, positive content alignment, review export, automatic flight-library indexing and cached analysis, receive-only recorder, verified archives, persistence/recovery, clean EOF worker exit. Synthetic evidence only; no hardware qualification.")
 
 
 def prepare_legacy_catalog(directory: Path) -> dict:
@@ -826,6 +828,31 @@ def smoke_insights(rpc: SmokeRPC, directory: Path) -> dict:
             or len(raw) != exported["byte_size"] or hashlib.sha256(raw).hexdigest() != exported["sha256"]):
         raise RuntimeError("Local review export differs from its exact preview or integrity receipt")
     return report
+
+
+
+def smoke_flight_library(rpc: SmokeRPC, directory: Path) -> None:
+    """The installed runtime must discover and analyze a log without manual scopes."""
+    fixture = directory / "synthetic automatic library.log"
+    fixture.write_bytes((ROOT / "fixtures/logs/synthetic-insights.log").read_bytes() + b"\n")
+    result = rpc.job("library.import", {"path": str(fixture), "label": "Synthetic automatic flight", "synthetic": True})
+    log_id = result["log"]["id"]
+    # Earlier smoke imports may consume a bounded batch before this new source.
+    for _ in range(5):
+        listing = rpc.call("library.list", {"limit": 50})
+        flight = next((item for item in listing["flights"] if item.get("log_id") == log_id and item.get("report_id")), None)
+        if flight:
+            break
+        rpc.job("library.refresh", {"max_logs": 50})
+    else:
+        raise RuntimeError("Frozen automatic flight analysis did not produce a flight-linked report")
+    detail = rpc.call("library.detail", {"flight_id": flight["id"]})
+    if (not detail["report"]["scope"]["synthetic"] or detail["report"]["scope"]["log_id"] != log_id
+            or detail["report"]["id"] != flight["report_id"]):
+        raise RuntimeError("Frozen flight library lost the selected flight's source or synthetic provenance")
+    rpc.job("library.refresh", {"max_logs": 50})
+    if rpc.call("library.detail", {"flight_id": flight["id"]})["report"]["id"] != flight["report_id"]:
+        raise RuntimeError("Unchanged library refresh unnecessarily regenerated immutable flight analysis")
 
 
 def smoke_analysis_workflows(rpc: SmokeRPC, readback: dict, report: dict) -> None:

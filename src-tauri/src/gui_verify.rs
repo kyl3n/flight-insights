@@ -27,6 +27,7 @@ pub struct Evidence {
     title: String,
     root_children: u32,
     navigation_buttons: u32,
+    navigation_labels: Vec<String>,
     rendered_width: f64,
     rendered_height: f64,
     animation_frames: u32,
@@ -119,7 +120,8 @@ fn validate(evidence: &Evidence) -> Result<(), String> {
     if evidence.title.len() > 256
         || !evidence.title.contains("Q22 Flight Lab")
         || evidence.root_children == 0
-        || evidence.navigation_buttons < 6
+        || evidence.navigation_buttons != 2
+        || evidence.navigation_labels != ["Flights", "Setup"]
         || !(evidence.rendered_width > 0.0 && evidence.rendered_width < 100_000.0)
         || !(evidence.rendered_height > 0.0 && evidence.rendered_height < 100_000.0)
         || evidence.animation_frames != 2
@@ -167,6 +169,7 @@ fn diagnostic(evidence: &Evidence) -> Value {
         "error":evidence.error.as_deref().map(text),
         "title":evidence.title.chars().take(256).collect::<String>(),
         "root_children":evidence.root_children,"navigation_buttons":evidence.navigation_buttons,
+        "navigation_labels":evidence.navigation_labels.iter().take(3).map(|label| label.chars().take(32).collect::<String>()).collect::<Vec<_>>(),
         "rendered_width":evidence.rendered_width,"rendered_height":evidence.rendered_height,
         "animation_frames":evidence.animation_frames,"engine_connected":evidence.engine_connected,
         "handshake_product":field(&evidence.handshake,"product"),
@@ -232,7 +235,7 @@ pub async fn native_gui_smoke_complete(
     let result = validate(&evidence).map(|()| {
         json!({
             "title":evidence.title, "root_children":evidence.root_children,
-            "navigation_buttons":evidence.navigation_buttons,
+            "navigation_buttons":evidence.navigation_buttons,"navigation_labels":evidence.navigation_labels,
             "rendered_width":evidence.rendered_width,"rendered_height":evidence.rendered_height,
             "animation_frames":evidence.animation_frames,"engine_connected":true,
             "handshake":evidence.handshake,"status":evidence.status,
@@ -277,12 +280,18 @@ mod tests {
     #[test]
     fn rejects_disconnected_or_fabricated_empty_render() {
         let mut evidence: Evidence = serde_json::from_value(json!({
-            "title":"Q22 Flight Lab", "root_children":1,"navigation_buttons":6,
+            "title":"Q22 Flight Lab", "root_children":1,"navigation_buttons":2,"navigation_labels":["Flights","Setup"],
             "rendered_width":880,"rendered_height":640,"animation_frames":2,
             "engine_connected":true,"handshake":{"product":"Q22 Flight Lab","protocol_version":1},
             "status":{"state":"available"},"restart_handshake":{"product":"Q22 Flight Lab","protocol_version":1},"phase":"completion","error":null
         })).unwrap();
         assert!(validate(&evidence).is_ok());
+        evidence.navigation_labels = vec!["Flights".into(), "Unexpected".into()];
+        assert!(validate(&evidence).is_err());
+        evidence.navigation_labels = vec!["Flights".into(), "Setup".into()];
+        evidence.navigation_buttons = 9;
+        assert!(validate(&evidence).is_err());
+        evidence.navigation_buttons = 2;
         evidence.rendered_width = 0.0;
         assert!(validate(&evidence).is_err());
         evidence.rendered_width = 880.0;

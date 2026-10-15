@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 import { promisify } from 'node:util';
 import type { EngineJob, InsightReport } from '../../src/api';
 import { connectEngine } from './engine-harness';
+import { openWorkspace } from './navigation';
 
 test('flight-linked typed readbacks remain bounded in the report and partial acquisitions can be preserved without upgrading them', async ({page}, testInfo) => {
   test.setTimeout(90_000);
@@ -51,7 +52,7 @@ print(json.dumps({'scope': reports[0]['scope'], 'flight_id': reports[0]['flight_
     const snapshotId = saved.configuration!.preflight[0].snapshot_id;
     await page.goto('/');
     await expect(page.getByText('Engine connected', {exact: true})).toBeVisible();
-    await page.getByRole('navigation').getByRole('button', {name: 'Flight insights', exact: true}).click();
+    await openWorkspace(page, 'Flight insights');
     await page.getByRole('combobox', {name: 'Preserved insight report', exact: true}).selectOption(saved.id);
     const report = page.getByRole('region', {name: 'Preserved flight insight report', exact: true});
     const configuration = report.locator('section.panel').filter({has: page.getByRole('heading', {name: 'Flight-linked full parameter readbacks', exact: true})});
@@ -66,7 +67,7 @@ print(json.dumps({'scope': reports[0]['scope'], 'flight_id': reports[0]['flight_
     await expect(before).toContainText('The preview is shortened; full comparisons read the complete preserved set.');
     await configuration.screenshot({path: testInfo.outputPath('flight-linked-readbacks.png')});
 
-    await page.getByRole('navigation').getByRole('button', {name: 'Prepare & watch', exact: true}).click();
+    await openWorkspace(page, 'Prepare & watch');
     const acquisition = page.locator('.acquisition-workspace');
     await acquisition.getByRole('combobox', {name: 'Preserved acquisition', exact: true}).selectOption(fixture.partial_id);
     await expect(acquisition.locator('.acquisition-result')).toContainText('Partial acquisition');
@@ -90,7 +91,7 @@ print(json.dumps({'scope': reports[0]['scope'], 'flight_id': reports[0]['flight_
     expect(engine.calls.filter(call => call.method === 'parameters.promote_readback').map(call => call.params)).toEqual([
       {acquisition_id: fixture.partial_id}, {acquisition_id: fixture.partial_id},
     ]);
-    await page.getByRole('navigation').getByRole('button', {name: 'Compare', exact: true}).click();
+    await openWorkspace(page, 'Compare');
     await page.getByRole('tab', {name: 'Parameter snapshots', exact: true}).click();
     await page.getByRole('combobox', {name: /Reference snapshot/}).selectOption(snapshotId);
     await page.getByRole('combobox', {name: /Changed \/ loaded snapshot/}).selectOption(partial.id);

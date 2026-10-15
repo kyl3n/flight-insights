@@ -12,9 +12,42 @@ The requirements below are acceptance targets; they are not a declaration that
 every target has been implemented or qualified. See [acceptance status](acceptance-status.md)
 and the executed checks in [validation.md](validation.md).
 
+## Flight-centered workspace in the 0.3.0 source
+
+The current redesign puts **Flights** and **Setup** in the primary navigation.
+Collection controls and log import sit with chronological flight history. Opening
+a flight brings metrics, problems, configuration evidence, available preceding-
+flight comparisons, recent history and conditional suggestions into that record.
+Advanced manual analysis and evidence tools remain accessible without separate
+primary navigation tabs. See the [workspace guide](flight-workspace.md).
+
+Supported logs are indexed and analyzed automatically in bounded local jobs.
+The app separates aircraft sources, clock segments and observed armed intervals;
+unknown dates or incomplete boundaries remain review items. Aircraft grouping
+requires observed UID evidence or an explicit operator declaration, and compatible
+ordering/interval evidence is required before choosing a previous flight.
+
+After capture stops, eligible independent logs can be matched automatically using
+the existing UID/firmware, supported-clock, exact-interval and original-integrity
+rules. Provisional and ambiguous evidence is not upgraded. The app’s own capture
+provenance is labelled separately from this independent alignment.
+
+Guided setup now supports one bidirectional app endpoint for both recording and
+parameter requests, independent of the selected GCS. The configured radio/router
+must supply the actual return path. The default enabled policy refreshes stale
+completed preflight captures while disarmed within a cooldown and request budget.
+The app uses its own configurable MAVLink request identity and stops readback on
+an observed identity collision. Old receive-only profiles stay receive-only. No parameter writes or automatic
+onboard log transfer are added. Library analysis pauses during collection.
+
+The 0.3.0 source requires its own validation and native builds. Results below
+remain historical 0.2.0 evidence until newer executed results are recorded; they
+do not qualify the redesigned UI or shared transport. Physical aircraft/GCS
+routing and flight optimization acceptance remain open.
+
 ## Implemented in the 0.2.0 source
 
-The current source includes the following slices. Windows/Linux 0.2.0 CI preview
+The 0.2.0 source included the following slices, retained by the redesign. Windows/Linux 0.2.0 CI preview
 installers passed their native builds and basic production WebView checks at clean
 source `0ac9836`; downloads and executed validation are recorded separately in
 [validation.md](validation.md). Desktop, hardware and flight acceptance remain open.
@@ -46,7 +79,7 @@ completed readback immediately before an operator arms the aircraft.
 ## Field workflow and first use
 
 The primary workflow uses the existing field serial/radio/GCS infrastructure and
-a separate MAVLink UDP feed to Flight Lab. Dedicated COM-port setup, serial-port
+a MAVLink UDP endpoint for Flight Lab alongside the GCS. A return-capable endpoint can share recording and readback within the app. Dedicated COM-port setup, serial-port
 enumeration and direct serial transport in Flight Lab are deferred. The user
 keeps serial setup in the working field equipment or ground station. Live setup
 must explain the actual receiver address, sender address, UDP destination and
@@ -63,8 +96,8 @@ A fresh installation should guide the user through:
    requests within its approved capture and request budget.
 4. Show parameter-readback progress, missing values, conflicting observations,
    observation time and freshness. If the feed is one-way, explain that passive
-   telemetry cannot request a full readback. Guide the user to a separate
-   bidirectional route or a contemporaneous parameter export from the GCS.
+   telemetry cannot request a full readback. Guide the user to a
+   bidirectional radio/router route or a contemporaneous parameter export from the GCS.
 5. Record the flight and retain the configuration and environment evidence linked
    to it. Collect postflight settings and onboard logs when available; preserve
    partial collection and clear recovery instructions when evidence is absent.

@@ -1,13 +1,14 @@
 import { expect, test } from '@playwright/test';
 import { resolve } from 'node:path';
 import { connectEngine } from './engine-harness';
+import { openWorkspace } from './navigation';
 
 test('browser shows unavailable capabilities without manufacturing data', async ({ page }) => {
   await page.goto('/');
-  await expect(page.getByText('Open the desktop app to work with real evidence')).toBeVisible();
-  await page.getByRole('navigation').getByRole('button', { name: 'Network checks' }).click();
+  await expect(page.getByText('Open the desktop app to analyze your flights')).toBeVisible();
+  await openWorkspace(page, 'Network checks');
   await expect(page.getByRole('button', { name: 'Inspect computer' })).toBeDisabled();
-  await page.getByRole('navigation').getByRole('button', { name: 'Compare', exact: true }).click();
+  await openWorkspace(page, 'Compare');
   await expect(page.getByText('Build a comparison from real evidence')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Compare', exact: true }).last()).toBeDisabled();
 });
@@ -17,7 +18,7 @@ test('desktop UI imports original snapshots and displays an actual engine diff',
   try {
     await page.goto('/');
     await expect(page.getByText('Engine connected', { exact: true })).toBeVisible();
-    await page.getByRole('navigation').getByRole('button', { name: 'Evidence', exact: true }).click();
+    await openWorkspace(page, 'Evidence');
     const imports = [
       { file: 'synthetic-before.param', label: 'Synthetic baseline' },
       { file: 'synthetic-after.parm', label: 'Synthetic candidate' },
@@ -34,7 +35,7 @@ test('desktop UI imports original snapshots and displays an actual engine diff',
       await page.getByRole('button', { name: 'Import snapshot', exact: true }).click();
       await expect(page.getByRole('heading', { name: item.label, exact: true })).toBeVisible();
     }
-    await page.getByRole('navigation').getByRole('button', { name: 'Compare', exact: true }).click();
+    await openWorkspace(page, 'Compare');
     await page.getByRole('tab', { name: 'Parameter snapshots', exact: true }).click();
     await page.getByLabel(/Reference snapshot/).selectOption({ label: 'Synthetic baseline [synthetic]' });
     await page.getByLabel(/Changed \/ loaded snapshot/).selectOption({ label: 'Synthetic candidate [synthetic]' });
@@ -47,6 +48,8 @@ test('desktop UI imports original snapshots and displays an actual engine diff',
     expect(engine.calls.some(call => call.method === 'parameters.diff')).toBeTruthy();
     // Reload retains evidence from SQLite, not React state.
     await page.reload();
+    await expect(page.getByText('Engine connected', {exact: true})).toBeVisible();
+    await openWorkspace(page, 'Evidence');
     await expect(page.getByText('2 imported', { exact: true }).first()).toBeVisible();
   } finally { await engine.close(); }
 });
@@ -72,7 +75,7 @@ test('flight comparison uses snapshot-linked real engine metrics and displays co
     }
     await page.goto('/');
     await expect(page.getByText('Engine connected', { exact: true })).toBeVisible();
-    await page.getByRole('navigation').getByRole('button', { name: 'Compare', exact: true }).click();
+    await openWorkspace(page, 'Compare');
     await page.getByLabel(/Reference flight/).selectOption(sessions[0].id);
     await page.getByLabel(/Flight to evaluate/).selectOption(sessions[1].id);
     await page.getByRole('button', { name: 'Compare', exact: true }).last().click();
@@ -91,7 +94,7 @@ test('network inspection runs against this host and does not apply a repair', as
   try {
     await page.goto('/');
     await expect(page.getByText('Engine connected', { exact: true })).toBeVisible();
-    await page.getByRole('navigation').getByRole('button', { name: 'Network checks' }).click();
+    await openWorkspace(page, 'Network checks');
     await page.getByRole('button', { name: 'Inspect computer' }).click();
     // Windows performs two sequential read-only PowerShell queries, each with
     // a six-second budget. Allow their supported duration plus UI overhead.

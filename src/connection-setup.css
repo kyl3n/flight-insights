@@ -5,6 +5,17 @@
 .setup-welcome p { font-size: 14px; line-height: 1.6; }
 .setup-welcome > .button { flex: none; }
 .setup-steps { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; list-style: none; padding: 0; margin: 0; }
+.setup-steps.setup-two-steps { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.connection-setup .setup-options { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.setup-automation { margin-top: 22px; padding: 0 20px 18px; border: 1px solid var(--border); border-radius: 8px; background: #f6f9fd; }
+.setup-offline-note { padding: 20px 0 4px; }
+.collection-compact .panel-heading { align-items: center; }
+.collection-compact-body { padding: 0 24px 18px; }
+.collection-compact-body .field-help { line-height: 1.6; }
+.collection-detail-disclosure > summary { padding: 12px 0; cursor: pointer; color: var(--muted); font-size: 14px; }
+.collection-detail-disclosure[open] > summary { margin-bottom: 14px; }
+.collection-parameter-summary { margin-top: 12px; }
+.current-readback-compact { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .setup-steps li { display: flex; align-items: center; gap: 10px; border-bottom: 2px solid var(--border); padding: 12px 0; color: var(--muted); font-size: 15px; flex-wrap: wrap; }
 .setup-steps li > span { display: inline-flex; align-items: center; justify-content: center; width: 27px; height: 27px; border: 1px solid var(--border); border-radius: 50%; flex: none; font-size: 13px; }
 .setup-steps li.current { color: var(--blue); border-color: var(--blue); font-weight: 600; }
@@ -67,6 +78,8 @@
 .connection-setup h2:focus { outline: none; }
 @media (max-width: 1000px) { .setup-welcome { flex-wrap: wrap; } .setup-welcome > div { min-width: 220px; } .setup-welcome > .button { margin-left: 45px; } }
 @media (max-width: 760px) {
+  .connection-setup .setup-options { grid-template-columns: 1fr; }
+  .collection-compact .panel-heading { align-items: flex-start; flex-direction: column; }
   .setup-options { grid-template-columns: 1fr; }
   .setup-option { padding: 18px; }
   .setup-steps { gap: 8px; }

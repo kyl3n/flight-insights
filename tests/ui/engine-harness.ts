@@ -19,7 +19,7 @@ export async function connectEngine(page: Page, options: {boundaryOverride?: (me
   let closing = false;
   const pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
   const calls: { method: string; params: Record<string, unknown> }[] = [];
-  const files: string[] = [];
+  const files: (string | string[])[] = [];
   createInterface({ input: child.stdout }).on('line', line => {
     const result = JSON.parse(line);
     const request = pending.get(result.id);

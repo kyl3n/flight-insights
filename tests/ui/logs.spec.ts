@@ -1,9 +1,10 @@
 import { expect, test, type Page } from '@playwright/test';
 import { resolve } from 'node:path';
 import { connectEngine } from './engine-harness';
+import { openWorkspace } from './navigation';
 
 async function openLogs(page:Page){
-  await page.getByRole('navigation').getByRole('button',{name:'Evidence',exact:true}).click();
+  await openWorkspace(page, 'Evidence');
   await page.getByRole('tab',{name:'Flight log',exact:true}).click();
   return page.locator('#flight-log-panel');
 }
@@ -51,7 +52,7 @@ test('BIN import preserves boot and parameter evidence and creates comparable sc
     const requests=engine.calls.filter(call=>call.method==='logs.session');
     expect(requests).toHaveLength(2);
     expect(requests.every(call=>call.params.source_key==='dataflash'&&call.params.boot_epoch===0&&call.params.battery_id==='0')).toBeTruthy();
-    await page.getByRole('navigation').getByRole('button',{name:'Compare',exact:true}).click();
+    await openWorkspace(page, 'Compare');
     await page.getByLabel(/Reference flight/).selectOption({label:'Synthetic before setting change [synthetic]'});
     await page.getByLabel(/Flight to evaluate/).selectOption({label:'Synthetic after setting change [synthetic]'});
     await page.getByRole('button',{name:'Compare',exact:true}).last().click();

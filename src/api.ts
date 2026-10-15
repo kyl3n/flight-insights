@@ -113,7 +113,7 @@ export interface ReconciliationReport {
   files:{selected_path:string;original_name:string;state:string;log_id?:string;parameter_reference_id?:string;source?:SourceEvidence;error?:string}[];
   candidates:ReconciliationCandidate[];limits_reached:string[];limitations:string[];[key:string]:unknown;
 }
-export interface AcquisitionConnection {local_address:string;local_port:number;remote_address:string;remote_port:number;system_id:number;component_id:number;expected_uid:string;feed_origin:'direct_bidirectional'}
+export interface AcquisitionConnection {transport?:'shared_recorder'|'dedicated';client_system_id?:number;client_component_id?:number;local_address:string;local_port:number;remote_address:string;remote_port:number;system_id:number;component_id:number;expected_uid:string;feed_origin:'direct_bidirectional'}
 export interface AcquisitionPreview {connection:AcquisitionConnection;limits:Record<string,number>;applicability_fingerprint:string;prerequisites:string[];outgoing_allowlist:string[];limitations:string[]}
 export interface AcquisitionRecord {
   id:string;kind:'parameters'|'log_list'|'log_download';state:string;aircraft_id:string;connection:AcquisitionConnection;synthetic:boolean;
@@ -132,7 +132,7 @@ export interface RecoveryResponse {status:'ready'|'unavailable';repairs:Recovery
 export interface CollectionProfile {
   aircraft_id:string;aircraft_profile_version:string;connection_profile_version:string;
   environment_context?:FlightEnvironmentContext;
-  connection:{local_address:string;listen_port:number;expected_sender:string;system_id:number;component_id:number;expected_uid?:string;feed_origin:'live_forwarded';synthetic:boolean};
+  connection:{local_address:string;listen_port:number;expected_sender:string;system_id:number;component_id:number;expected_uid?:string;readback?:{remote_port:number;client_system_id?:number;client_component_id?:number};feed_origin:'live_forwarded';synthetic:boolean};
   required_sources:string[];
 }
 export interface CollectionReadiness {state:string;reasons:string[];can_observe:boolean;can_claim_complete:boolean}
@@ -205,7 +205,7 @@ export async function listAll<T>(method:string,key:string,limit=100):Promise<T[]
   }
 }
 
-export interface AcquisitionPolicy {id:string;policy_fingerprint:string;created_at:string;policy:{aircraft_id:string;connection:AcquisitionConnection;synthetic:boolean;preflight_parameters:boolean;postflight_parameters:boolean;log_retrieval:'disabled'|'selected_after_stop';confirm_log_transfer_side_effects:boolean;preflight_freshness_s:number;max_requests_per_capture:number;limits?:Record<string,number>};adapter:Record<string,unknown>;limitations:string[]}
+export interface AcquisitionPolicy {id:string;policy_fingerprint:string;created_at:string;policy:{aircraft_id:string;connection:AcquisitionConnection;synthetic:boolean;preflight_parameters:boolean;postflight_parameters:boolean;automatic_preflight_refresh?:boolean;log_retrieval:'disabled'|'selected_after_stop';confirm_log_transfer_side_effects:boolean;preflight_freshness_s:number;max_requests_per_capture:number;limits?:Record<string,number>};adapter:Record<string,unknown>;limitations:string[]}
 export interface AcquisitionPolicyApproval {policy_id:string;policy_fingerprint:string;confirm_automatic_readback:true;confirm_experimental_adapter:true;confirm_log_transfer_side_effects?:true}
 export interface OrchestrationRequest {id:string;capture_session_id:string;flight_record_id:string|null;role:string;state:string;job_id:string|null;acquisition_id:string|null;association_state:string;historical_applicability:string;freshness:string;applicability:string;reason?:string;recovery_warning?:string;[key:string]:unknown}
 export interface OrchestrationStatus {runs:{id:string;state:string;runtime_authorized:boolean;authorization_state:string;gate:{allowed:boolean;reason:string};[key:string]:unknown}[];requests:OrchestrationRequest[];request_total:number;run_total:number;next_offset:number|null;adapter:Record<string,unknown>;limitations:string[]}

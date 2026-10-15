@@ -2,7 +2,25 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { errorMessage, listAll, request, type AcquisitionPolicy, type AcquisitionPolicyApproval, type CollectionProfile, type Run } from './api';
 import { Badge, Notes, readable } from './ui';
 type PolicyPreview=Omit<AcquisitionPolicy,'id'|'created_at'>;
-export default function CollectionPolicy({profile,ready,busy,run,onChange}:{profile:CollectionProfile;ready:boolean;busy:string;run:Run;onChange:(value:{selected:boolean;approval:AcquisitionPolicyApproval|null})=>void}){
+type Props={profile:CollectionProfile;ready:boolean;busy:string;run:Run;onChange:(value:{selected:boolean;approval:AcquisitionPolicyApproval|null})=>void};
+
+/** Called only from an explicit collection start, using the saved connection. */
+export async function automaticReadbackApproval(profile:CollectionProfile):Promise<AcquisitionPolicyApproval|undefined>{
+  const endpoint=profile.connection;
+  if(!endpoint.readback)return undefined;
+  const preview=await request<PolicyPreview>('orchestration.preview',{policy:{aircraft_id:profile.aircraft_id,synthetic:endpoint.synthetic,connection:{local_address:endpoint.local_address,local_port:endpoint.listen_port,remote_address:endpoint.expected_sender,remote_port:endpoint.readback.remote_port,system_id:endpoint.system_id,component_id:endpoint.component_id,expected_uid:endpoint.expected_uid||'',feed_origin:'direct_bidirectional',transport:'shared_recorder',...(endpoint.readback.client_system_id!==undefined?{client_system_id:endpoint.readback.client_system_id}:{}),...(endpoint.readback.client_component_id!==undefined?{client_component_id:endpoint.readback.client_component_id}:{})},preflight_parameters:true,postflight_parameters:true,automatic_preflight_refresh:true,log_retrieval:'disabled',confirm_log_transfer_side_effects:false,preflight_freshness_s:60,max_requests_per_capture:64}});
+  const policies=await listAll<AcquisitionPolicy>('orchestration.policy.list','policies');
+  let policy=policies.find(item=>item.policy_fingerprint===preview.policy_fingerprint);
+  if(!policy)policy=(await request<{policy:AcquisitionPolicy}>('orchestration.policy.save',{policy:preview.policy,operation_id:crypto.randomUUID()})).policy;
+  return {policy_id:policy.id,policy_fingerprint:policy.policy_fingerprint,confirm_automatic_readback:true,confirm_experimental_adapter:true};
+}
+
+export default function CollectionPolicy(props:Props){
+  if(props.profile.connection.readback)return <section className="policy-setup"><h3>Automatic parameter capture</h3><p>Starting collection uses this same app connection for current preflight and postflight readbacks while disarmed. Stale preflight snapshots refresh automatically within a 64-request budget.</p><p className="field-help">Identity and clock checks still apply. No parameter writes or onboard-log transfers are scheduled. Hardware qualification is pending; unavailable or incomplete snapshots remain visible.</p></section>;
+  return <LegacyCollectionPolicy {...props}/>;
+}
+
+function LegacyCollectionPolicy({profile,ready,busy,run,onChange}:Props){
   const [policies,setPolicies]=useState<AcquisitionPolicy[]>([]);const [policyId,setPolicyId]=useState('');const [preview,setPreview]=useState<PolicyPreview|null>(null);const [error,setError]=useState('');
   const [reads,setReads]=useState(false);const [experimental,setExperimental]=useState(false);const [logsConfirmed,setLogsConfirmed]=useState(false);const [logMode,setLogMode]=useState(false);
   const policy=policies.find(item=>item.id===policyId);const logs=Boolean(policy&&policy.policy.log_retrieval!=='disabled');

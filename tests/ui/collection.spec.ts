@@ -4,6 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { resolve, join } from 'node:path';
 import { mkdir, copyFile } from 'node:fs/promises';
 import { connectEngine } from './engine-harness';
+import { openWorkspace } from './navigation';
 
 // Synthetic loopback packets exercise the actual live-forwarded receive path.
 // This isolated test declares that path live on purpose; these are not aircraft
@@ -54,7 +55,7 @@ test('passive observer records distinct armed intervals and preserves incomplete
     await new Promise<void>(done=>probe.close(()=>done()));
     await new Promise<void>(done=>sender.bind(0,'127.0.0.1',done));
     await page.goto('/');await expect(page.getByText('Engine connected',{exact:true})).toBeVisible();
-    await page.getByRole('navigation').getByRole('button',{name:'Prepare & watch',exact:true}).click();
+    await openWorkspace(page, 'Prepare & watch');
     await page.getByLabel('Aircraft profile name',{exact:true}).fill('Synthetic loopback transport · test only');
     await page.getByLabel('Observer local IPv4',{exact:true}).fill('127.0.0.1');
     await page.getByLabel('Dedicated observer UDP port',{exact:true}).fill(String(port));
@@ -70,8 +71,8 @@ test('passive observer records distinct armed intervals and preserves incomplete
     await expect.poll(async()=>{const state=await engine.rpc('session.status') as any;return state.recorder?.sources?.[0]?.armed_state;}).toBe('disarmed');
     armed=true;
     await expect(page.getByRole('button',{name:'Inspect interval 1 bundle',exact:true})).toBeVisible();
-    await page.getByRole('navigation').getByRole('button',{name:'Overview',exact:true}).click();
-    await expect(page.locator('.observer-strip')).toContainText('App observer recording');
+    await openWorkspace(page, 'Connection setup');
+    await expect(page.locator('.observer-strip')).toContainText('Collecting flight data');
     paused=true;
     await expect.poll(async()=>{const state=await engine.rpc('session.status') as any;return state.recorder?.sources?.[0]?.armed_state;},{timeout:7000}).toBe('unknown');
     const uncertain=await engine.rpc('session.status') as any;
@@ -83,7 +84,7 @@ test('passive observer records distinct armed intervals and preserves incomplete
     await expect.poll(async()=>{const state=await engine.rpc('session.status') as any;return state.flight_records.length;}).toBe(2);
     armed=false;
     await expect.poll(async()=>{const state=await engine.rpc('session.status') as any;return state.flight_records.every((record:any)=>Boolean(record.disarm_evidence));}).toBe(true);
-    await page.getByRole('navigation').getByRole('button',{name:'Prepare & watch',exact:true}).click();
+    await openWorkspace(page, 'Prepare & watch');
     await page.getByRole('button',{name:'Stop app observer',exact:true}).click();
     clearInterval(timer);timer=undefined;
     await expect(page.getByRole('heading',{name:'App observer is running',exact:true})).toHaveCount(0);
@@ -138,7 +139,7 @@ test('passive observer records distinct armed intervals and preserves incomplete
     await page.evaluate(()=>{if(document.activeElement instanceof HTMLElement)document.activeElement.blur();window.scrollTo(0,0);});
     await page.screenshot({path:testInfo.outputPath('collection-bundle-compact.png'),fullPage:true});
     await page.reload({timeout:10_000});await expect(page.getByText('Engine connected',{exact:true})).toBeVisible();
-    await page.getByRole('navigation').getByRole('button',{name:'Prepare & watch',exact:true}).click();
+    await openWorkspace(page, 'Prepare & watch');
     await expect(page.getByRole('button',{name:'Inspect interval 1 bundle',exact:true})).toBeVisible();
     await expect(page.getByRole('button',{name:'Inspect interval 2 bundle',exact:true})).toBeVisible();
     expect(engine.calls.filter(call=>call.method==='session.prepare_and_watch')).toHaveLength(1);

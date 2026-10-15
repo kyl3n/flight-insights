@@ -32,6 +32,7 @@ METHODS = (
     "parameters.import", "parameters.list", "parameters.diff", "parameters.promote_readback", "sessions.import",
     "sessions.list", "comparison.run", "logs.import", "logs.list", "logs.detail", "logs.session",
     "insights.report", "insights.list", "insights.detail", "insights.compare", "insights.review_packet", "insights.export_review",
+    "library.list", "library.detail", "library.refresh", "library.import", "library.analyze",
     "experiments.create", "experiments.list", "experiments.detail", "experiments.evaluate",
     "research.status", "research.query", "research.refresh",
     "acquisition.preview", "acquisition.parameters.capture", "acquisition.logs.list", "acquisition.logs.download",
@@ -65,6 +66,7 @@ class Engine:
                                       repair_backend=NativeRepairBackend())
         self.logs = None
         self.insights = InsightReports(self.store)
+        self.library = None
         self.experiments = None
         self.research = None
         self.acquisition = None
@@ -109,14 +111,15 @@ class Engine:
                 {"kind": "network", "state": "available", "limits": "Configured sources only; explicit stream probes."},
                 {"kind": "dataflash", "state": "available", "formats": ["BIN", "LOG"], "limits": "Bounded offline import; fields without validated units remain unavailable."},
                 {"kind": "tlog", "state": "available", "limits": "Recorded MAVLink only; source and boot epochs remain separate."},
-                {"kind": "live_recording", "state": "available", "limits": "Explicit separate passive UDP feed; read-only requests use a separate reviewed bidirectional endpoint. UDP replay protection remains unavailable."},
+                {"kind": "live_recording", "state": "available", "limits": "One app UDP endpoint can record telemetry and carry gated read-only parameter requests through a bidirectional route. Receive-only and legacy separate endpoints remain supported. UDP replay protection remains unavailable."},
                 {"kind": "insights", "state": "available", "limits": "Scoped measurements, versioned guidance and explicit evidence gaps; no automatic tuning or aircraft writes."},
                 {"kind": "flight_environment", "state": "available", "limits": "Immutable capture/flight OS and allowlisted software observations; supported native metadata only, with pending or unavailable versions kept explicit."},
                 {"kind": "flight_configuration", "state": "available", "limits": "Preserved typed readbacks linked through revalidated flight alignment; complete enumeration does not establish atomic effective in-flight configuration."},
+                {"kind": "flight_library", "state": "available", "limits": "Automatic local interval analysis and compatible historical comparisons; unknown dates and ambiguous boundaries remain explicit."},
                 {"kind": "flight_experiments", "state": "available", "limits": "Immutable plans, repeated-flight and paired comparisons, goals, regressions and counterexamples; no causal or statistical-independence claim."},
                 {"kind": "research_library", "state": "available", "limits": "Offline official excerpts and explicit optional source updates; downloaded material remains unreviewed and cannot replace tuning rules."},
-                {"kind": "read_only_acquisition", "state": "experimental", "limits": "Explicit direct bidirectional endpoint, fresh disarmed identity/clock gates; real GCS/hardware qualification pending."},
-                {"kind": "collection_policies", "state": "experimental", "limits": "Explicit per-capture approval; gated pre/postflight readbacks and selected post-stop log transfers. No startup/restart replay or automatic aircraft commands."},
+                {"kind": "read_only_acquisition", "state": "experimental", "limits": "Configured shared or dedicated bidirectional endpoint, fresh disarmed identity/clock gates; real GCS/hardware qualification pending."},
+                {"kind": "collection_policies", "state": "experimental", "limits": "Starting collection activates the configured read-only policy, with gated pre/postflight captures and bounded freshness refresh. Log transfers remain explicitly selected after stop. No startup/restart replay."},
                 {"kind": "evidence_alignment", "state": "available", "limits": "Bounded imported catalog, identity/clock/armed-interval corroboration and reviewed attachment. Verified rule matches do not establish cryptographic identity or complete historical settings."},
                 {"kind": "catalog_integrity", "state": "available", "limits": "Versioned catalog migrations and explicit original-file verification; catalog backup does not include every evidence file."},
                 {"kind": "folder_reconciliation", "state": "available", "limits": "Explicit selected folder, content inspection and provisional candidates; no filename-based verified associations."},
@@ -170,6 +173,15 @@ class Engine:
             if method in {"insights.report", "insights.compare"}:
                 return self.jobs.start(method, params, self.insights.dispatch)
             return self.insights.dispatch(method, params)
+        if method.startswith("library."):
+            if self.library is None:
+                from .flight_library import FlightLibrary
+                self.library = FlightLibrary(self.store, collection=self.collection.collection)
+            if method in {"library.refresh", "library.import", "library.analyze"}:
+                if self.collection.recorder.status().get("active"):
+                    raise ValueError("Flight analysis resumes after collection stops so preflight parameter capture can use the background worker.")
+                return self.jobs.start(method, params, self._library_job)
+            return self.library.dispatch(method, params)
         if method.startswith("experiments."):
             if self.experiments is None:
                 from .experiments import ExperimentService
@@ -216,6 +228,14 @@ class Engine:
             return self.jobs.start(method, params, self.parameters.dispatch)
         return self.parameters.dispatch(method, params)
 
+    def _library_job(self, method, params, cancel_check=None, progress=None):
+        # Local history analysis yields the worker as soon as collection starts.
+        # Imported originals already published remain available for the next pass.
+        def cancelled():
+            return bool((cancel_check and cancel_check()) or self.collection.recorder.status().get("active"))
+
+        return self.library.dispatch(method, params, cancel_check=cancelled, progress=progress)
+
     def _research_job(self, method, params, cancel_check=None, progress=None):
         # A queued or running internet update must yield the shared worker when
         # recording begins, so it cannot hold up a preflight readback policy.
@@ -227,7 +247,8 @@ class Engine:
     def _acquirer(self):
         if self.acquisition is None:
             from .acquisition import AcquisitionService
-            self.acquisition = AcquisitionService(self.store, external_gate=self._acquisition_gate)
+            self.acquisition = AcquisitionService(self.store, external_gate=self._acquisition_gate,
+                                                  shared_transport=self.collection.recorder.open_shared_transport)
         return self.acquisition
 
     def _orchestrator(self):
@@ -248,22 +269,28 @@ class Engine:
             return {"allowed": True, "reason": "The acquisition must independently establish fresh disarmed identity and clock evidence."}
         if kind != "parameters":
             return {"allowed": False, "reason": "Stop the app observer before legacy onboard log transfer; it can suspend onboard logging."}
+        shared = connection.get("transport") == "shared_recorder"
+        if shared and not self.collection.recorder.matches_shared_connection(connection):
+            return {"allowed": False, "reason": "Readback does not match the active app connection."}
         for binding in current.get("bindings", []):
             if (binding.get("port") == connection.get("local_port") and
                     (binding.get("local_address") in {"0.0.0.0", connection.get("local_address")}
                      or connection.get("local_address") == "0.0.0.0")):
-                return {"allowed": False, "reason": "Readback requires a separate endpoint from the passive recorder."}
+                if not shared:
+                    return {"allowed": False, "reason": "This UDP port belongs to the recorder. Use its configured shared readback connection."}
         selected = [source for source in current.get("sources", [])
                     if source.get("system_id") == connection.get("system_id")
                     and source.get("component_id") == connection.get("component_id")]
         safety = self.collection.collection.safety_state(current.get("capture_session_id"))
+        bootstrap = shared and self.collection.shared_bootstrap_ready(connection)
         if (current.get("state") != "recording" or current.get("callback_error")
                 or current.get("event_backlog_bytes", 0) > 256 * 1024
-                or safety.get("armed_state") != "disarmed" or len(selected) != 1
+                or (safety.get("armed_state") != "disarmed" and not bootstrap) or len(selected) != 1
                 or selected[0].get("armed_state") != "disarmed"
-                or str(selected[0].get("uid")) != str(connection.get("expected_uid"))):
+                or (str(selected[0].get("uid")) != str(connection.get("expected_uid"))
+                    and not (shared and selected[0].get("uid") is None))):
             return {"allowed": False, "reason": "The active observer lacks a fresh, unambiguous disarmed heartbeat and matching UID."}
-        return {"allowed": True, "reason": "Separate readback endpoint; observer matches declared UID and is freshly disarmed. UDP identity is not authenticated."}
+        return {"allowed": True, "reason": "The observer is freshly disarmed. The readback adapter must independently verify the configured UID and clock before requesting parameters. UDP identity is not authenticated."}
 
     def handle(self, value: object) -> dict:
         request_id = value.get("id") if isinstance(value, dict) else None

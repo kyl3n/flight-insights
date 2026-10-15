@@ -3,6 +3,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import type { EngineJob, FlightLog, InsightReport } from '../../src/api';
 import { connectEngine } from './engine-harness';
+import { openWorkspace } from './navigation';
 
 async function completedJob(engine: Awaited<ReturnType<typeof connectEngine>>, method: string, params: Record<string, unknown>) {
   const response = await engine.rpc(method, params) as {job: EngineJob};
@@ -64,7 +65,7 @@ test('reviewed advice and saved-report comparisons explain observed changes with
 
     await page.goto('/');
     await expect(page.getByText('Engine connected', {exact: true})).toBeVisible();
-    await page.getByRole('navigation').getByRole('button', {name: 'Flight insights', exact: true}).click();
+    await openWorkspace(page, 'Flight insights');
     await page.getByRole('combobox', {name: 'Preserved insight report', exact: true}).selectOption(reports[0].id);
     const report = page.getByRole('region', {name: 'Preserved flight insight report', exact: true});
     await expect(report.getByRole('heading', {name: 'Performance improvement review', exact: true})).toBeVisible();

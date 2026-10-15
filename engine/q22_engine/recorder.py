@@ -1,7 +1,7 @@
-"""Passive, exclusive UDP capture in a separate process, with durable evidence.
+"""Exclusive UDP capture, optionally sharing its socket with gated readback.
 
-This module never sends a packet and never relays a controlling GCS connection.
-The coordinator alone owns the catalog; this worker owns append-only capture files.
+The coordinator alone owns the catalog; this worker owns append-only capture files
+and the UDP socket. Read-only requests require an explicit shared configuration.
 """
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ import hashlib
 import ipaddress
 import json
 import os
+import select
 from pathlib import Path
 import shutil
 import socket
@@ -34,7 +35,7 @@ HEARTBEAT_STALE_SECONDS = 3.0
 RAW_HEADER = struct.Struct(">IQQ4sH")
 RAW_MAGIC = b"Q22UDP1\0"
 LIMITATIONS = [
-    "Receive-only configured UDP feed; no outgoing packets, routing, heartbeats or readback requests.",
+    "Receive-only unless shared readback is configured and a runtime acquisition submits an allowlisted, disarmed request; no GCS routing or controlling heartbeats.",
     "CRC validates framing, not aircraft identity or authenticity; signatures are retained but not verified.",
     "An unsigned live UDP feed cannot prove anti-replay; explicitly configured replay feeds are rejected.",
     "Forwarded capture may omit GCS-sent traffic; preserve native GCS logs as complementary evidence.",
@@ -125,6 +126,23 @@ def _exclusive_file_lock(path: Path):
     return stream
 
 
+def shared_bootstrap_ready(current, connection):
+    """Wire evidence for initial version discovery; never parameter authority."""
+    from .acquisition import _same_connection
+    selected = [source for source in current.get("sources", [])
+                if source.get("system_id") == connection.get("system_id")
+                and source.get("component_id") == connection.get("component_id")]
+    return (connection.get("transport") == "shared_recorder"
+            and _same_connection(current.get("shared_readback"), connection) and current.get("active")
+            and current.get("state") == "recording" and not current.get("callback_error")
+            and current.get("event_backlog_bytes", 0) <= 256 * 1024
+            and current.get("status_age_s") is not None and 0 <= current["status_age_s"] <= 2.5
+            and len(selected) == 1 and selected[0].get("armed_state") == "disarmed"
+            and selected[0].get("uid") in (None, connection.get("expected_uid"))
+            and selected[0].get("sender") == connection.get("remote_address")
+            and selected[0].get("sender_port") == connection.get("remote_port"))
+
+
 def _unlock_file(stream):
     try:
         if os.name == "nt":
@@ -163,6 +181,17 @@ def validate_config(config: dict) -> dict:
     if type(synthetic) is not bool:
         raise ValueError("synthetic must be boolean.")
     result["synthetic"] = synthetic
+    readback = config.get("readback")
+    if readback is not None:
+        from .acquisition import _connection
+        connection = _connection(readback)
+        if (connection.get("transport") != "shared_recorder" or connection["local_address"] != host
+                or connection["local_port"] != result["bind_port"]
+                or connection["remote_address"] not in sources
+                or connection["system_id"] != result["expected_system_id"]
+                or connection["component_id"] != result["expected_component_id"]):
+            raise ValueError("Shared readback must use the selected recorder socket and aircraft.")
+        result["readback"] = connection
     return result
 
 
@@ -235,6 +264,9 @@ class _Worker:
         self.actual_rcvbuf = None
         self.process_created = psutil.Process().create_time()
         self.ownership = None
+        self.last_readback_id = None
+        self.readback_sends = 0
+        self.last_readback_send = 0.0
 
     def status(self) -> dict:
         now = time.monotonic_ns()
@@ -256,6 +288,7 @@ class _Worker:
                 "parent_pid": self.parent_pid, "parent_created": self.parent_created,
                 "bindings": [{"local_address": self.config["bind_host"], "port": self.config["bind_port"]}],
                 "owns_udp": self.socket is not None, "synthetic": self.config["synthetic"],
+                "shared_readback": self.config.get("readback"), "readback_sent_messages": self.readback_sends,
                 "packets": self.packets, "received_bytes": self.received_bytes,
                 "valid_frames": self.valid_frames, "invalid_frames": self.invalid_frames,
                 "rejected_senders": self.rejected_senders, "records": self.records,
@@ -371,6 +404,7 @@ class _Worker:
                 self.event("link_gap", mono_ns, utc_ns, **base,
                            reason="boot_time_regression_unclassified", coverage="unknown_boot_boundary")
             source["_boot_ms"] = boot_ms
+            source["_boot_received_ns"] = mono_ns
         sequence = message.get_seq()
         previous_seq = source.get("_sequence")
         if previous_seq is not None and sequence != (previous_seq + 1) % 256:
@@ -397,6 +431,7 @@ class _Worker:
             uid2 = bytes(raw.get("uid2", [])).hex() if any(raw.get("uid2", [])) else None
             firmware = {key: raw.get(key) for key in ("flight_sw_version", "board_version", "vendor_id", "product_id")}
             source.update(uid=uid, uid2=uid2, identity_state="observed_uid" if uid or uid2 else "uid_unavailable")
+            source["_identity_received_ns"] = mono_ns
             self.event("identity", mono_ns, utc_ns, **base, uid=uid, uid2=uid2, firmware_identity=firmware)
         elif kind == "PARAM_VALUE":
             name = raw["param_id"]
@@ -479,6 +514,85 @@ class _Worker:
             consume(len(buffer))
             self.invalid_frames += 1
 
+    def _shared_request(self, mavlink):
+        """Validate again at the actual socket owner, immediately before send."""
+        connection = self.config.get("readback")
+        path = self.directory / "readback-command.json"
+        if not connection or not path.exists() or path.is_symlink():
+            return
+        try:
+            command = _read_json(path, 4096)
+            identity = str(UUID(command.get("id")))
+        except (ValueError, TypeError, AttributeError, OSError):
+            return  # invalid internal control metadata cannot interrupt capture
+        if identity == self.last_readback_id:
+            return
+        self.last_readback_id = identity  # no replay, including an ambiguous send failure
+        reply = {"id": identity, "sent": False}
+        # Capture failures must propagate to recorder finalization. They must
+        # never be caught as a mere readback failure after consuming a datagram.
+        drained = 0
+        while select.select([self.socket], [], [], 0)[0] and drained < 256:
+            payload_in, sender = self.socket.recvfrom(65535)
+            self.datagram(payload_in, sender, time.monotonic_ns(), time.time_ns(), mavlink)
+            drained += 1
+        try:
+            if select.select([self.socket], [], [], 0)[0]:
+                raise ValueError("Incoming recorder backlog prevents a current readback send decision.")
+            now_ns = time.monotonic_ns()
+            expires = int(command["expires_monotonic_ns"])
+            if not now_ns < expires <= now_ns + 2_000_000_000:
+                raise ValueError("Readback command expired; no packet sent.")
+            payload = bytes.fromhex(command["payload"])
+            if not 1 <= len(payload) <= MAX_FRAME_BYTES:
+                raise ValueError("Readback command has invalid frame size.")
+            parser = mavlink.MAVLink(None)
+            messages = parser.parse_buffer(payload) or []
+            if len(messages) != 1 or bytes(messages[0].get_msgbuf()) != payload:
+                raise ValueError("Readback must contain exactly one valid MAVLink frame.")
+            message = messages[0]
+            from .acquisition import _validate_outgoing, _limits, _client_identity
+            bootstrap = message.get_msgId() == 76
+            _validate_outgoing(message, connection, bootstrap, check_source=True)
+            if any((source["system_id"], source["component_id"]) == _client_identity(connection)
+                   for source in self.sources.values()):
+                raise ValueError("Incoming traffic conflicts with the configured app MAVLink identity; change the advanced app identity or router configuration.")
+            if message.get_msgId() not in {20, 21, 76}:
+                raise ValueError("Onboard log transfers require the observer to be stopped.")
+            limits = _limits({key: command[key] for key in
+                              ("heartbeat_timeout_s", "identity_timeout_s", "boot_timeout_s")})
+            selected = [source for source in self.sources.values()
+                        if source["system_id"] == connection["system_id"]
+                        and source["component_id"] == connection["component_id"]]
+            if len(selected) != 1:
+                raise ValueError("Shared readback source is missing or ambiguous.")
+            source = selected[0]
+            now_ns = time.monotonic_ns()
+            def fresh(field, seconds):
+                stamp = source.get(field)
+                return stamp is not None and 0 <= now_ns - int(stamp) <= seconds * 1e9
+            if (source["sender"] != connection["remote_address"] or source["sender_port"] != connection["remote_port"]
+                    or source.get("armed") is not False
+                    or not fresh("last_heartbeat_monotonic_ns", limits["heartbeat_timeout_s"])):
+                raise ValueError("Shared socket lacks a fresh selected disarmed heartbeat.")
+            if source.get("uid") not in (None, connection["expected_uid"]):
+                raise ValueError("Shared socket reported a different vehicle UID.")
+            if not bootstrap and (str(source.get("uid")) != connection["expected_uid"]
+                    or not fresh("_identity_received_ns", limits["identity_timeout_s"])
+                    or not fresh("_boot_received_ns", limits["boot_timeout_s"])):
+                raise ValueError("Shared socket lacks fresh matching UID and boot-clock evidence.")
+            if (self.readback_sends >= 50000 or time.monotonic() - self.last_readback_send < .005
+                    or time.monotonic_ns() >= expires):
+                raise ValueError("Readback send budget or deadline reached.")
+            sent_ns, sent_utc_ns = time.monotonic_ns(), time.time_ns()
+            self.socket.sendto(payload, (connection["remote_address"], connection["remote_port"]))
+            self.readback_sends += 1
+            self.last_readback_send = time.monotonic()
+            reply.update(sent=True, sent_monotonic_ns=str(sent_ns), sent_utc_us=str(sent_utc_ns // 1000))
+        except Exception as error:
+            reply["reason"] = str(error)[:500]
+        _atomic_json(self.directory / "readback-reply.json", reply)
+
     def run(self) -> int:
         from pymavlink.dialects.v20 import ardupilotmega as mavlink
         mavlink.MAVLINK_IGNORE_CRC = False
@@ -499,10 +613,10 @@ class _Worker:
             self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1024 ** 2)
             self.actual_rcvbuf = self.socket.getsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF)
             self.socket.bind((self.config["bind_host"], self.config["bind_port"]))
-            self.socket.settimeout(.2)
+            self.socket.settimeout(.02 if self.config.get("readback") else .2)
             self.rotate()
             self.state = "recording"
-            self.event("coverage", action="recording", receive_only=True)
+            self.event("coverage", action="recording", receive_only=not bool(self.config.get("readback")))
             self.checkpoint()
             while not (self.directory / "stop.json").exists():
                 try:
@@ -511,6 +625,7 @@ class _Worker:
                     self.datagram(payload, sender, mono_ns, utc_ns, mavlink)
                 except socket.timeout:
                     pass
+                self._shared_request(mavlink)
                 now, wall = time.monotonic_ns(), time.time_ns()
                 if now - self.last_loop_ns > 2_000_000_000:
                     self.event("link_gap", now, wall, reason="receiver_stall_or_host_sleep",
@@ -591,6 +706,34 @@ class RecorderService:
         self._owns_reservation = False
         self._reservation = None
         self._dispatch_started_ns = None
+        self._shared_lock = threading.Lock()
+
+    def matches_shared_connection(self, connection):
+        from .acquisition import _same_connection
+        current = self.status()
+        return (connection.get("transport") == "shared_recorder" and current.get("active")
+                and _same_connection(current.get("shared_readback"), connection))
+
+    def shared_bootstrap_ready(self, connection):
+        return shared_bootstrap_ready(self.status(), connection)
+
+    def open_shared_transport(self, connection, limits):
+        """Constructor-owned callback, never a renderer-supplied transport."""
+        current = self.status()
+        if not current.get("active"):
+            # After an explicit stop the same app endpoint can be owned directly
+            # by the existing bounded log/readback adapter.
+            return None
+        if not self.matches_shared_connection(connection):
+            raise ValueError("Shared readback does not match the active recorder connection.")
+        if not self._shared_lock.acquire(blocking=False):
+            raise ValueError("Another acquisition owns the shared recorder readback channel.")
+        try:
+            from .shared_transport import RecorderTransport
+            return RecorderTransport(self, connection, limits, self._shared_lock.release)
+        except BaseException:
+            self._shared_lock.release()
+            raise
 
     def _claim(self, capture_id):
         # A lifetime OS lock closes startup races between independent app
@@ -681,6 +824,19 @@ class RecorderService:
             except Exception as error:
                 self.callback_error = str(error)[:500]
             self._reader_done.wait(.05)
+
+    def synchronize_events(self, timeout=2.0):
+        """Catch up to a fixed journal boundary without waiting on future traffic."""
+        if self.directory is None or self.on_event is None:
+            return False
+        target = (self.directory / "events.jsonl").stat().st_size
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if self.reader_offset >= target:
+                return self.callback_error is None
+            self.drain_events(100)
+            time.sleep(.005)
+        return False
 
     def drain_events(self, limit=100) -> list[dict]:
         if type(limit) is not int or not 1 <= limit <= 100:

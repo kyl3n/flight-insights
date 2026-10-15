@@ -1,0 +1,16 @@
+.flight-app .sidebar {width:216px}
+.flight-app .workspace {margin-left:216px;width:calc(100% - 216px)}
+.sidebar-purpose {color:#8ea3c0;font-size:18px;line-height:1.6;padding:30px 16px;letter-spacing:-.3px}
+.workspace-tools>summary {padding:18px 22px;font-size:14px;font-weight:600;color:#586a81;cursor:pointer}
+.workspace-tools-grid {display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;padding:0 20px 20px}
+.workspace-tools-grid>button {display:grid;grid-template-columns:1fr auto;gap:6px 10px;text-align:left;background:#f8fafc;border:1px solid var(--border);border-radius:8px;padding:18px;color:var(--text)}
+.workspace-tools-grid>button:hover {background:#f0f5ff;border-color:#a9c0e3}
+.workspace-tools-grid strong {font-size:14px;font-weight:600}
+.workspace-tools-grid span {grid-column:1;font-size:13px;color:var(--muted);line-height:1.5}
+.workspace-tools-grid svg {grid-column:2;grid-row:1/3;align-self:center;color:#7891b0}
+.workspace-back {display:flex;align-items:center;gap:16px;margin-bottom:24px;font-size:13px;color:var(--muted)}
+#connection-troubleshooting>.stack {padding:0 20px 20px}
+.flight-app [hidden] {display:none!important}
+@media(max-width:1050px){.flight-app .sidebar{width:190px;padding-left:12px;padding-right:12px}.flight-app .workspace{margin-left:190px;width:calc(100% - 190px)}.flight-app main{padding:25px 22px 0}.flight-app .topbar{padding:15px 22px}.sidebar-purpose{font-size:16px}}
+@media(max-width:760px){.flight-app .sidebar{position:relative;width:100%;height:auto;padding:16px 20px;display:grid;grid-template-columns:1fr auto;gap:10px}.flight-app .brand{padding:0}.flight-app .brand strong{font-size:22px}.flight-app .brand-mark{width:30px;height:36px}.flight-app .brand small{font-size:9px}.flight-app .sidebar nav{flex-direction:row;align-items:center;gap:5px}.flight-app .nav-item{width:auto;padding:9px 12px;font-size:14px;gap:8px}.flight-app .sidebar-label,.flight-app .sidebar-bottom,.sidebar-purpose{display:none}.flight-app .workspace{margin:0;width:100%}.flight-app .app-shell,.flight-app{display:block}.flight-app .topbar{min-height:52px;padding:11px 20px}.flight-app .local-tag{display:none}.flight-app .context{font-size:12px;gap:8px}.flight-app .topbar-actions{gap:8px}.flight-app main{padding:22px 16px 0}.workspace-tools-grid{grid-template-columns:1fr}.workspace-back{flex-wrap:wrap;gap:10px}.flight-app .workspace-footer{flex-direction:column;gap:5px}.flight-app .button{white-space:normal}}
+@media(max-width:390px){.flight-app .sidebar{padding:14px 12px}.flight-app .nav-item{padding:9px}.flight-app .nav-item svg{display:none}.flight-app .topbar{padding:10px 12px}.flight-app .context-icon{display:none}}

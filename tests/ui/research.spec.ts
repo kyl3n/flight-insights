@@ -3,6 +3,7 @@ import { execFile } from 'node:child_process';
 import { resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { connectEngine } from './engine-harness';
+import { openWorkspace } from './navigation';
 
 test('research searches pinned local passages and requires explicit consent for an online check', async ({page}) => {
   const engine = await connectEngine(page, {boundaryOverride: method => method === 'research.refresh'
@@ -11,7 +12,7 @@ test('research searches pinned local passages and requires explicit consent for 
   try {
     await page.goto('/');
     await expect(page.getByText('Engine connected', {exact: true})).toBeVisible();
-    await page.getByRole('navigation').getByRole('button', {name: 'Research library', exact: true}).click();
+    await openWorkspace(page, 'Research library');
     const library = page.locator('.research-workspace');
     await expect(library.getByRole('heading', {name: 'Vibration, clipping and mechanical causes', exact: true})).toBeVisible();
     await expect(library.locator('.research-source')).toHaveCount(3);
@@ -65,7 +66,7 @@ print(json.dumps({'state': result['state'], 'revision': result['check']['revisio
     expect(JSON.parse(stdout)).toEqual({state: 'updated', revision: 'a'.repeat(40)});
     await page.goto('/');
     await expect(page.getByText('Engine connected', {exact: true})).toBeVisible();
-    await page.getByRole('navigation').getByRole('button', {name: 'Research library', exact: true}).click();
+    await openWorkspace(page, 'Research library');
     const library = page.locator('.research-workspace');
     await library.getByRole('combobox', {name: 'Performance research topic', exact: true}).selectOption('bidirectional_dshot');
     await expect(library.getByText('New source · review required', {exact: true})).toHaveCount(2);

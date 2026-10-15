@@ -1,10 +1,34 @@
 # Explicit MAVLink readback
 
-The acquisition adapter requests parameter enumeration and onboard log inventory/data through a **separately configured bidirectional UDP endpoint**. It does not send through the passive recorder socket, supply a GCS heartbeat, or turn a one-way QGC forwarding feed into a command channel. The adapter is experimental: its tests use synthetic loopback peers, and Q22 hardware/firmware behavior remains unqualified.
+The acquisition adapter requests parameter enumeration and selected onboard log
+inventory/data through an explicitly configured **bidirectional UDP endpoint**.
+The normal Setup workflow shares the recorder's one app socket for recording and
+parameter readback. Advanced dedicated-socket acquisition remains available for
+existing configurations. Neither mode supplies a GCS heartbeat or creates a
+return path through one-way forwarding. The adapter uses synthetic protocol
+validation; actual aircraft/GCS routing remains unqualified.
 
-In Collection, review the acquisition endpoint, aircraft label and expected nonzero vehicle UID. Choose an available local IPv4 address/UDP port and the exact remote IPv4 address/UDP port, system ID and component ID. The endpoint must already deliver autopilot heartbeats and a message containing `time_boot_ms`, such as `SYSTEM_TIME`. Reading a local port successfully does not establish bidirectional reachability.
+In **Setup**, supply the computer's receiving IPv4/app port, selected peer IPv4
+and return port, system/component IDs and actual nonzero controller UID. The
+peer must already deliver autopilot heartbeats and a message containing
+`time_boot_ms`, such as `SYSTEM_TIME`. A received heartbeat does not establish
+bidirectional reachability. In shared mode the recorder keeps every accepted raw
+UDP datagram and acquisition reads those same receipts; it does not bind a second
+socket or compete with the recorder for replies.
 
 The service first waits for a fresh **disarmed** heartbeat from the selected autopilot. It can then send one narrowly defined version request to obtain `AUTOPILOT_VERSION`; its reported UID must match the declared expected UID. Parameter/log requests also require fresh boot-clock observations. Missing prerequisites produce a partial acquisition with an explanation. The service never substitutes a heartbeat or assumes disarmed because packets stopped.
+
+Flight Lab defaults to MAVLink source system `254` and component `191` for its
+requests. Optional `client_system_id` and `client_component_id` override those
+values; each acquisition records its effective client identity. The app system
+ID must differ from the selected vehicle system ID. Incoming traffic with the
+same app system/component pair, including a routed echo, interrupts readback.
+The shared socket owner also validates the outgoing frame's configured source
+identity. Choose unused client IDs in Setup's advanced settings when needed;
+ordinary GCS traffic using a different identity is preserved alongside aircraft
+telemetry. A radio, router or controller that filters request sources must allow
+the configured app identity through its established route; Flight Lab does not
+change those aircraft or router settings automatically.
 
 An explicit preflight/postflight label records operator intent. It does not establish that an acquisition occurred before/after a particular flight, or that the resulting settings were effective in flight. Captures separate enumeration completeness, observed consistency, freshness and historical applicability. They are never atomic.
 
@@ -16,13 +40,13 @@ The service attempts `LOG_REQUEST_END` cleanup only while its disarmed, source, 
 
 ## Allowed messages and live gates
 
-Outgoing traffic is limited to:
+Outgoing traffic across the supported modes is limited to:
 
 - `PARAM_REQUEST_LIST` (21) and `PARAM_REQUEST_READ` (20).
 - `LOG_REQUEST_LIST` (117), `LOG_REQUEST_DATA` (119), and `LOG_REQUEST_END` (122).
 - `COMMAND_LONG` (76) only for hardcoded `MAV_CMD_REQUEST_MESSAGE` (512), requesting `AUTOPILOT_VERSION` (148), with all other parameters zero and the exact selected target.
 
-No renderer-supplied command number is accepted. The service never sends `PARAM_SET`, `LOG_ERASE`, flight commands, modes or heartbeats. The version request is the only request permitted before UID evidence arrives, and it still requires the fresh selected disarmed heartbeat.
+The shared recording socket permits only the two parameter request types and the version bootstrap. Onboard log requests require collection to be stopped and retain the separate transfer acknowledgment. No renderer-supplied command number is accepted. The service never sends `PARAM_SET`, `LOG_ERASE`, flight commands, modes or heartbeats. The version request is the only request permitted before UID evidence arrives, and it still requires the fresh selected disarmed heartbeat.
 
 Each outgoing operation rechecks the live gate and drains queued inbound evidence first. External application flight/recorder checks run before binding, during waits and before sends. Stale/missing heartbeats or boot clocks, arming, UID/firmware/capability changes, conflicting endpoints, corrupt selected-source framing, signed/unsigned changes or boot-clock regressions interrupt acquisition. Clock regression includes unclassified reboot, wrap or reordering; it is not silently joined into one generation.
 
@@ -36,16 +60,19 @@ CRC and a matching reported UID do not authenticate UDP or universally prevent r
 {
   "connection": {
     "local_address": "192.0.2.10",
-    "local_port": 14552,
+    "local_port": 14551,
     "remote_address": "192.0.2.20",
     "remote_port": 14550,
     "system_id": 1,
     "component_id": 1,
     "expected_uid": "123",
-    "feed_origin": "direct_bidirectional"
+    "feed_origin": "direct_bidirectional",
+    "transport": "shared_recorder"
   }
 }
 ```
+
+The collection profile enables the shared socket with `connection.readback: {"remote_port": 14550}` (plus optional `client_system_id` / `client_component_id`) and the same local address, app port, selected peer and aircraft IDs/UID. Omit `transport` or use `dedicated_udp` for the legacy distinct-socket mode. After collection stops, shared-mode acquisition can use that same configured endpoint exclusively; an active observer blocks onboard log transfer.
 
 These documentation addresses and UID are examples, not Q22 configuration or a hardware baseline. Both ports must be explicit integers from 1 through 65535. The expected UID is a nonzero uint64 decimal string.
 
@@ -83,7 +110,7 @@ Complete windows form a contiguous prefix. Interrupted windows can contain gaps;
 
 Defaults are a 120-second operation budget, 10-second bootstrap budget, three bounded retry rounds, 128 MiB maximum reported log size and 256 MiB transcript budget. Reviewed `limits` can increase the operation budget up to one hour, log size to 512 MiB and transcript budget to 2 GiB. Heartbeat/boot/identity freshness thresholds are transport policies, not vehicle safety or tuning baselines.
 
-The custom binary `exchange.mavudp` original preserves received and sent datagrams with endpoint and monotonic/UTC receipt/send clocks. It is not a TLOG. Each record follows the `Q22ACQ1\0` header using `>BQQ4sHI` metadata: direction (0 receive, 1 send), monotonic nanoseconds, UTC microseconds, IPv4 address, port, byte length, followed by the datagram bytes.
+The custom binary `exchange.mavudp` original preserves received and sent datagrams with endpoint and monotonic/UTC clocks. Shared-mode inbound clocks are the recorder’s original receipt clocks; outbound transcript clocks describe request submission, not independently observed wire delivery. The worker separately records whether it accepted a send. Dedicated mode records socket receipt/submission clocks. It is not a TLOG. Each record follows the `Q22ACQ1\0` header using `>BQQ4sHI` metadata: direction (0 receive, 1 send), monotonic nanoseconds, UTC microseconds, IPv4 address, port, byte length, followed by the datagram bytes.
 
 Completed originals are archived through Store with `acquisition_method: app_owned_readonly_mavlink_acquisition`. Source references include SHA-256 and a role. Cancellation stops transport promptly and preserves all locally retained partial files; it does not wait to copy a large partial download. `sealed`, `durability` and `archived` report which guarantees were achieved.
 
@@ -92,5 +119,5 @@ Startup recovery only inspects owned attempt directories and checks prior proces
 Synthetic protocol tests are in [test_acquisition.py](../engine/tests/test_acquisition.py):
 
 ```sh
-uv run --frozen python -m pytest engine/tests/test_acquisition.py -q
+uv run --frozen python -m pytest engine/tests/test_acquisition.py engine/tests/test_shared_transport.py -q
 ```

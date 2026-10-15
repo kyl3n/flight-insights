@@ -23,7 +23,7 @@ LIMITATIONS = [
     "UDP receipt and CRC do not authenticate a vehicle or universally detect replay; signatures are not verified.",
     "Aircraft/profile identity is operator-declared; source IDs and capture UUIDs alone do not prove physical identity.",
     "Passive parameter observations are not an active full readback or an atomic configuration snapshot.",
-    "Explicit acquisition and reported-clock corroboration are separate workflows; manual matches stay provisional and missing evidence remains visible.",
+    "Collected readbacks still require identity and reported-clock corroboration for historical flight applicability; manual matches stay provisional and missing evidence remains visible.",
     "Arming is observed activity, not proof of airborne flight. Missing heartbeats never establish disarm.",
 ]
 RULE_VERSION = "q22-managed-capture-v1"
@@ -207,6 +207,20 @@ class CollectionService:
             if int(uid) <= 0 or int(uid) > 2**64 - 1:
                 raise ValueError("expected_uid must be a nonzero uint64 decimal string.")
             connection["expected_uid"] = uid
+        if config.get("readback") is not None:
+            readback = config["readback"]
+            if (not isinstance(readback, dict) or "remote_port" not in readback
+                    or set(readback) - {"remote_port", "client_system_id", "client_component_id"}):
+                raise ValueError("Shared readback requires remote_port and optional app MAVLink identity settings.")
+            if "expected_uid" not in connection:
+                raise ValueError("Shared readback requires the selected vehicle UID.")
+            connection["readback"] = {"remote_port": _integer(readback.get("remote_port"), "remote_port", 1, 65535)}
+            for key in ("client_system_id", "client_component_id"):
+                if readback.get(key) is not None:
+                    connection["readback"][key] = _integer(readback[key], key, 1, 255)
+            from .acquisition import APP_SYSTEM_ID
+            if readback.get("client_system_id", APP_SYSTEM_ID) == connection["system_id"]:
+                raise ValueError("App MAVLink system ID must differ from the vehicle system ID.")
         required = params.get("required_sources", list(REQUIRED_SOURCES))
         if not isinstance(required, list) or not required or any(x not in REQUIRED_SOURCES for x in required):
             raise ValueError("required_sources must contain supported evidence roles.")
@@ -215,7 +229,7 @@ class CollectionService:
             profile["environment_context"] = validate_context(params["environment_context"])
         return {"profile": profile, "applicability_fingerprint": _hash(profile),
                 "capabilities": {"managed_observation": True, "automatic_armed_intervals": True,
-                                 "active_parameter_readback": False, "onboard_log_retrieval": False,
+                                 "active_parameter_readback": bool(connection.get("readback")), "onboard_log_retrieval": False,
                                  "verified_retrospective_match": True},
                 "readiness": self.readiness(), "limitations": LIMITATIONS}
 

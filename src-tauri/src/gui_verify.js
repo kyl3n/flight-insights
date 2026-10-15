@@ -3,7 +3,7 @@
   const nonce = __Q22_NONCE_JSON__;
   const invoke = window.__TAURI_INTERNALS__?.invoke;
   if (!invoke) return; // Native deadline fails closed if IPC itself is absent.
-  const evidence = {title:'',root_children:0,navigation_buttons:0,rendered_width:0,
+  const evidence = {title:'',root_children:0,navigation_buttons:0,navigation_labels:[],rendered_width:0,
     rendered_height:0,animation_frames:0,engine_connected:false,
     handshake:null,status:null,restart_handshake:null,phase:'waiting_for_ui',error:null};
   const frame = () => new Promise(resolve => requestAnimationFrame(resolve));
@@ -19,6 +19,7 @@
         const bounds = root.getBoundingClientRect();
         Object.assign(evidence,{title:document.title,root_children:root.childElementCount,
           navigation_buttons:navigation.querySelectorAll('button').length,
+          navigation_labels:Array.from(navigation.querySelectorAll('button')).slice(0,3).map(button => (button.getAttribute('aria-label') || button.textContent || '').trim().slice(0,32)),
           rendered_width:bounds.width,rendered_height:bounds.height,
           animation_frames:2,engine_connected:true});
         evidence.phase = 'handshake';
