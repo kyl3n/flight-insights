@@ -40,9 +40,11 @@ Schema-qualified health observations cover GNSS, EKF3, ESC, scheduler and board
 rails without assigning a universal pass. Recorded environment context requires
 verified matching managed-flight linkage.
 
-These are local implementation changes. The published October 13 installers do
-not contain them; updated installers have not been published. Use
-[validation.md](validation.md) for the executed tests, not this description as a
+These changes are included in the Windows/Linux 0.2.0 CI preview artifacts from
+clean source `0ac9836`. Both native pipelines and their basic production WebView
+checks passed. The October 13 installers remain earlier builds. Use
+[validation.md](validation.md) for downloads, exact checks and remaining notice,
+signing, desktop and hardware gates; this feature description is not a
 qualification result.
 
 | Handoff stage | State | Remaining exit work |

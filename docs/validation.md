@@ -1,6 +1,90 @@
 # Validation record
 
-## Flight Insights Preview 0.2.0 — 15 October 2026
+## Native Flight Insights Preview 0.2.0 — 15 October 2026
+
+The [native build](https://github.com/kyl3n/flight-insights/actions/runs/38732778585)
+passed on Windows x64 and Linux x64. Both reports identify clean source
+`0ac9836cff73ebc0d61b74aaeee51e555c502f37` on
+`codex/flight-insights-0.2.0-native`; app and engine versions are 0.2.0.
+The subsequent documentation update does not change the executable source.
+
+| Target | Executed package checks | Evaluation download |
+| --- | --- | --- |
+| Windows x64, Windows Server 2022 Datacenter 10.0.20348, image `20261004.326.1` | NSIS install/uninstall, packaged supervisor, Unicode-path relocation, three fresh production WebView launches with IPC/restart/shutdown | [Windows installer archive](https://github.com/kyl3n/flight-insights/actions/runs/38732778585/artifacts/11973795045) |
+| Linux x64, Ubuntu 22.04 runner | Debian and AppImage payload/supervisor; three fresh GUI launches each for Debian, extracted AppRun and the actual AppImage launcher | [Linux installer archive](https://github.com/kyl3n/flight-insights/actions/runs/38732778585/artifacts/11970779798) |
+
+The artifacts expire on 29 October 2026 and include native verification reports.
+Extract each downloaded Actions archive to find its installers. They are unsigned
+evaluation builds, not a publisher-signed GitHub Release. No failed qualification
+launch was retried, and the reports record no security bypasses. The Windows
+runner's exact WebView2 version was not emitted by this check.
+
+| Executed check | Windows | Linux |
+| --- | --- | --- |
+| Full Python engine suite | **935 passed**, **29 subtests passed**, **24 skipped**, 373.21 seconds | **944 passed**, **29 subtests passed**, **15 skipped**, 60.21 seconds |
+| Full real-engine browser integration suite | **39 passed** | **39 passed** |
+| Native desktop Rust suite | **17 passed** | **17 passed** |
+| Native helper Rust suites | **43 passed** across three suites | **46 passed** across three suites |
+| Production frontend, frozen-engine smoke, Rust formatting and Clippy | Passed | Passed |
+| Application dependency inventory | 284 packages; **3 unresolved notice texts** | 320 packages; no unresolved notice texts |
+
+Windows skips comprise nine optional SciPy reference cases and 15 Linux/POSIX
+cases; the Windows-only checks passed. Linux skips comprise the same nine optional
+SciPy cases and six Windows-only checks. Skips remain unexecuted checks for their
+recorded platform or dependencies. Browser tests use the real engine through a
+test transport; the packaged GUI checks separately use the production frontend
+and native WebView.
+Aircraft/device fixtures remain synthetic. The helper tests do not enroll a
+privileged service or qualify actual network repair/rollback.
+
+The unresolved Windows texts belong to `webview2-com 0.39.1`,
+`webview2-com-macros 0.8.1` and `webview2-com-sys 0.39.1`. Inventory/payload
+verification passed while retaining those explicit gaps. Resolving those notices,
+application distribution terms and publisher signing remains a release gate.
+
+| Installer | SHA-256 |
+| --- | --- |
+| `Q22 Flight Lab_0.2.0_x64-setup.exe` | `6f8efc739489f5ed619820a6e4b7add0a7d7b11f9db51ea9873de4138cb7367a` |
+| `Q22 Flight Lab_0.2.0_amd64.deb` | `606e7db42657bcf26866a82aad2865f327da5eb327c8ca467ac3442a899b549d` |
+| `Q22 Flight Lab_0.2.0_amd64.AppImage` | `0a08018f6425912897d6f4f0ed72a94d0b97557c3b652ea2783f4566b61a815d` |
+
+Verification JSON and check logs are retained under
+`/workspace/artifacts/native-ci-38732778585/`. Delivery identity and checksums are
+also retained in `/workspace/artifacts/Q22-Flight-Lab-0.2.0-native-delivery.json`
+and `Q22-Flight-Lab-0.2.0-native-SHA256SUMS.txt`. The exact clean CI source archive is
+`/workspace/artifacts/Q22-Flight-Lab-0.2.0-native-fixed-source.zip`, SHA-256
+`7322e3b2a374a4da85b6552c4dcab4df3e001ad4daf3e3d08a3c2eabc7841279`.
+Its manifest covers 274 files with source-tree digest
+`a2073343e95018f3a509c6b89674a5fde98cccaa60d92d279452fc87f4d08d11`.
+This archive precedes the documentation-only result update.
+
+Earlier native attempts exposed Windows test-harness environment-size limits
+from large automatic pytest case IDs, and inconsistent Windows path/handle
+identity metadata in source delivery. The final source uses bounded test IDs,
+a portable Linux-package fixture and Windows-compatible handle identity checks.
+Cancelled runs `38730164418` and `38732055174` are not counted as passing builds.
+
+The earlier Debian 13 installer below was also rechecked in a separate Debian 13
+Docker image with system-installed WebKitGTK 2.54.0, GTK 3.24.49 and glibc 2.41.
+It passed all three fresh production WebView launches, IPC, restart/shutdown,
+payload and relocated-supervisor checks. Its SHA-256 remains
+`91423a534e943aefffe2cd113a4a1192255054e4da42e2dc9284259a15f5a4c5`;
+it retains its earlier dirty-tree source inventory and is distinct from the
+Ubuntu CI package above. The app ran as UID/GID 1000 with default Docker security,
+read-only source/package mounts, Xvfb and session D-Bus. A separate normal-launch
+screenshot was visually reviewed and showed **Engine connected**. Recipe,
+receipts and reports are under `/workspace/artifacts/gui-recheck-container/`, with
+the screenshot at `/workspace/artifacts/Q22-Flight-Lab-0.2.0-native-debian13-gui.png`.
+The original host-sysroot launch still fails at its missing system WebKit child
+path; its failed evidence is preserved below.
+
+These results establish basic native rendering and bundled-engine operation for
+the recorded artifacts. Supported minimum desktop OS versions, native file-picker
+and permission behavior, accessibility, upgrades, GCS coexistence, actual digiQ/
+ESC/camera operation and real-flight performance validation remain unqualified.
+The broader scope remains in [acceptance-status.md](acceptance-status.md).
+
+## Earlier local Flight Insights Preview 0.2.0 checkpoint — 15 October 2026
 
 This checkpoint adds full typed readback preservation and flight-linked
 comparisons/advice, supported Windows/Linux software-version discovery,

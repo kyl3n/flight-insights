@@ -7,10 +7,11 @@ GitHub. The apparent 27-commit lead was a stale remote-tracking reference, not
 resumption. This verifies the recovered source checkpoint, not the cause of the
 reported chat/cloud-publishing failure or recovery of the lost conversation.
 
-The existing application is the managed-analysis preview described in
-[acceptance-status.md](acceptance-status.md). The October 13 Windows/Linux build
-records still apply to their recorded commits. Real Q22 data, GCS/radio/device
-qualification, and release acceptance remain outstanding.
+The application is now the Flight Insights Preview 0.2.0 described in
+[acceptance-status.md](acceptance-status.md). The Windows/Linux native build for
+clean source `0ac9836` passed; downloads and exact results are in
+[validation.md](validation.md). The October 13 build records remain historical.
+Real Q22 data, GCS/radio/device qualification and release acceptance remain open.
 
 ## Recovered-session connection setup
 
@@ -115,19 +116,22 @@ cancellable background jobs. The shared worker can queue an acquisition behind
 another job; the UI keeps queued/failed preflight evidence explicit. There is no
 guarantee of an immediate completed readback before arming.
 
-These source changes have not been published in updated installers. A local
-Debian 13 evaluation installer and recovery source delivery are recorded in
-[validation.md](validation.md), together with 941 engine, 39 browser and 17 native
-test passes. The cloud GUI check was blocked by missing system WebKit child
-processes. Source availability and packaged-engine checks do not establish
-installed-device qualification.
+These source changes are included in the Windows/Linux 0.2.0 CI preview artifacts
+from clean source `0ac9836cff73ebc0d61b74aaeee51e555c502f37`. Both native pipelines
+passed, including 39 browser and 17 desktop Rust tests per platform and three
+fresh production WebView launches per packaged entrypoint. Windows passed NSIS
+install/uninstall. The earlier Debian 13 package also passed its separate Docker
+GUI recheck with system-installed WebKitGTK; the host sysroot retains its missing
+child-process limitation. Downloads, checksums and exact-source recovery archive
+are recorded in [validation.md](validation.md). These basic GUI checks do not
+establish full installed-desktop or device qualification.
 
 ## Where to continue
 
-Use [validation.md](validation.md) for the exact executed checks. The current
-source needs a Windows build and installed-platform qualification; the October
-13 download does not contain these changes. Then bench
-test the flow using the actual Windows/Linux host, Mission Planner/QGroundControl
+Use [validation.md](validation.md) for the current Windows/Linux installers and
+exact executed checks; the October 13 downloads do not contain these changes.
+Continue installed-desktop qualification and bench-test the flow using the actual
+Windows/Linux host, Mission Planner/QGroundControl
 version, digiQ sender/management addresses, dedicated observer destination, and
 camera URL. A separate bidirectional endpoint and controller UID are required
 to qualify parameter/log acquisition.
@@ -148,13 +152,15 @@ qualification remains outstanding. Mechanical vibration, clipping and capability
 checks remain prerequisites to any aircraft-specific filter advice.
 
 The attached handoff ZIP contained specifications only, and available flight
-fixtures are synthetic. No matched real Q22 flight bundle or current native
-Windows qualification has been supplied. The release metadata audit found no
+fixtures are synthetic. No matched real Q22 flight bundle has been supplied.
+The current native Windows build and basic GUI checks passed; minimum desktop OS,
+upgrades, permissions and hardware qualification remain open. Three Windows
+dependency notice texts, application distribution terms and publisher signing
+also remain release gates. The release metadata audit found no
 `release-signing` environment or active protected release-tag ruleset; runner and
 variable readiness could not be established. See [release qualification](release-qualification.md)
-for implementable delivery steps and external evidence gates. Linux build,
-artifact verification and full-suite results belong in [validation.md](validation.md)
-only after their actual completion.
+for implementable delivery steps and external evidence gates. Record additional
+qualification in [validation.md](validation.md) only after actual completion.
 
 Keep original handoff files and their hashes unchanged. Update current docs and
 validation records separately. Source changes, GitHub publication, a published

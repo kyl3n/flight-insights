@@ -39,10 +39,13 @@ bypassed. A passing basic rendering/IPC check is not visual pixel comparison,
 permission-dialog, accessibility, physical stream, GCS coexistence, or minimum-OS
 qualification. Those limits remain in the generated JSON report.
 
-The managed Debian cloud sysroot can compile/link the application. Its extracted
-WebKit libraries do not establish usable GUI subprocess paths or sandbox support;
-see `cloud-native-prerequisites.md`. A local compile pass is not reported as a
-native GUI pass. The normal-host Windows/Linux CI jobs must execute the new check.
+The managed Debian cloud sysroot can compile/link the application, but its
+extracted WebKit libraries lack the required system subprocess paths. A separate
+Debian 13 Docker check with system-installed WebKitGTK passed three fresh native
+GUI launches for the local 0.2.0 package without weakening default security. See
+[cloud prerequisites](cloud-native-prerequisites.md) for the distinction and recipe.
+A compile pass is not a native GUI pass; each Windows/Linux CI artifact must also
+pass its own packaged check. Exact results are in [validation.md](validation.md).
 
 ## Runnable offline Windows/Linux bench package
 

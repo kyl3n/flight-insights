@@ -14,14 +14,15 @@ and the executed checks in [validation.md](validation.md).
 
 ## Implemented in the 0.2.0 source
 
-The current source includes the following slices. New Windows/Linux installers
-have not been published for these changes; executed validation is recorded
-separately in [validation.md](validation.md).
+The current source includes the following slices. Windows/Linux 0.2.0 CI preview
+installers passed their native builds and basic production WebView checks at clean
+source `0ac9836`; downloads and executed validation are recorded separately in
+[validation.md](validation.md). Desktop, hardware and flight acceptance remain open.
 
 | Area | Implemented behavior | Still to qualify or extend |
 | --- | --- | --- |
 | Field setup | UDP and saved-file workflows; the COM wizard is removed and legacy serial selections migrate to the GCS/UDP workflow | Actual digiQ/GCS/serial-to-UDP field validation and qualified GCS adapters |
-| Flight environment | Immutable observations at capture start and each observed armed interval include available OS/kernel/distribution/architecture and Flight Lab/engine versions. Recognized running GCS/router/video apps can receive Windows file-resource or checksum-matched Linux package versions; operator declarations remain separate | Portable/modified apps and unsupported metadata stay unknown; unfinished lookups stay pending in their original snapshot. Native Windows/field qualification and broader runtime/device inventory remain |
+| Flight environment | Immutable observations at capture start and each observed armed interval include available OS/kernel/distribution/architecture and Flight Lab/engine versions. Recognized running GCS/router/video apps can receive Windows file-resource or checksum-matched Linux package versions; operator declarations remain separate | Portable/modified apps and unsupported metadata stay unknown; unfinished lookups stay pending in their original snapshot. Installed GCS/field qualification and broader runtime/device inventory remain |
 | Current parameters | Pre/postflight policy guidance, decoded/expected counts, freshness and missing-evidence recovery are surfaced. Arm cycles revoke earlier eligibility. Rich readbacks preserve full typed values in the parameter library; verified exact managed-flight linkage supplies pre/post references to reports, comparisons and advice | Complete effective-state alignment and reboot/activation proof. Complete enumeration is non-atomic and does not exclude unbroadcast changes |
 | Flight comparison | Saved insight reports compare supported metrics, observed parameter deltas, parameter mechanisms/evidence requirements and confounders. The existing scoped-session comparison also includes parameter explanations | Controlled repeated-flight validation, richer phase matching and causal inference. Recorded environment is included only with a verified matching managed-flight interval |
 | Improvement advice and research | Reports include conditional advice from bundled, revision-pinned ArduPilot sources. Six research topics provide offline passages and explicit updates from fixed official GitHub source paths; fetched text is cached with commit/hash provenance | Updated passages are unreviewed, not automatically promoted into guidance. Coverage is selected, not exhaustive. Aircraft/firmware qualification and validated numeric optimization remain; no aircraft writes |

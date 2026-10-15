@@ -1,9 +1,9 @@
 # Native builds in the managed cloud machine
 
-The cloud machine is Debian 13 on x86-64, with no administrator access. The local
-helper installs Rust and Linux desktop development dependencies under
-`/workspace/shared`; it does not change system packages, repositories, firewall
-rules, or network routes.
+The cloud machine is Debian 13 on x86-64. The normal workspace user cannot install
+host system packages. The local helper installs Rust and Linux desktop development
+dependencies under `/workspace/shared`; it does not change system packages,
+repositories, firewall rules, or network routes.
 
 From the existing checkout:
 
@@ -64,10 +64,34 @@ A further WebView render smoke test reached GTK startup but could not launch
 release hardcodes that system subprocess path, while this setup extracts packages
 under `/workspace`. A read-only namespace mapping was also unavailable because
 the managed sandbox disallows nested user-namespace UID mapping. No browser
-sandbox was disabled and no package binary was patched. Actual native WebView
-startup therefore remains unverified here; use a Linux image with system-installed
-WebKitGTK, or the intended Windows/macOS development machine, for that check.
+sandbox was disabled and no package binary was patched. Native WebView startup
+remains unavailable through this extracted host sysroot. The separate container
+check below uses system-installed WebKitGTK and passed.
 The helper supplies writable XDG cache/config/data locations under the workspace.
+
+## Verified Debian 13 container GUI check
+
+On 15 October 2026, the available Docker daemon ran the existing Debian 13
+evaluation package in a Debian `trixie-slim` image with normal system-installed
+WebKitGTK 2.54.0, GTK 3.24.49 and glibc 2.41. The unchanged bundle verifier passed
+all three fresh production WebView launches, rendering, bundled-engine IPC,
+restart and shutdown. A separate normal-launch screenshot was visually reviewed
+and showed **Engine connected**. The earlier host-sysroot failures remain recorded
+in [validation.md](validation.md).
+
+The application ran as UID/GID 1000 with Docker's default security settings,
+read-only source/package mounts, Xvfb and a session D-Bus. Managed proxy and TLS
+trust were retained; no browser sandbox or package binary was changed. This
+checks the extracted package in that container, not installed desktop, upgrade,
+physical display, permission-dialog or hardware behavior.
+
+The package SHA-256 is
+`91423a534e943aefffe2cd113a4a1192255054e4da42e2dc9284259a15f5a4c5`.
+Its earlier dirty-tree source identity is distinct from the later clean native CI
+build. The Dockerfile, reproduction script, image/package receipt and verification
+JSON are retained under `/workspace/artifacts/gui-recheck-container/`. Run
+`bash /workspace/artifacts/gui-recheck-container/reproduce.sh` only in that delivery
+workspace with its retained package and managed Docker/proxy configuration.
 
 On a normal Debian/Ubuntu development machine with administrator access, install
 the supported system prerequisites instead of using this cloud sysroot:

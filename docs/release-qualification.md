@@ -43,17 +43,22 @@ the installed-platform or hardware gates.
 | --- | --- | --- |
 | Reviewable source | Finish the declared features, pass their targeted/full regression checks, preserve handoff hashes, and create a source archive with per-file hashes | Review of any remaining unsupported capability before calling the full specification complete |
 | Linux evaluation artifact | Freeze source, build the matching frozen engine and Linux native shell, package with the correct distribution configuration, and verify the actual bundle | Clean installed tests on each advertised Linux distribution, offline use, upgrades, accessibility and hardware behavior |
-| Windows evaluation artifact | Retain the configured native CI workflow and source needed to build it | An actual Windows runner with access to the frozen source, a current build/test/packaged-WebView result and clean desktop installation evidence |
+| Windows evaluation artifact | Build the frozen source on Windows, run shared/native tests, verify actual NSIS install/uninstall and packaged WebView, and retain checksums/reports | Clean installed tests on each advertised desktop Windows version, exact WebView2 version, offline use, upgrades, accessibility and hardware behavior |
 | Publisher-signed release | Review protected release configuration and prepare exact artifacts/checksums without exposing signing material | Authorized publisher keys, protected signing runners/environment/tag rules and final signature verification on the signed artifacts |
 | Qualified flight insights | Exercise supported algorithms, provenance and failure cases with clearly synthetic fixtures | Matched real pre/post parameters, BIN/TLOG, exact firmware/hardware/software context and controlled repeated flights where a benefit is claimed |
 | Qualified field operation | Implement bounded UDP/readback/recovery workflows and deterministic failure tests | Actual GCS/digiQ/serial-to-UDP topology, camera/radio capabilities, disconnect/reconnect and host sleep/permission evidence |
 
 At the 15 October development audit, the attached handoff ZIP contained
 specification documents only. The available flight/parameter fixtures were
-synthetic; no matched real-flight bundle was supplied. The most recent observed
-native CI run was the 13 October build for `41e1974`, not the current edited
-source. Recheck these observations before release instead of treating them as
-permanent capability claims.
+synthetic; no matched real-flight bundle was supplied. The later
+[0.2.0 native build](https://github.com/kyl3n/flight-insights/actions/runs/38732778585)
+passed on Windows/Linux at clean source `0ac9836`, including actual package and
+basic production WebView checks. The separate Debian 13 container GUI recheck
+also passed. Exact artifacts and limits are in [validation.md](validation.md).
+These results do not complete the installed-desktop or field gates. The Windows
+dependency inventory retains three unresolved notice texts; resolve them and the
+application's distribution terms before release. Recheck recorded observations
+before release instead of treating them as permanent capability claims.
 
 The read-only `scripts/release-preflight.py` inspects GitHub protection, variable
 names and runner metadata without reading secret values, dispatching workflows
@@ -321,10 +326,11 @@ does not establish complete solution coverage or a validated aircraft tune.
    direction and all declared decision criteria. It remains descriptive evidence;
    it does not prove causation, statistical independence or an optimal tune.
 
-These procedures and synthetic results do not supply the missing matched real
-flight data, a current-source Windows build or verified publisher signatures.
-Retain those as outstanding delivery/qualification evidence under the audit above
-until their actual artifacts and results are recorded.
+These procedures and synthetic results do not supply missing matched real-flight
+data or verified publisher signatures. The separate current-source Windows build
+and basic GUI checks are recorded in [validation.md](validation.md); they do not
+replace installed-desktop, device or flight qualification. Retain those remaining
+gates until their actual evidence is recorded.
 
 ## Dual-network hardware bench
 
