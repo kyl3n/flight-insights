@@ -3,6 +3,7 @@ from pathlib import Path
 import json
 import socket
 import sys
+import threading
 import time
 from types import SimpleNamespace
 from uuid import uuid4
@@ -209,6 +210,45 @@ def test_observed_app_identity_collision_blocks_worker_sends(shared):
     assert "app MAVLink identity" in result["interruption_reason"]
     assert not peer.requests
     assert recorder.status()["state"] == "recording"
+
+
+def test_bootstrap_to_qualified_heartbeat_cannot_split_the_acquisition_gate(tmp_path, monkeypatch):
+    from q22_engine.__main__ import Engine
+    engine = Engine(tmp_path / "engine")
+    phase, started = [0], threading.Event()
+    def qualify():
+        started.set()
+        with engine.collection.collection._lock:
+            phase[0] = 1
+    writer = threading.Thread(target=qualify)
+    def safety(_capture_id):
+        snapshot = {"armed_state": ["unknown", "disarmed", "armed"][phase[0]]}
+        if not started.is_set():
+            writer.start()
+            assert started.wait(2)
+            writer.join(.1)
+        return snapshot
+    connection = {"transport": "shared_recorder", "expected_uid": "123", "system_id": 1,
+                  "component_id": 1, "local_address": "127.0.0.1", "local_port": 14551}
+    monkeypatch.setattr(engine.collection.recorder, "status", lambda: {
+        "active": True, "state": "recording", "capture_session_id": "synthetic-gate-transition",
+        "sources": [{"system_id": 1, "component_id": 1, "armed_state": "disarmed", "uid": None}]})
+    monkeypatch.setattr(engine.collection.recorder, "recovered", lambda: [])
+    monkeypatch.setattr(engine.collection.recorder, "matches_shared_connection", lambda _: True)
+    monkeypatch.setattr(engine.collection.collection, "safety_state", safety)
+    monkeypatch.setattr(engine.collection, "shared_bootstrap_ready", lambda _: phase[0] == 0)
+    try:
+        assert engine._acquisition_gate("parameters", connection)["allowed"]
+        writer.join(2)
+        assert not writer.is_alive() and phase[0] == 1
+        assert engine._acquisition_gate("parameters", connection)["allowed"]
+        phase[0] = 2
+        assert not engine._acquisition_gate("parameters", connection)["allowed"]
+    finally:
+        if writer.ident is not None:
+            writer.join(2)
+        monkeypatch.undo()
+        engine.close()
 
 
 def test_shared_custom_app_identity_can_coexist_with_usual_gcs_identity(tmp_path):

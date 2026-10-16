@@ -47,6 +47,18 @@ polling, temporary-lock recovery and rejection of persistent/unrelated errors.
 The existing live transport tests and ten fresh Windows collection starts remain
 required. The revised focused suite passed 21 cases locally (one Windows-only skip).
 
+That run's Windows diagnostics additionally exposed a bootstrap handoff race:
+the catalog could gain its first qualified heartbeat between the safety-state
+read and bootstrap-eligibility read, yielding an inconsistent negative decision.
+Those two reads now share the collection lock. Fresh wire/worker guards still
+apply, and an armed catalog state still blocks requests. A controlled concurrent
+transition regression fails against the previous code and passes with the fix;
+the revised transport suite passed 22 cases locally (one Windows-only skip).
+The full local engine suite then passed 1,000 tests and 29 subtests (16 skips).
+The test-only run `38899129124` was cancelled when this production correction was
+identified; it is not qualification evidence for the corrected build.
+
+
 
 ### Third 0.3.1 native attempt
 

@@ -281,8 +281,12 @@ class Engine:
         selected = [source for source in current.get("sources", [])
                     if source.get("system_id") == connection.get("system_id")
                     and source.get("component_id") == connection.get("component_id")]
-        safety = self.collection.collection.safety_state(current.get("capture_session_id"))
-        bootstrap = shared and self.collection.shared_bootstrap_ready(connection)
+        # The first qualified heartbeat transfers authority from bootstrap to
+        # catalog safety. Observe both under the catalog lock so an ingest cannot
+        # leave us combining "not qualified yet" with "bootstrap already ended".
+        with self.collection.collection._lock:
+            safety = self.collection.collection.safety_state(current.get("capture_session_id"))
+            bootstrap = shared and self.collection.shared_bootstrap_ready(connection)
         if (current.get("state") != "recording" or current.get("callback_error")
                 or current.get("event_backlog_bytes", 0) > 256 * 1024
                 or (safety.get("armed_state") != "disarmed" and not bootstrap) or len(selected) != 1
