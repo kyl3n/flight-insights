@@ -17,10 +17,11 @@ The Linux CI baseline is Ubuntu 22.04. The managed cloud is Debian 13; its local
 
 | Capability | Windows | Linux | macOS |
 | --- | --- | --- | --- |
-| Desktop UI and local packaged engine | Basic installed WebView rendering/IPC/restart/shutdown passed in current CI | Basic packaged WebView rendering/IPC/restart/shutdown passed in current CI | Deferred; older CI results only |
+| Desktop UI and local packaged engine | 0.3.0 NSIS install/uninstall and basic production WebView checks passed | 0.3.0 Debian/AppImage payload and basic production WebView checks passed | Deferred; older CI results only |
 | Full native file picker, accessibility and upgrade qualification | Pending | Pending | Deferred |
 | Immutable files, parameter and BIN/LOG/TLOG imports, scoped metrics and comparisons | Shared engine | Shared engine | Shared engine |
-| Passive UDP recorder, armed-interval records, provisional associations and manifest history | Shared worker/engine; native qualification required | Shared worker/engine; native qualification required | Shared worker/engine; native qualification required |
+| Shared UDP recording/readback, armed-interval records, provisional associations and manifest history | Shared engine; GCS/hardware qualification required | Shared engine; GCS/hardware qualification required | Shared engine; deferred qualification |
+| Chronological flight library, automatic analysis and compatible preceding-flight comparisons | Shared engine | Shared engine | Shared engine; deferred native qualification |
 | Local insights, pinned guidance and explicit review-packet export | Shared engine; aircraft interpretation unqualified | Shared engine; aircraft interpretation unqualified | Shared engine; aircraft interpretation unqualified |
 | Explicit parameter/log acquisition and content-based reconciliation | Shared engine; GCS/hardware qualification pending | Shared engine; GCS/hardware qualification pending | Shared engine; GCS/hardware qualification pending |
 | IPv4 adapter/subnet/route inspection | PowerShell NetTCPIP and psutil | iproute2 and psutil | netstat/route and psutil |
@@ -43,4 +44,11 @@ CI runs Windows and Linux by default. Manual dispatch can add both deferred Mac 
 5. Real host networking checks, occupied UDP ports, appropriate OS permission failures, and supported repair/rollback behavior on a separate test network.
 6. Publisher signing and a documented supported OS-version range before general distribution. Signing is not required for private unsigned bench testing. Mac notarization is future work.
 
-The [0.2.0 native CI run](https://github.com/kyl3n/flight-insights/actions/runs/38732778585) passed on Windows and Linux at clean source `0ac9836`, including three fresh GUI launches per packaged entrypoint. Earlier Mac runs do not qualify this source. The [validation record](validation.md) gives exact checksums and distinguishes native CI from the separate Debian 13 container GUI recheck. These basic rendering/IPC checks do not replace the full desktop, upgrade, accessibility, minimum-OS, real-device and publisher-signing release gates. The Windows inventory also retains three unresolved dependency notice texts that need resolution before release.
+The [0.3.0 native CI run](https://github.com/kyl3n/flight-insights/actions/runs/38748020018)
+passed on 15 October at clean source `77e39a0`, including three fresh production
+GUI launches per packaged entrypoint. The current GUI contract requires exactly
+**Flights** and **Setup**. Earlier 0.2.0 and Mac runs remain historical. The
+[validation record](validation.md) gives exact target results and checksums.
+Basic rendering/IPC checks do not replace the full desktop, upgrade, accessibility,
+minimum-OS, real-device and publisher-signing release gates. Review the current
+per-target dependency inventories and unresolved notice texts before release.

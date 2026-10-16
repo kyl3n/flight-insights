@@ -24,13 +24,17 @@ q22-flight-lab --verify-gui --data-dir EMPTY_ABSOLUTE_DIRECTORY --report NEW_FIL
 Only a release build with bundled assets accepts this mode. Normal user launch
 is unchanged. It creates isolated engine storage and an ephemeral WebView profile
 (with a separate Windows/Linux data directory), accepts only a local production
-main-WebView load, waits for the rendered app navigation and “Engine connected,”
+main-WebView load, requires exactly the two **Flights** and **Setup** primary
+navigation buttons and “Engine connected,”
 observes positive layout dimensions/two animation frames, then calls the normal
 Tauri IPC handshake/status/restart path. A nonce-bound completion command exists
 only for this invocation; JavaScript never provides a filesystem path. Native
 code owns an exclusively created report file and waits for its engine shutdown.
 Existing application localStorage and caches are not reused or changed.
 There is a 60-second native deadline and 90-second verification-process deadline.
+The 0.3.0 navigation contract rejects the previous nine-workspace layout. Native
+verification uses three fresh launches per packaged entrypoint in preview CI;
+an old package's pass does not qualify newly changed frontend or transport code.
 
 Linux CI supplies Xvfb and a session D-Bus using the runner's installed native
 libraries. It does not disable the WebKit sandbox. Windows uses the installed
@@ -44,8 +48,11 @@ extracted WebKit libraries lack the required system subprocess paths. A separate
 Debian 13 Docker check with system-installed WebKitGTK passed three fresh native
 GUI launches for the local 0.2.0 package without weakening default security. See
 [cloud prerequisites](cloud-native-prerequisites.md) for the distinction and recipe.
-A compile pass is not a native GUI pass; each Windows/Linux CI artifact must also
-pass its own packaged check. Exact results are in [validation.md](validation.md).
+A compile pass is not a native GUI pass. The 0.3.0 Windows/Linux CI run at clean
+source `77e39a0` passed its own packaged checks on 15 October: three fresh Windows
+launches and three each for Linux Debian, extracted AppRun and the AppImage
+launcher, all requiring Flights and Setup. Exact results, downloads and checksums
+are in [validation.md](validation.md).
 
 ## Runnable offline Windows/Linux bench package
 

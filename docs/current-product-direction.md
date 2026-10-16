@@ -40,10 +40,13 @@ The app uses its own configurable MAVLink request identity and stops readback on
 an observed identity collision. Old receive-only profiles stay receive-only. No parameter writes or automatic
 onboard log transfer are added. Library analysis pauses during collection.
 
-The 0.3.0 source requires its own validation and native builds. Results below
-remain historical 0.2.0 evidence until newer executed results are recorded; they
-do not qualify the redesigned UI or shared transport. Physical aircraft/GCS
-routing and flight optimization acceptance remain open.
+The clean 0.3.0 source `77e39a0` passed local engine, real-engine browser and native
+desktop Rust checks. Its Windows/Linux native builds and packaged production GUI
+checks passed on 15 October; delivery documentation was finalized on 16 October.
+Exact results and installers are in [validation.md](validation.md). Earlier 0.2.0
+results remain historical and do not qualify the redesigned UI or shared
+transport. Physical aircraft/GCS routing and flight optimization acceptance
+remain open.
 
 ## Implemented in the 0.2.0 source
 
@@ -233,8 +236,8 @@ Filtering cannot undo sensor clipping or repair a mechanical fault.
 | Missing firmware, spectra, RPM or configuration evidence | Report explains the gap and recommends the next useful capture instead of presenting unsupported numeric tuning |
 | Installed field workflow | Windows/Linux bench validation covers actual GCS/digiQ routing, disconnects, repeated flights and a matched evidence bundle |
 
-Version 0.2.0 is an evaluation build with implemented evidence, comparison,
-research and experiment workflows. Complete software inventory, effective
+Version 0.3.0 is an evaluation build with flight-centered analysis, shared
+collection, evidence, comparison, research and experiment workflows. Complete software inventory, effective
 configuration reconstruction, firmware-exact dynamic filter simulation and
 aircraft-specific numeric tuning remain separate work. Building an installer and
 passing synthetic tests do not complete installed-platform or field qualification.

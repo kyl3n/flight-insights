@@ -1,6 +1,6 @@
-# Native foundation preview
+# Native desktop builds
 
-This is the initial Tauri 2 / packaged Python integration, not a qualified flight application. The desktop process starts one frozen Python engine, verifies protocol version 1 and the product identity, and keeps that process alive for serialized JSON-RPC requests. The end user does not need Python or Node. Development and packaging need the tools below.
+The 0.3.0 desktop packages the **Flights** and **Setup** workspace with its local Python engine. The desktop process starts one frozen engine, verifies protocol version 1 and the product identity, and keeps that process alive for serialized JSON-RPC requests. The end user does not need Python or Node. Development and packaging need the tools below. See [validation.md](validation.md) for the exact source, executed checks and current installer status; a successful build is not physical flight qualification.
 
 ## Build on the target operating system
 
@@ -38,7 +38,7 @@ For installers, run `npm run desktop:build` or the `desktop:build:windows` / `de
 For example, on Linux:
 
 ```sh
-xvfb-run -a -s '-screen 0 1440x1000x24' dbus-run-session -- uv run --frozen python scripts/verify-native-bundle.py --artifact "src-tauri/target/release/bundle/deb/Q22 Flight Lab_0.1.0_amd64.deb" --require-gui --report .local/native-verification-linux.json
+xvfb-run -a -s '-screen 0 1440x1000x24' dbus-run-session -- uv run --frozen python scripts/verify-native-bundle.py --artifact "src-tauri/target/release/bundle/deb/Q22 Flight Lab_0.3.0_amd64.deb" --require-gui --gui-repetitions 3 --report .local/native-verification-linux.json
 ```
 
 The headless Linux command needs `xvfb`, `xauth`, and `dbus-x11`; a normal desktop session can run the verifier directly. Neither path disables WebKit sandboxing. The separate `q22-network-helper` preview artifact's default commands are diagnosis-only and unprivileged. Explicit administrator enrollment enables its separate experimental private-bench service, still requiring app opt-in and per-plan consent. Linux currently exposes only versioned NetworkManager host routes; see [linux-private-bench-helper.md](linux-private-bench-helper.md). CI uses injected host state and safe protocol probes; it never runs the installers or alters runner networking.
@@ -59,7 +59,7 @@ Original source archives and metadata remain there across restarts. Engine diagn
 
 The shell accepts only its enumerated engine operations and the local `engine.restart` control. It rejects requests above 1 MiB, responses above 4 MiB, mismatched IDs, malformed envelopes and incompatible handshakes. There are at most eight queued operations. Startup has a 15-second timeout and calls have a 120-second timeout. A crashed or timed-out engine is stopped, and the UI must request a restart explicitly. Failed requests are never replayed automatically, since an import or network change may already have completed. Inspect persisted state after restarting before retrying a mutation.
 
-`logs.import` and `logs.session` return durable job IDs promptly; decoding and metric construction run on a bounded single-worker queue. The UI polls `jobs.get`, lists outcomes through `jobs.list`, and requests cooperative cancellation through `jobs.cancel`. A large import does not extend the native RPC timeout or emit unsolicited stdout frames. Restart interrupts pending jobs and preserves their journal; an operator reviews the evidence and explicitly retries. `network.recovery` reads persisted repair receipts and reconstructs only supported, freshly confirmed recovery actions.
+`logs.import`, `logs.session`, `library.import`, `library.refresh` and `library.analyze` return durable job IDs promptly; decoding, automatic library analysis and metric construction run on a bounded single-worker queue. Library analysis pauses during live collection to leave the worker available for readback; cached library/detail reads remain available. The UI polls `jobs.get`, lists outcomes through `jobs.list`, and requests cooperative cancellation through `jobs.cancel`. A large import does not extend the native RPC timeout or emit unsolicited stdout frames. Restart interrupts pending jobs and preserves their journal; an operator reviews the evidence and explicitly retries. `network.recovery` reads persisted repair receipts and reconstructs only supported, freshly confirmed recovery actions.
 
 Closing the desktop window stops accepting work, closes the engine input pipe, waits up to three seconds, and terminates an engine that does not exit. PyInstaller's launcher and Python child belong to a dedicated process group on Linux/macOS. Windows starts the launcher suspended, assigns a private job with kill-on-close, then resumes its initial thread. Because job termination is asynchronous, Windows waits up to three additional seconds for its active process count to reach zero before reporting shutdown or permitting restart. A shutdown timeout is reported instead of silently overlapping old and new engines. This covers normal application exit; OS termination or power loss still requires the engine's durable storage guarantees. Starting another application instance is not yet a supported concurrent recording workflow.
 

@@ -1,6 +1,123 @@
 # Validation record
 
-## Native Flight Insights Preview 0.2.0 — 15 October 2026
+## Flight-centered Preview 0.3.0 — built 15 October, documented 16 October 2026
+
+The executable source is clean commit
+`77e39a03f225763cc245dd09167881399cbde8f9` on
+`codex/flight-insights-0.3.0-workspace`. App and engine versions are 0.3.0.
+The primary navigation is **Flights** and **Setup**; automatic local analysis,
+compatible previous-flight comparisons and recorded context are presented with
+each flight. The shared UDP endpoint supports recording and bounded automatic
+read-only parameter capture. See the [workspace guide](flight-workspace.md).
+
+The following checks ran locally against the final executable source:
+
+| Executed check | Result |
+| --- | --- |
+| Full Python engine suite | **983 passed**, **29 subtests passed**, **15 skipped**, 61.58 seconds |
+| Real-engine browser integration cases | **43 distinct cases passed**, across the full run and focused final retests |
+| Native desktop supervisor and lifecycle suite | **17 Rust tests passed** using the newly frozen engine |
+| TypeScript and production frontend | Passed; main application chunk 464.18 kB before gzip |
+| Frozen engine inventory and expanded smoke | Passed, including automatic flight-library indexing and cached analysis |
+
+The skips are nine optional SciPy reference cases and six Windows-only checks.
+They remain unexecuted platform/dependency checks. Aircraft traffic, logs and
+source-update fixtures are synthetic. Desktop and narrow-layout screenshots of
+the flight library, selected-flight insights, automatic comparison and setup were
+captured and visually reviewed. Browser checks use the real Python engine through
+the test transport; they do not qualify the native WebView or physical routing.
+
+The local frozen Linux engine SHA-256 is
+`f0d71e840d2bedcad0626bee08becb7c3f34957908e79e69b466a85e4fc69627`.
+Local logs and screenshots use the `flight-insights-0.3.0-` and
+`Q22-Flight-Lab-0.3.0-` prefixes under `/workspace/artifacts/`.
+The exact clean-source recovery archive is
+`/workspace/artifacts/Q22-Flight-Lab-0.3.0-source-77e39a0.zip`, SHA-256
+`4aeeedb5d5abbf777ace46aac7bf6587a06e47c7dbb7c04c655baac5ce005aa6`.
+It precedes the documentation-only delivery update.
+
+### Native Windows and Linux 0.3.0 results
+
+The [Windows/Linux native run](https://github.com/kyl3n/flight-insights/actions/runs/38748020018)
+passed at that exact clean source. It began on 15 October at 14:03:32 UTC; Linux
+completed at 14:12:29 UTC and Windows at 14:24:58 UTC. The delivery documentation
+was finalized on 16 October without changing the executable source.
+
+| Target | Executed package checks | Evaluation download |
+| --- | --- | --- |
+| Windows x64, Windows Server 2022 Datacenter 10.0.20348, image `20261004.326.1` | NSIS install/uninstall, packaged supervisor, Unicode-path relocation, three fresh production WebView launches with IPC/restart/shutdown | [Windows installer archive](https://github.com/kyl3n/flight-insights/actions/runs/38748020018/artifacts/11981671377) |
+| Linux x64, Ubuntu 22.04.5 LTS, image `20261004.315.1` | Debian and AppImage payload/supervisor; three fresh GUI launches each for Debian, extracted AppRun and the actual AppImage launcher | [Linux installer archive](https://github.com/kyl3n/flight-insights/actions/runs/38748020018/artifacts/11980595928) |
+
+Extract each Actions archive to find its installers. These are unsigned evaluation
+builds, not a publisher-signed GitHub Release, and the archives expire on
+29 October 2026. The Windows installer includes the offline WebView2 runtime
+installer; the runner's exact installed WebView2 version was not emitted by the
+GUI check. Linux used WebKitGTK package `2.50.4-0ubuntu0.22.04.1`. Native
+verification reports are included in the archives and available
+separately as [Windows evidence](https://github.com/kyl3n/flight-insights/actions/runs/38748020018/artifacts/11981176840)
+and [Linux evidence](https://github.com/kyl3n/flight-insights/actions/runs/38748020018/artifacts/11980895484).
+
+| Executed check | Windows | Linux |
+| --- | --- | --- |
+| Full Python engine suite | **974 passed**, **29 subtests passed**, **24 skipped**, 421.72 seconds | **983 passed**, **29 subtests passed**, **15 skipped**, 66.81 seconds |
+| Full real-engine browser integration suite | **43 passed**, 2.4 minutes | **43 passed**, 1.9 minutes |
+| Native desktop Rust suite | **17 passed** | **17 passed** |
+| Native helper Rust suites | **43 passed** across three suites | **46 passed** across three suites |
+| Production frontend, frozen-engine smoke, Rust formatting and Clippy | Passed | Passed |
+| Application dependency inventory | 284 packages; **3 unresolved notice texts** | 320 packages; no unresolved notice texts |
+
+Windows skips comprise nine optional SciPy reference cases and 15 Linux/POSIX
+cases; the Windows-only checks passed. Linux skips comprise the same nine optional
+SciPy cases and six Windows-only checks. Skips remain unexecuted checks for their
+recorded platform or dependency reasons. Aircraft/device fixtures are synthetic;
+helper checks do not enroll a service or qualify physical repair/rollback.
+
+All 12 fresh packaged GUI launches passed: three Windows and nine across the
+three Linux entrypoints. Each used the production frontend and native WebView,
+required exactly **Flights** and **Setup**, reported Engine connected, completed
+native IPC/restart and owned-engine shutdown, and recorded no security bypasses.
+No failed qualification launch was retried. Browser integration checks separately
+exercise the real engine through the test transport. Basic native rendering/IPC
+is not pixel comparison or complete installed-desktop qualification.
+
+The installer hashes below come from the native CI bundle-verification receipts.
+They identify installer payloads, rather than the enclosing Actions ZIP archives.
+
+| Installer | SHA-256 |
+| --- | --- |
+| `Q22 Flight Lab_0.3.0_x64-setup.exe` | `ddfe4b0b83135029a3380a48df85546c97e8b706bce15bd22b864b936576b1d7` |
+| `Q22 Flight Lab_0.3.0_amd64.deb` | `1aef5a72be617ca8161cb8fab28b717d85e95968dd56347d9ac80055b74fbd0c` |
+| `Q22 Flight Lab_0.3.0_amd64.AppImage` | `8696c77ad1198df120282bcb57f248c59541887dac3a5a1f129d29ed3426ac07` |
+
+The CI frozen-engine hashes are
+`8a349d3a2d3702c2e682e8970a09ca9f4ee2f067c4978ead73b2e8b97e0a37bf`
+for Windows and
+`1d769499f761ae354e68026d3b08eb24aeb69884c34a8aa7f8e961c479f705f3`
+for Ubuntu Linux. The local Debian 13 frozen-engine hash above is a distinct
+build and is not the CI Linux binary. Verification JSON, check logs, run metadata
+and artifact receipts are retained under
+`/workspace/artifacts/native-ci-38748020018/`. The consolidated handoff is
+`/workspace/artifacts/Q22-Flight-Lab-0.3.0-native-delivery.json`, with checksums in
+`Q22-Flight-Lab-0.3.0-native-SHA256SUMS.txt` and retained native evidence in
+`Q22-Flight-Lab-0.3.0-native-evidence.zip` alongside it.
+Installer hashes above come from the CI runtime verification receipts. The compact
+evidence archives were downloaded and independently hash-verified; workspace
+network and file-size limits prevented a separate local installer rehash.
+
+The unresolved Windows notice texts belong to `webview2-com 0.39.1`,
+`webview2-com-macros 0.8.1` and `webview2-com-sys 0.39.1`. Their gaps remain explicit
+in the verified inventory. Resolving them, declaring application distribution
+terms and publisher signing remain release gates. Supported minimum desktop
+versions, native file-picker and permission behavior, accessibility, upgrades and
+actual GCS/digiQ/aircraft routing remain separate qualification.
+
+Own-capture provenance can group archived telemetry and its recorded environment;
+complete readback association still requires supported independent-log alignment.
+Automatic comparisons remain descriptive, and advice does not establish causal
+effects or optimal numeric aircraft settings. Earlier 0.2.0 packages and their
+Debian 13 Docker GUI result below remain historical.
+
+## Historical native Flight Insights Preview 0.2.0 — 15 October 2026
 
 The [native build](https://github.com/kyl3n/flight-insights/actions/runs/38732778585)
 passed on Windows x64 and Linux x64. Both reports identify clean source

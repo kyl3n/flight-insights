@@ -50,11 +50,13 @@ the installed-platform or hardware gates.
 
 At the 15 October development audit, the attached handoff ZIP contained
 specification documents only. The available flight/parameter fixtures were
-synthetic; no matched real-flight bundle was supplied. The later
-[0.2.0 native build](https://github.com/kyl3n/flight-insights/actions/runs/38732778585)
-passed on Windows/Linux at clean source `0ac9836`, including actual package and
-basic production WebView checks. The separate Debian 13 container GUI recheck
-also passed. Exact artifacts and limits are in [validation.md](validation.md).
+synthetic; no matched real-flight bundle was supplied. The
+[0.3.0 native build](https://github.com/kyl3n/flight-insights/actions/runs/38748020018)
+passed on Windows/Linux on 15 October at clean source `77e39a0`, including actual
+package and basic production WebView checks for the Flights/Setup workspace.
+Delivery documentation was finalized on 16 October. The separate Debian 13
+container GUI recheck belongs to the earlier 0.2.0 package and remains historical.
+Exact artifacts and limits are in [validation.md](validation.md).
 These results do not complete the installed-desktop or field gates. The Windows
 dependency inventory retains three unresolved notice texts; resolve them and the
 application's distribution terms before release. Recheck recorded observations
@@ -84,7 +86,7 @@ with a browser-test pass.
 After the source checkpoint is stable, create a separate source delivery:
 
 ```bash
-python3 scripts/package-source.py --output /workspace/artifacts/Q22-Flight-Lab-0.2.0-source.zip
+python3 scripts/package-source.py --output /workspace/artifacts/Q22-Flight-Lab-0.3.0-source.zip
 ```
 
 Choose a new output name for each delivery. The helper includes tracked and
@@ -170,8 +172,9 @@ flight logs can contain location, operator and device-identifying information.
 Begin Q22 qualification with one matched controller BIN/LOG, GCS TLOG and actual
 parameter readback, plus the exact board/build, flight interval, battery monitor
 mapping/calibration and recorded flight conditions. Import logs through
-**Evidence → Flight log** and a plain `.param`/`.params` export through
-**Parameter snapshot**. App-acquired rich readback JSON is retained as an original
+**Flights → Import flight logs** and a plain `.param`/`.params` export through
+**Flights → Advanced tools → Import & manage sources → Parameter snapshot**.
+App-acquired rich readback JSON is retained as an original
 acquisition artifact. Promotion into the catalog as a typed parameter snapshot
 and association with an exact verified managed flight are implemented. Verify
 original hashes, typed values, full index/count coverage, firmware/component
@@ -248,7 +251,10 @@ than green/passed. An observed domain is not an airworthiness verdict.
 ## Current-settings and software-context qualification
 
 Start with a fresh data directory and no historical tunes. Exercise a one-way
-forwarded feed and a separately configured bidirectional path as distinct cases.
+forwarded feed and a return-capable shared app endpoint as distinct cases.
+The recorder and parameter capture should use the same app socket; the GCS keeps
+its own endpoint. Verify that saving setup sends nothing and Start collecting
+activates only the configured capture/readback policy.
 Record the actual GCS version and its forwarding controls; examples in the UI
 must never become automatically detected addresses or capabilities.
 

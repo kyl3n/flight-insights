@@ -4,22 +4,25 @@ A local desktop app for understanding UAV flight performance and how it changes
 with configuration, parameters and software. Start with the aircraft's current
 settings; historical tunes and pre-FACt/FACt baselines are optional evidence.
 
-**Flight Insights Preview 0.3.0 source:** the main workspace is now **Flights**
+**Flight Insights Preview 0.3.0:** the main workspace is now **Flights**
 and **Setup**. Original logs, automatic analysis, previous-flight comparisons,
 configuration evidence and recommendations are brought together in each flight.
 See the [flight workspace guide](docs/flight-workspace.md) and
 [current product direction](docs/current-product-direction.md).
 
-The 0.3.0 redesign is undergoing validation; earlier 0.2.0 installer results do
-not qualify the new source. **Previous 0.2.0 preview downloads:**
-[Windows x64 installer](https://github.com/kyl3n/flight-insights/actions/runs/38732778585/artifacts/11973795045)
-· [Linux Debian package and AppImage](https://github.com/kyl3n/flight-insights/actions/runs/38732778585/artifacts/11970779798).
-These unsigned Actions archives expire on 29 October 2026. The previous
-[native run](https://github.com/kyl3n/flight-insights/actions/runs/38732778585)
-passed at source `0ac9836`; exact results and checksums remain in
-[validation](docs/validation.md). Publisher signing, Windows dependency notice
-completion, installed-desktop/upgrade qualification and physical field validation
-remain open. Windows x64 and Linux x64 are the release targets; macOS is deferred.
+**Download 0.3.0:**
+[Windows x64 installer](https://github.com/kyl3n/flight-insights/actions/runs/38748020018/artifacts/11981671377)
+· [Linux Debian package and AppImage](https://github.com/kyl3n/flight-insights/actions/runs/38748020018/artifacts/11980595928).
+Extract the downloaded Actions archive to find the installer. These unsigned
+evaluation archives expire on 29 October 2026. The
+[native run](https://github.com/kyl3n/flight-insights/actions/runs/38748020018)
+passed on both platforms at clean source `77e39a0`, including all 43 browser
+cases and three fresh production WebView launches per packaged entrypoint.
+Windows NSIS install/uninstall also passed. Exact results and installer checksums
+are in [validation](docs/validation.md). Publisher signing, Windows dependency
+notice completion, full desktop/upgrade qualification and physical field
+validation remain open. Windows x64 and Linux x64 are the release targets;
+macOS is deferred.
 
 ## The normal workflow
 
@@ -109,7 +112,7 @@ cargo test --manifest-path src-tauri/Cargo.toml --locked
 npm test
 ```
 
-The setup helper downloads verified native dependencies into the workspace, requiring no system writes. Native compilation, packaging and engine tests work here. The extracted host WebKit libraries cannot launch their hardcoded system subprocesses; a separate Debian 13 container with system-installed WebKitGTK passed the packaged GUI check without weakening security. See [cloud prerequisites](docs/cloud-native-prerequisites.md). Full installed-desktop and upgrade qualification remain separate.
+The setup helper downloads verified native dependencies into the workspace, requiring no system writes. Native compilation, packaging and engine tests work here. The extracted host WebKit libraries cannot launch their hardcoded system subprocesses; a separate Debian 13 container with system-installed WebKitGTK passed the earlier 0.2.0 package's GUI check without weakening security. Current 0.3.0 native GUI evidence comes from the Windows/Linux CI builds. See [cloud prerequisites](docs/cloud-native-prerequisites.md). Full installed-desktop and upgrade qualification remain separate.
 
 UI integration tests use Chromium and a test-only transport to the real Python engine. Production exposes no browser HTTP bridge. `Q22_CHROMIUM` can select an installed Chromium executable for tests. `npm run dev` starts a loopback-only UI development server; the browser alone cannot inspect the host or import evidence.
 

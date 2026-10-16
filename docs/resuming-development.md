@@ -1,167 +1,126 @@
-# Development checkpoint — 15 October 2026
+# Development checkpoint — 16 October 2026
 
-The restored checkout was clean at `c1f0ee6ac6393fbdfc5aadadfe6ba6c1a7b5bcb4`.
-Reading the live remote and refreshing `origin/main` confirmed the same commit on
-GitHub. The apparent 27-commit lead was a stale remote-tracking reference, not
-27 unpublished commits. No uncommitted tracked source changes were found at
-resumption. This verifies the recovered source checkpoint, not the cause of the
-reported chat/cloud-publishing failure or recovery of the lost conversation.
+Flight Insights Preview **0.3.0** is built from clean source
+`77e39a03f225763cc245dd09167881399cbde8f9` on
+`codex/flight-insights-0.3.0-workspace`. The
+[Windows/Linux native run](https://github.com/kyl3n/flight-insights/actions/runs/38748020018)
+passed on 15 October. Downloads, installer hashes, native GUI receipts and exact
+check counts are in [validation.md](validation.md). The delivery documentation
+was finalized on 16 October; it does not change the executable source.
 
-The application is now the Flight Insights Preview 0.2.0 described in
-[acceptance-status.md](acceptance-status.md). The Windows/Linux native build for
-clean source `0ac9836` passed; downloads and exact results are in
-[validation.md](validation.md). The October 13 build records remain historical.
-Real Q22 data, GCS/radio/device qualification and release acceptance remain open.
+## Current product and workflow
 
-## Recovered-session connection setup
+The main navigation now has **Flights** and **Setup**. The two-step setup flow
+configures live UDP or saved-log use. Serial setup stays in the existing field
+radio/GCS equipment; there is no COM-port wizard. One app UDP endpoint can record
+telemetry and perform bounded read-only parameter capture when the radio/router
+provides a return path and the controller UID is configured. An existing GCS
+socket is not shared or taken over. A one-way feed still supports recording.
+Saving setup and starting the app send nothing; **Start collecting** activates
+the saved connection and its configured readback policy.
 
-- A four-step **Connection setup** screen and first-use overview entry.
-- Guidance for a local GCS, another forwarding device, serial through the GCS,
-  or saved files without live networking requirements.
-- Actual receiver/sender/radio/camera address and port explanations, optional
-  local-adapter discovery, input validation and explicit connection checks.
-- Shared saved settings for existing Network checks and Prepare & watch, with
-  unrelated sources retained and storage failures surfaced.
-- Invalidation of stale previews and approvals when setup changes. A delayed
-  observer start retains its reviewed capture while preserving newer saved
-  settings for the next capture.
-- Browser regression coverage and a [user walkthrough](connection-setup.md).
+Flights combines collection controls, log import and chronological flight
+history. Original BIN/LOG/TLOG files are preserved and supported source, clock
+and armed intervals are indexed and analyzed automatically. Each flight opens
+its metrics, findings, configuration/software context, conditional suggestions,
+compatible previous-flight comparison and recent history. Unknown dates,
+incomplete boundaries and unsupported identity stay explicit. Duplicate bytes
+do not add an independent flight. Advanced manual analysis, comparisons,
+experiments and research remain available under **Advanced tools**. See the
+[workspace guide](flight-workspace.md) and [setup walkthrough](connection-setup.md).
 
-That connection-setup change did not alter the Python/Rust transport protocols or
-evidence schemas. It added no direct serial transport.
-Saving setup neither starts an observer nor enables acquisition/host repairs.
+A new user starts from the aircraft's current settings. Historical pre-FACt/FACt
+tunes remain optional. Collection preserves available OS, Flight Lab and
+recognized application versions at capture and observed arm transitions, with
+separate operator declarations; old flights never receive today's host versions.
+The shared connection can refresh stale completed preflight readbacks while
+fresh disarmed evidence permits it, within a cooldown and request budget. Arming,
+identity collisions and evidence gaps stop requests while recording can continue.
+Flight Lab does not write aircraft parameters or guarantee a complete snapshot
+before the operator arms.
 
-## Clarified product requirements
+Full typed readbacks remain distinct from logged parameter observations and
+confirmed effective settings. Own-capture UUID/hash/record-span provenance can
+show recorded environment, but cannot alone prove the independent alignment
+required for complete flight-linked configuration. After collection stops,
+eligible independent imported logs can be aligned automatically under the
+existing identity, clock, exact-interval and original-integrity checks. Ambiguous
+or incomplete evidence remains for review. Library analysis pauses during live
+collection; cached reports remain available.
 
-The user clarified the direction later on 15 October. See
-[current-product-direction.md](current-product-direction.md) for the authoritative
-current requirements and acceptance scenarios:
+The 0.2.0 analysis features remain: sourced parameter explanations, conditional
+improvement options, six selected offline research topics with explicit official
+source updates, repeated-flight experiments, vibration/control/filter analysis,
+and schema-qualified GNSS/EKF3/ESC/scheduler/board-rail observations. Comparisons
+are descriptive. Neither synthetic tests nor an observed metric change establish
+causation, an optimal tune or an aircraft readiness verdict.
 
-- Focus setup on field UDP, with serial handled by the existing field/GCS
-  infrastructure. Dedicated COM setup and direct serial support are deferred.
-- Use the current preflight aircraft settings as a new user's starting point.
-  Capture before each flight where a reviewed disarmed bidirectional path is
-  available, and explain missing evidence or one-way limitations clearly.
-- Historical pre-FACt/FACt tunes are optional comparison artifacts. Preserve any
-  supplied originals, aliases and hashes; their absence is not an onboarding or
-  analysis blocker.
-- Retain immutable per-flight environment/version context, including provenance
-  for detected versus operator-declared facts. Do not stamp today's computer
-  versions onto an old flight or infer exact GCS versions from heartbeats.
-- Explain supported parameter-to-performance relationships using measurements,
-  firmware-scoped sources and explicit confounders. Offer conditional improvement
-  options with prerequisites, tradeoffs and validation steps, including notch
-  tracking and bidirectional DShot as an RPM-telemetry option where supported.
+## Verified delivery
 
-This is a requirements correction, not evidence that every target is complete.
-Consult the [acceptance status](acceptance-status.md) and [validation record](validation.md)
-for implementation scope and executed checks. The historical handoff remains
-unchanged; current requirements supersede its conflicting baseline assumptions.
+Local final-source checks passed 983 engine tests and 29 subtests (15 documented
+platform/dependency skips), all 43 distinct browser cases across full/focused
+runs, 17 desktop Rust tests, production frontend, formatting/lint and frozen-engine
+smoke. Both native CI pipelines additionally passed their full browser suite and
+packaged production GUI checks requiring exactly **Flights** and **Setup**.
+Windows verified NSIS install/uninstall; Linux verified Debian and AppImage
+entrypoints. These are unsigned evaluation artifacts. Exact platform results and
+remaining notice/signing limits are recorded in [validation.md](validation.md).
 
-## Version 0.2.0 source checkpoint
+The clean executable-source archive is
+`/workspace/artifacts/Q22-Flight-Lab-0.3.0-source-77e39a0.zip`, SHA-256
+`4aeeedb5d5abbf777ace46aac7bf6587a06e47c7dbb7c04c655baac5ce005aa6`.
+It precedes this documentation-only update. Native evidence is retained under
+`/workspace/artifacts/native-ci-38748020018/`.
 
-- Removed the dedicated COM workflow and inputs. Existing serial selections
-  migrate to the GCS/UDP workflow; the field infrastructure retains serial setup.
-- Added immutable environment observations at capture start and each observed
-  armed interval. Available host OS/kernel/distribution/architecture and Flight
-  Lab/engine versions are recorded automatically. Detection recognizes known
-  running GCS/router/video apps and reads supported Windows file-resource or
-  checksum-matched Linux package versions. Unknown metadata remains unavailable;
-  lookup results still pending at capture time never rewrite that observation.
-  File/package versions can differ from an application's About display and do not
-  authenticate the software or prove control-path ownership. Operator declarations
-  remain separate. Optional inspection and declarations live
-  in **Prepare & watch → Flight computer & software**. Old flights are not filled
-  using the current host.
-- Improved current pre/postflight readback guidance, decoded/expected counts,
-  staleness and recovery. Arm cycles revoke earlier readback eligibility,
-  including readbacks that cross a cycle. Rich readbacks preserve all typed values
-  in the parameter catalog while retaining and reverifying original acquisition
-  hashes. Exact supported managed-flight linkage supplies pre/post references to
-  reports. Partial, conflicting or ambiguous sets cannot replace missing
-  preflight evidence. Count-complete readbacks remain non-atomic observations,
-  not confirmed effective flight-time settings.
-- Added saved-insight comparisons of supported metrics and observed parameter
-  changes, with mechanisms, evidence requirements and confounders. The existing
-  scoped-session comparison also includes parameter explanations. Recorded
-  environment is available only through verified matching managed-flight
-  source/clock/interval linkage. Full typed readback comparisons use all captured
-  values rather than the report's bounded display preview; raw/type distinctions
-  remain visible.
-- Added conditional performance advice backed by bundled, revision-pinned
-  ArduPilot sources, with prerequisites, alternatives, tradeoffs and validation
-  steps. Six selected research topics provide offline passages and explicit
-  updates from fixed official GitHub source paths. Updates retain commit/hash
-  provenance and cached fallback reasons; they send no flight data or search
-  terms. Retrieved passages remain unreviewed and do not replace reviewed advice.
-  Numeric aircraft tuning and automatic parameter writes are not implemented.
-- Added immutable repeated-flight plans, revisions and saved evaluations with
-  groups/pairs, typed parameter hypotheses, phase/coverage requirements, goals,
-  regression limits and retained counterexamples. Distinct verified flight
-  records count toward repetition; an observed criterion improvement is neither
-  a causal result nor proof of statistical independence or an optimum.
-- Added bounded, schema-qualified DataFlash health observations for GNSS, EKF3,
-  ESC, scheduler and board rails. Physical metrics need explicit units/scaling;
-  enums/bitmasks retain codes without a misleading arithmetic mean. ESC spreads
-  need exact shared log timestamps and all observed instances; telemetry freshness,
-  motor mapping and unseen instances remain unknown. No universal pass/fail or
-  guessed aircraft-specific limit is supplied.
-- Added a reviewable source-delivery helper with per-file hashes, executable
-  modes, dirty-tree/base-commit identity and an external manifest/checksum.
-  Coordinate a stable source checkpoint before archiving; the helper's checks
-  do not lock writers or create an atomic filesystem snapshot.
-
-Analysis, readback promotion, report comparisons and experiment evaluation use
-cancellable background jobs. The shared worker can queue an acquisition behind
-another job; the UI keeps queued/failed preflight evidence explicit. There is no
-guarantee of an immediate completed readback before arming.
-
-These source changes are included in the Windows/Linux 0.2.0 CI preview artifacts
-from clean source `0ac9836cff73ebc0d61b74aaeee51e555c502f37`. Both native pipelines
-passed, including 39 browser and 17 desktop Rust tests per platform and three
-fresh production WebView launches per packaged entrypoint. Windows passed NSIS
-install/uninstall. The earlier Debian 13 package also passed its separate Docker
-GUI recheck with system-installed WebKitGTK; the host sysroot retains its missing
-child-process limitation. Downloads, checksums and exact-source recovery archive
-are recorded in [validation.md](validation.md). These basic GUI checks do not
-establish full installed-desktop or device qualification.
+The earlier 0.2.0 Windows/Linux artifacts and Debian 13 Docker GUI recheck are
+historical. They do not qualify 0.3.0. The managed cloud host's extracted WebKit
+sysroot still lacks its system child-process paths; passing current native GUI
+receipts come from the Windows/Linux CI hosts with their installed runtimes.
 
 ## Where to continue
 
-Use [validation.md](validation.md) for the current Windows/Linux installers and
-exact executed checks; the October 13 downloads do not contain these changes.
-Continue installed-desktop qualification and bench-test the flow using the actual
-Windows/Linux host, Mission Planner/QGroundControl
-version, digiQ sender/management addresses, dedicated observer destination, and
-camera URL. A separate bidirectional endpoint and controller UID are required
-to qualify parameter/log acquisition.
+Run installed-desktop and field qualification against the exact 0.3.0 installer.
+Record the actual Windows/Linux host, Mission Planner or QGroundControl version,
+digiQ sender/management addresses, app UDP endpoint and return path, controller
+UID and camera URL. Use [release qualification](release-qualification.md) and the
+[offline bench scripts](native-release-checks.md) to retain concrete receipts.
+Minimum desktop OS, native file selection, permissions, accessibility, upgrades,
+actual GCS coexistence and physical device behavior remain unqualified.
 
-The next field check should begin with a fresh data directory and no historical
-tunes, establish current settings before arming, record one flight, then repeat
-after a deliberate operator-controlled configuration change. Retain the actual
-software versions and a matched parameter/BIN/TLOG bundle. Compare compatible
-phases and review conditions before attributing a metric change to a parameter.
-Also verify the one-way-feed case: passive recording works while unavailable
+Begin the field check with a fresh data directory and no historical tunes.
+Establish current settings while disarmed, record one flight, then repeat after
+a deliberate operator-controlled configuration change. Retain actual software
+versions and a matched parameter/BIN/TLOG bundle. Import the independent log,
+check its exact linkage, and inspect automatic comparisons in flight details.
+Compare compatible phases and conditions before attributing a metric change to
+a parameter. Also test one-way telemetry: recording should work while unavailable
 readback remains clearly explained.
 
-Remaining engineering work includes unsupported software/version sources,
-complete effective parameter alignment and reboot/activation proof, broader
-research/health coverage and validated aircraft-specific numeric optimization.
-The repeated-flight experiment workflow is implemented; controlled real-flight
-qualification remains outstanding. Mechanical vibration, clipping and capability
-checks remain prerequisites to any aircraft-specific filter advice.
+Remaining engineering scope includes unsupported software/version sources,
+complete effective parameter history and reboot/activation proof, multi-chunk
+automatic attachment, broader health/research coverage, dynamic firmware/filter
+parity and validated aircraft-specific numeric optimization. Mechanical vibration,
+clipping and capability checks remain prerequisites to filter advice. See
+[acceptance status](acceptance-status.md) for the full scope and
+[current product direction](current-product-direction.md) for the requirements.
 
-The attached handoff ZIP contained specifications only, and available flight
-fixtures are synthetic. No matched real Q22 flight bundle has been supplied.
-The current native Windows build and basic GUI checks passed; minimum desktop OS,
-upgrades, permissions and hardware qualification remain open. Three Windows
-dependency notice texts, application distribution terms and publisher signing
-also remain release gates. The release metadata audit found no
-`release-signing` environment or active protected release-tag ruleset; runner and
-variable readiness could not be established. See [release qualification](release-qualification.md)
-for implementable delivery steps and external evidence gates. Record additional
-qualification in [validation.md](validation.md) only after actual completion.
+The supplied handoff ZIP contained specifications only; available flight fixtures
+are synthetic. No matched real Q22 flight bundle has been supplied. Publisher
+signing, application distribution terms and the recorded dependency-notice gaps
+remain release gates. The earlier release-metadata audit found no protected
+release-signing environment or active release-tag ruleset; runner/variable
+readiness was unavailable and remains unknown. Recheck before signed delivery.
 
-Keep original handoff files and their hashes unchanged. Update current docs and
-validation records separately. Source changes, GitHub publication, a published
-cloud workspace, and packaged installers are distinct checkpoints.
+## Recovered-session provenance
+
+The restored checkout and refreshed `origin/main` both identified
+`c1f0ee6ac6393fbdfc5aadadfe6ba6c1a7b5bcb4`; the apparent 27-commit lead came from a
+stale remote-tracking reference. No uncommitted tracked source changes were
+found at that resumption. This establishes the recovered source checkpoint,
+not the cause of the reported chat/cloud-publishing failure or recovery of the
+lost conversation. The initial connection wizard and 0.2.0 follow-up are retained
+in Git history and the historical sections of [validation.md](validation.md).
+
+Keep original handoff files and hashes unchanged. Update current docs and
+validation separately. Source pushed to GitHub, a published cloud workspace,
+packaged installers and a signed release are distinct checkpoints.
