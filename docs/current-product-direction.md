@@ -12,7 +12,7 @@ The requirements below are acceptance targets; they are not a declaration that
 every target has been implemented or qualified. See [acceptance status](acceptance-status.md)
 and the executed checks in [validation.md](validation.md).
 
-## Automatic aircraft identification in the 0.3.1 source
+## Automatic aircraft identification in Preview 0.3.1
 
 Manual Controller UID entry is no longer required for normal shared collection.
 Flight Lab discovers and pins the reported UID for each new collection; the same

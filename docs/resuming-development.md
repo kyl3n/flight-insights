@@ -2,13 +2,13 @@
 
 Current development source is **0.3.1**, with automatic controller UID discovery
 and an optional advanced UID lock, at clean build commit
-`0c3f6b3edd3472d80255dd3ce0ca8f0b8affd189` on
+`29d1e5f7ec0a74bce8aa567cb56b83a5668f889d` on
 `codex/flight-insights-auto-aircraft`. The
-[replacement Windows/Linux native run](https://github.com/kyl3n/flight-insights/actions/runs/38894511694)
-is in progress. The initial Windows run passed all three GUI launches but failed
-during temporary WebView cache cleanup; the corrected verifier waits up to 15
-seconds for transient Windows locks without retrying any GUI check. See
-[validation.md](validation.md) for the preserved failure and current delivery status.
+[Windows/Linux native run](https://github.com/kyl3n/flight-insights/actions/runs/38899890392)
+passed on both platforms. Verification exposed and corrected Windows temporary-cache cleanup,
+receipt-file sharing and a catalog/bootstrap handoff race. Browser import checks
+now allow bounded completion of asynchronous work. See [validation.md](validation.md)
+for preserved attempts, regression evidence and the final delivery status.
 
 ## Current product and workflow
 
@@ -58,32 +58,26 @@ and schema-qualified GNSS/EKF3/ESC/scheduler/board-rail observations. Comparison
 are descriptive. Neither synthetic tests nor an observed metric change establish
 causation, an optimal tune or an aircraft readiness verdict.
 
-## Previous verified delivery — 0.3.0
+## Verified delivery — 0.3.1
 
-Local final-source checks passed 983 engine tests and 29 subtests (15 documented
-platform/dependency skips), all 43 distinct browser cases across full/focused
-runs, 17 desktop Rust tests, production frontend, formatting/lint and frozen-engine
-smoke. Both native CI pipelines additionally passed their full browser suite and
-packaged production GUI checks requiring exactly **Flights** and **Setup**.
-Windows verified NSIS install/uninstall; Linux verified Debian and AppImage
-entrypoints. These are unsigned evaluation artifacts. Exact platform results and
-remaining notice/signing limits are recorded in [validation.md](validation.md).
+Final local checks passed 1,000 engine tests and 29 subtests (16 documented skips),
+with the focused shared transport regressions and the reviewed setup screenshot.
+Both native CI jobs passed all 44 real-engine browser cases, packaged-engine and
+desktop checks. Windows passed 992 engine tests and ten fresh collection starts.
+The installed Windows GUI passed three fresh launches; Linux passed nine across
+its packaged entrypoints. Exact counts, checksums, downloads, skips, prior failures
+and remaining notice/signing limits are in [validation.md](validation.md).
 
 The clean executable-source archive is
-`/workspace/artifacts/Q22-Flight-Lab-0.3.0-source-77e39a0.zip`, SHA-256
-`4aeeedb5d5abbf777ace46aac7bf6587a06e47c7dbb7c04c655baac5ce005aa6`.
-It precedes this documentation-only update. Native evidence is retained under
-`/workspace/artifacts/native-ci-38748020018/`.
-
-The earlier 0.2.0 Windows/Linux artifacts and Debian 13 Docker GUI recheck are
-historical. They do not qualify 0.3.0. The managed cloud host's extracted WebKit
-sysroot still lacks its system child-process paths; passing current native GUI
-receipts come from the Windows/Linux CI hosts with their installed runtimes.
+`/workspace/artifacts/Q22-Flight-Lab-0.3.1-source-29d1e5f.zip`, SHA-256
+`f93b6bbd806fb64e03e02f3cd555ebe968ba14f70faed335ce1ee972ac5aef6e`. It precedes the documentation-only delivery commit.
+Native evidence is retained under `/workspace/artifacts/native-ci-38899890392/`.
+Earlier 0.3.0/0.2.0 packages and the Debian 13 Docker GUI recheck remain historical.
+Current native GUI evidence comes from Windows/Linux CI hosts with installed runtimes.
 
 ## Where to continue
 
-After the 0.3.1 native build passes, run installed-desktop and field qualification
-against that exact installer.
+Run installed-desktop and field qualification against the exact 0.3.1 installer.
 Record the actual Windows/Linux host, Mission Planner or QGroundControl version,
 digiQ sender/management addresses, app UDP endpoint and return path, automatically
 observed controller UID and camera URL. Use [release qualification](release-qualification.md) and the

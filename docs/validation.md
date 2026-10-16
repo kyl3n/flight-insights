@@ -9,16 +9,70 @@ when missing or conflicting identity stops readback. Different aircraft can reus
 one saved connection after stopping and starting collection. Dedicated/post-stop
 acquisition retains its explicit UID requirement.
 
-Local checks passed 989 engine tests, 29 subtests (15 platform/dependency skips),
+Initial identification checks passed 989 engine tests, 29 subtests (15 platform/dependency skips),
 44 real-engine browser cases, TypeScript and production frontend build. The
 0.3.1 frozen engine also passed its expanded smoke, and all 17 desktop Rust
 tests passed against that binary. The
-shared-transport suite additionally passed its final 15 cases, including automatic
+shared-transport suite at that source passed 15 cases, including automatic
 preflight readiness, two successive aircraft on the same saved connection,
 parameter-catalog promotion with the observed UID, missing UID, changed UID,
 explicit lock mismatch, and blocked unpinned post-stop fallback. The GUI checks
 cover no-UID setup, collection start, persistence, and explicit clearing of locks.
 Fixtures are synthetic; these checks do not qualify a physical GCS/aircraft link.
+
+### Verified 0.3.1 native delivery
+
+[Native run 38899890392](https://github.com/kyl3n/flight-insights/actions/runs/38899890392) passed on Windows and Linux
+at clean source `29d1e5f7ec0a74bce8aa567cb56b83a5668f889d` on
+`codex/flight-insights-auto-aircraft`. This includes the Windows receipt-read fix,
+consistent catalog/bootstrap gate and bounded browser import completion checks.
+
+| Executed check | Windows x64 | Linux x64 |
+| --- | --- | --- |
+| Engine suite | 992 passed, 24 skipped, 29 subtests passed | 1,000 passed, 16 skipped, 29 subtests passed |
+| Real-engine browser suite | 44 passed | 44 passed |
+| Desktop Rust tests | 17 passed | 17 passed |
+| Helper Rust tests | 43 passed | 46 passed |
+| Production frontend, frozen engine, formatting and Clippy | Passed | Passed |
+| Packaged GUI launches | Three NSIS-installed launches | Nine across Debian, extracted AppRun and actual AppImage |
+
+Windows additionally completed ten independent fresh collection starts with locked
+and discovered UIDs. Every native GUI launch used the production WebView, required
+exactly Flights and Setup, connected to engine 0.3.1, and passed IPC, restart and
+owned-engine shutdown without security bypasses. Windows installation/uninstallation
+and temporary-directory cleanup passed. All required launches passed; earlier
+failed build attempts remain recorded below rather than being counted as success.
+
+[Windows installer archive](https://github.com/kyl3n/flight-insights/actions/runs/38899890392/artifacts/12046252478) ·
+[Linux installer archive](https://github.com/kyl3n/flight-insights/actions/runs/38899890392/artifacts/12045763122).
+Extract the Actions ZIP to find the installer. These are unsigned evaluation
+artifacts, expire on 30 October 2026, and are not a publisher-signed release.
+Windows retains three unresolved dependency notice texts; Linux retains none.
+Minimum desktop OS, upgrades, native file-picker/permission behavior, accessibility
+and actual GCS/digiQ/aircraft routing remain separate qualification.
+
+| Installer | SHA-256 from native verification receipt |
+| --- | --- |
+| `Q22 Flight Lab_0.3.1_x64-setup.exe` | `96327a9c6183c03bd9db37bd29d35e529a9c568413c6da8d823e4aa274ea7298` |
+| `Q22 Flight Lab_0.3.1_amd64.deb` | `72fed05864fd8bf788f845e4b33940ee538592283731eaec24a8c4d5c8ac6ba3` |
+| `Q22 Flight Lab_0.3.1_amd64.AppImage` | `b257b5b7600090bd97c1f621ebdeeaf276876d541dc1c15330c3a41685ba41a5` |
+
+The engine skips retain their platform/dependency reasons: Windows has nine optional
+SciPy and 15 Linux/POSIX cases; Linux has nine optional SciPy and seven Windows-only
+cases. Fixtures are synthetic. Native helper tests do not qualify installed
+privileged repairs or physical hardware behavior.
+
+The clean source archive is
+`/workspace/artifacts/Q22-Flight-Lab-0.3.1-source-29d1e5f.zip`, SHA-256
+`f93b6bbd806fb64e03e02f3cd555ebe968ba14f70faed335ce1ee972ac5aef6e`, with 287 files in its manifest.
+Exact platform receipts and logs are in `/workspace/artifacts/native-ci-38899890392/`.
+The consolidated handoff is `/workspace/artifacts/Q22-Flight-Lab-0.3.1-native-delivery.json`,
+with `Q22-Flight-Lab-0.3.1-native-SHA256SUMS.txt` and
+`Q22-Flight-Lab-0.3.1-native-evidence.zip` alongside it. Compact evidence ZIPs were
+downloaded and independently hash-verified. Installer payload hashes come from
+the CI runtime receipts; a separate local installer rehash was not performed.
+The delivery documentation commit changes Markdown only and has a separate
+`Q22-Flight-Lab-0.3.1-delivery-source.zip` recovery archive.
 
 ### Windows readback receipt correction
 
@@ -57,8 +111,6 @@ the revised transport suite passed 22 cases locally (one Windows-only skip).
 The full local engine suite then passed 1,000 tests and 29 subtests (16 skips).
 The test-only run `38899129124` was cancelled when this production correction was
 identified; it is not qualification evidence for the corrected build.
-
-
 
 ### Third 0.3.1 native attempt
 
