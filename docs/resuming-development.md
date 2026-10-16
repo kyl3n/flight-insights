@@ -1,14 +1,14 @@
 # Development checkpoint — 16 October 2026
 
 Current development source is **0.3.1**, with automatic controller UID discovery
-and an optional advanced UID lock. See [validation.md](validation.md) for current
-build status. The previous Flight Insights Preview **0.3.0** was built from clean source
-`77e39a03f225763cc245dd09167881399cbde8f9` on
-`codex/flight-insights-0.3.0-workspace`. The
-[Windows/Linux native run](https://github.com/kyl3n/flight-insights/actions/runs/38748020018)
-passed on 15 October. Downloads, installer hashes, native GUI receipts and exact
-check counts are in [validation.md](validation.md). The delivery documentation
-was finalized on 16 October; it does not change the executable source.
+and an optional advanced UID lock, at clean build commit
+`0c3f6b3edd3472d80255dd3ce0ca8f0b8affd189` on
+`codex/flight-insights-auto-aircraft`. The
+[replacement Windows/Linux native run](https://github.com/kyl3n/flight-insights/actions/runs/38894511694)
+is in progress. The initial Windows run passed all three GUI launches but failed
+during temporary WebView cache cleanup; the corrected verifier waits up to 15
+seconds for transient Windows locks without retrying any GUI check. See
+[validation.md](validation.md) for the preserved failure and current delivery status.
 
 ## Current product and workflow
 
@@ -58,7 +58,7 @@ and schema-qualified GNSS/EKF3/ESC/scheduler/board-rail observations. Comparison
 are descriptive. Neither synthetic tests nor an observed metric change establish
 causation, an optimal tune or an aircraft readiness verdict.
 
-## Verified delivery
+## Previous verified delivery — 0.3.0
 
 Local final-source checks passed 983 engine tests and 29 subtests (15 documented
 platform/dependency skips), all 43 distinct browser cases across full/focused
@@ -82,10 +82,11 @@ receipts come from the Windows/Linux CI hosts with their installed runtimes.
 
 ## Where to continue
 
-Run installed-desktop and field qualification against the exact 0.3.0 installer.
+After the 0.3.1 native build passes, run installed-desktop and field qualification
+against that exact installer.
 Record the actual Windows/Linux host, Mission Planner or QGroundControl version,
-digiQ sender/management addresses, app UDP endpoint and return path, controller
-UID and camera URL. Use [release qualification](release-qualification.md) and the
+digiQ sender/management addresses, app UDP endpoint and return path, automatically
+observed controller UID and camera URL. Use [release qualification](release-qualification.md) and the
 [offline bench scripts](native-release-checks.md) to retain concrete receipts.
 Minimum desktop OS, native file selection, permissions, accessibility, upgrades,
 actual GCS coexistence and physical device behavior remain unqualified.

@@ -58,6 +58,12 @@ logs can be aligned automatically after collection stops; ambiguous or incomplet
 matches remain for review. Complete readback association retains the independent
 content, identity, clock and original-integrity requirements.
 
+The 0.3.1 identification change passed 989 local engine tests, 29 subtests,
+44 browser cases and 17 desktop Rust tests. Four additional cleanup regression
+cases passed within the 15-case local qualification-script suite. Current native
+installer qualification is tracked in [validation.md](validation.md), including
+the initial Windows temporary-cache cleanup failure after three passing GUI launches.
+
 The previous 0.3.0 clean source `77e39a0` passed 983 engine tests, 29 subtests, 43 distinct
 real-engine browser cases and 17 native desktop Rust tests locally. The 15 engine
 skips retain their platform/dependency reasons. Its Windows/Linux native run

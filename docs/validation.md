@@ -35,7 +35,16 @@ The verification script now retries only temporary-directory deletion on Windows
 PermissionError for up to 15 seconds. Other errors and persistent locks still fail;
 installation, GUI launches and their verification are never retried. Focused
 regressions cover transient and permanent locks, non-Windows behavior and other
-filesystem errors. A new native run is required before Windows delivery.
+filesystem errors. All 15 local qualification-script tests passed (one Windows-only
+wrapper check skipped). [Replacement native run 38894511694](https://github.com/kyl3n/flight-insights/actions/runs/38894511694)
+checked clean source `0c3f6b3edd3472d80255dd3ce0ca8f0b8affd189`. Windows
+passed 983 engine tests but failed the locked-UID shared bootstrap case because
+the readback was partial; the failure log truncated the underlying acquisition
+reason. The test now retains that full reason and recorder state in its failure
+message without changing the required complete result. Native delivery remains
+pending; neither failed Windows run qualifies an installer. The matching clean source archive is
+`/workspace/artifacts/Q22-Flight-Lab-0.3.1-source-0c3f6b3.zip`, SHA-256
+`f9e0fc306bee654ab1b4718dc9c3a7cf6bf72efe8b7a3ec7eb049d22679dc5a2`.
 
 The initial clean source archive is
 `/workspace/artifacts/Q22-Flight-Lab-0.3.1-source-358bcc2.zip`, SHA-256

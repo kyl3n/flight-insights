@@ -2,6 +2,7 @@
 from pathlib import Path
 import json
 import socket
+import sys
 import time
 from uuid import uuid4
 
@@ -341,9 +342,14 @@ def test_shared_policy_bootstraps_uid_without_a_second_forwarded_stream(tmp_path
             if latest["requests"] and latest["requests"][0]["state"] in {"complete", "failed", "interrupted", "partial", "cancelled"}:
                 break
             time.sleep(.05)
-        assert latest["requests"] and latest["requests"][0]["state"] == "complete", latest
+        # Preserve the acquisition's concrete interruption/finalization reason;
+        # pytest truncates the large orchestration dictionary on CI failures.
+        result = (engine.store.get_document("acquisition", latest["requests"][0]["acquisition_id"])
+                  if latest["requests"] and latest["requests"][0].get("acquisition_id") else None)
+        assert latest["requests"] and latest["requests"][0]["state"] == "complete", json.dumps({
+            "orchestration": latest, "acquisition": result,
+            "recorder": engine.collection.recorder.status()}, indent=2)
         assert latest["runs"][0]["preflight_readiness"]["current_for_next_flight"], latest
-        result = engine.store.get_document("acquisition", latest["requests"][0]["acquisition_id"])
         assert result["transport_evidence"]["initial_gate_observations"]["identity"]["uid"] == str(vehicle_uid)
         assert ("expected_uid" not in result["connection"]) is automatic_uid
         completed_id = latest["requests"][0]["id"]
@@ -359,3 +365,12 @@ def test_shared_policy_bootstraps_uid_without_a_second_forwarded_stream(tmp_path
     finally:
         engine.close()
         peer.close()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows shared-readback scheduling regression")
+def test_windows_successive_shared_bootstraps_complete_without_retries(tmp_path):
+    # Exercise new recorder processes and Windows file-backed request receipts.
+    # Every independent acquisition must complete; a failed one is not retried.
+    for number in range(10):
+        test_shared_policy_bootstraps_uid_without_a_second_forwarded_stream(
+            tmp_path / str(number), bool(number % 2), 123 if number % 2 == 0 else 456)
