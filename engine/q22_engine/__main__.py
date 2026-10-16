@@ -287,7 +287,7 @@ class Engine:
                 or current.get("event_backlog_bytes", 0) > 256 * 1024
                 or (safety.get("armed_state") != "disarmed" and not bootstrap) or len(selected) != 1
                 or selected[0].get("armed_state") != "disarmed"
-                or (str(selected[0].get("uid")) != str(connection.get("expected_uid"))
+                or (connection.get("expected_uid") and str(selected[0].get("uid")) != str(connection["expected_uid"])
                     and not (shared and selected[0].get("uid") is None))):
             return {"allowed": False, "reason": "The active observer lacks a fresh, unambiguous disarmed heartbeat and matching UID."}
         return {"allowed": True, "reason": "The observer is freshly disarmed. The readback adapter must independently verify the configured UID and clock before requesting parameters. UDP identity is not authenticated."}

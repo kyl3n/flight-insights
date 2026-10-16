@@ -1,5 +1,28 @@
 # Validation record
 
+## Automatic aircraft identification — 0.3.1 source, 16 October 2026
+
+Shared collection now discovers a reported nonzero UID for each new collection;
+manual UID is an optional lock. Existing locks stay in effect until cleared.
+The recorder pins identity independently of the acquisition, and keeps recording
+when missing or conflicting identity stops readback. Different aircraft can reuse
+one saved connection after stopping and starting collection. Dedicated/post-stop
+acquisition retains its explicit UID requirement.
+
+Local checks passed 989 engine tests, 29 subtests (15 platform/dependency skips),
+44 real-engine browser cases, TypeScript and production frontend build. The
+0.3.1 frozen engine also passed its expanded smoke, and all 17 desktop Rust
+tests passed against that binary. The
+shared-transport suite additionally passed its final 15 cases, including automatic
+preflight readiness, two successive aircraft on the same saved connection,
+parameter-catalog promotion with the observed UID, missing UID, changed UID,
+explicit lock mismatch, and blocked unpinned post-stop fallback. The GUI checks
+cover no-UID setup, collection start, persistence, and explicit clearing of locks.
+Fixtures are synthetic; these checks do not qualify a physical GCS/aircraft link.
+
+Native 0.3.1 build results are pending. The 0.3.0 installers below remain a
+separate earlier build and do not include automatic UID discovery.
+
 ## Flight-centered Preview 0.3.0 — built 15 October, documented 16 October 2026
 
 The executable source is clean commit

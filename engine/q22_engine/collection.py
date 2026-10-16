@@ -212,8 +212,6 @@ class CollectionService:
             if (not isinstance(readback, dict) or "remote_port" not in readback
                     or set(readback) - {"remote_port", "client_system_id", "client_component_id"}):
                 raise ValueError("Shared readback requires remote_port and optional app MAVLink identity settings.")
-            if "expected_uid" not in connection:
-                raise ValueError("Shared readback requires the selected vehicle UID.")
             connection["readback"] = {"remote_port": _integer(readback.get("remote_port"), "remote_port", 1, 65535)}
             for key in ("client_system_id", "client_component_id"):
                 if readback.get(key) is not None:

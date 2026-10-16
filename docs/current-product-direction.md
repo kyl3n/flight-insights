@@ -12,6 +12,18 @@ The requirements below are acceptance targets; they are not a declaration that
 every target has been implemented or qualified. See [acceptance status](acceptance-status.md)
 and the executed checks in [validation.md](validation.md).
 
+## Automatic aircraft identification in the 0.3.1 source
+
+Manual Controller UID entry is no longer required for normal shared collection.
+Flight Lab discovers and pins the reported UID for each new collection; the same
+saved connection can be reused after stopping collection and changing aircraft.
+An optional advanced UID lock restricts a connection to one controller. Existing
+locks are preserved until cleared. Missing UID leaves recording and log analysis
+available while automatic parameter capture remains unavailable. A different UID
+during collection stops requests; saved flights are never reassigned silently.
+System/component selection and the return-capable UDP path still apply. See
+[validation](validation.md) for exact build results; 0.3.0 packages predate this change.
+
 ## Flight-centered workspace in the 0.3.0 source
 
 The current redesign puts **Flights** and **Setup** in the primary navigation.

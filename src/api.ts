@@ -113,7 +113,7 @@ export interface ReconciliationReport {
   files:{selected_path:string;original_name:string;state:string;log_id?:string;parameter_reference_id?:string;source?:SourceEvidence;error?:string}[];
   candidates:ReconciliationCandidate[];limits_reached:string[];limitations:string[];[key:string]:unknown;
 }
-export interface AcquisitionConnection {transport?:'shared_recorder'|'dedicated';client_system_id?:number;client_component_id?:number;local_address:string;local_port:number;remote_address:string;remote_port:number;system_id:number;component_id:number;expected_uid:string;feed_origin:'direct_bidirectional'}
+export interface AcquisitionConnection {transport?:'shared_recorder'|'dedicated';client_system_id?:number;client_component_id?:number;local_address:string;local_port:number;remote_address:string;remote_port:number;system_id:number;component_id:number;expected_uid?:string;feed_origin:'direct_bidirectional'}
 export interface AcquisitionPreview {connection:AcquisitionConnection;limits:Record<string,number>;applicability_fingerprint:string;prerequisites:string[];outgoing_allowlist:string[];limitations:string[]}
 export interface AcquisitionRecord {
   id:string;kind:'parameters'|'log_list'|'log_download';state:string;aircraft_id:string;connection:AcquisitionConnection;synthetic:boolean;

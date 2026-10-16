@@ -9,14 +9,16 @@ return path through one-way forwarding. The adapter uses synthetic protocol
 validation; actual aircraft/GCS routing remains unqualified.
 
 In **Setup**, supply the computer's receiving IPv4/app port, selected peer IPv4
-and return port, system/component IDs and actual nonzero controller UID. The
+and return port, and select the system/component IDs. In shared mode the
+controller UID is discovered during collection unless an optional UID lock is
+configured. Legacy dedicated-socket acquisition still requires an explicit UID. The
 peer must already deliver autopilot heartbeats and a message containing
 `time_boot_ms`, such as `SYSTEM_TIME`. A received heartbeat does not establish
 bidirectional reachability. In shared mode the recorder keeps every accepted raw
 UDP datagram and acquisition reads those same receipts; it does not bind a second
 socket or compete with the recorder for replies.
 
-The service first waits for a fresh **disarmed** heartbeat from the selected autopilot. It can then send one narrowly defined version request to obtain `AUTOPILOT_VERSION`; its reported UID must match the declared expected UID. Parameter/log requests also require fresh boot-clock observations. Missing prerequisites produce a partial acquisition with an explanation. The service never substitutes a heartbeat or assumes disarmed because packets stopped.
+The service first waits for a fresh **disarmed** heartbeat from the selected autopilot. It can then send one narrowly defined version request to obtain `AUTOPILOT_VERSION`. A reported nonzero UID is pinned for the acquisition and the shared recorder's lifetime; a configured UID lock must also match. Parameter/log requests additionally require fresh boot-clock observations. Missing prerequisites produce a partial acquisition with an explanation. An aircraft without a supported reported UID can still be recorded and its logs analyzed, but cannot complete automatic readback. The service never substitutes a heartbeat or assumes disarmed because packets stopped.
 
 Flight Lab defaults to MAVLink source system `254` and component `191` for its
 requests. Optional `client_system_id` and `client_component_id` override those
@@ -72,7 +74,7 @@ CRC and a matching reported UID do not authenticate UDP or universally prevent r
 }
 ```
 
-The collection profile enables the shared socket with `connection.readback: {"remote_port": 14550}` (plus optional `client_system_id` / `client_component_id`) and the same local address, app port, selected peer and aircraft IDs/UID. Omit `transport` or use `dedicated_udp` for the legacy distinct-socket mode. After collection stops, shared-mode acquisition can use that same configured endpoint exclusively; an active observer blocks onboard log transfer.
+The collection profile enables the shared socket with `connection.readback: {"remote_port": 14550}` (plus optional `client_system_id` / `client_component_id`) and the same local address, app port, selected peer, aircraft IDs and optional UID lock. Omit `expected_uid` from both profiles for automatic identification during collection; the observed UID is retained in acquisition evidence, never written into the saved policy. Omit `transport` or use `dedicated_udp` for the legacy distinct-socket mode. After collection stops, shared-mode acquisition can use that endpoint exclusively only with an explicit UID lock; automatic discovery requires the active recorder. An active observer blocks onboard log transfer.
 
 These documentation addresses and UID are examples, not Q22 configuration or a hardware baseline. Both ports must be explicit integers from 1 through 65535. The expected UID is a nonzero uint64 decimal string.
 

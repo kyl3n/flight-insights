@@ -169,7 +169,6 @@ export function validateSetup(draft: SetupDraft, scope: 'devices' | 'telemetry' 
     const uid = draft.uid.trim();
     if (uid && (!/^[0-9]{1,24}$/.test(uid) || BigInt(uid) < 1n || BigInt(uid) > 18446744073709551615n)) errors.push('Controller UID must be a nonzero decimal uint64 (at most 18446744073709551615), or leave it blank if unknown.');
     if (draft.readbackEnabled && !integerIn(draft.remotePort, 1, 65535)) errors.push('Aircraft link UDP port must be the return-capable port configured on your radio or MAVLink router (1–65535).');
-    if (draft.readbackEnabled && !uid) errors.push('Enter the controller UID to capture parameters automatically, or turn off automatic parameter capture to record telemetry only.');
     if (draft.readbackEnabled) {
       const appSystemId = draft.appSystemId.trim() || String(defaultAppSystemId);
       const appComponentId = draft.appComponentId.trim() || String(defaultAppComponentId);

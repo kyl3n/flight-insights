@@ -124,6 +124,10 @@ def _connection(value):
     if _client_identity(result)[0] == result["system_id"]:
         raise ValueError("App MAVLink system ID must differ from the selected vehicle system ID; change the advanced app identity.")
     uid = value.get("expected_uid")
+    if uid is None and transport == "shared_recorder":
+        # Discover on each new collection; never write the observed UID back
+        # into the saved connection or silently reuse a previous aircraft.
+        return result
     if not isinstance(uid, str) or not uid.isascii() or not uid.isdecimal() or len(uid) > 20 or not 0 < int(uid) < 2**64:
         raise ValueError("expected_uid must be an explicitly declared nonzero uint64 decimal string.")
     result["expected_uid"] = str(int(uid))
@@ -225,6 +229,8 @@ class _Link:
             if self.socket is not None:
                 self.transport_kind = "shared_recorder"
                 return
+            if not connection.get("expected_uid"):
+                raise AcquisitionStopped("Automatic aircraft identification requires an active collection. Start collecting, or use an explicit UID lock for a separate post-stop acquisition.")
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         if os.name == "nt":
             self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
@@ -382,7 +388,10 @@ class _Link:
                     raise AcquisitionStopped(self.gate_reason)
             elif name == "AUTOPILOT_VERSION":
                 uid = str(raw.get("uid", 0))
-                if uid != self.connection["expected_uid"]:
+                expected_uid = self.connection.get("expected_uid") or (self.identity or {}).get("uid")
+                if uid == "0" and expected_uid is None:
+                    continue  # No stable identity: retain telemetry, never request parameters.
+                if expected_uid is not None and uid != expected_uid:
                     self.gate_reason = "Observed vehicle UID contradicts the explicitly selected identity."
                     raise AcquisitionStopped(self.gate_reason)
                 firmware = {key: raw.get(key) for key in ("flight_sw_version", "board_version", "vendor_id", "product_id")}
@@ -422,7 +431,7 @@ class _Link:
             else:
                 self.initial_gate_observations = self.gate_observations()
                 return
-        raise AcquisitionStopped("Bootstrap timed out: require fresh disarmed heartbeat, matching AUTOPILOT_VERSION UID and boot-clock stream on this bidirectional endpoint.")
+        raise AcquisitionStopped("Aircraft identification timed out: require a reported nonzero AUTOPILOT_VERSION UID, fresh disarmed heartbeat and boot-clock stream. Recording and imported-log analysis remain available without a UID.")
 
     def cleanup(self):
         if self.log_transfer_started and not self.log_request_end_sent:
@@ -452,7 +461,8 @@ class _Link:
                 "outgoing_clock": "request_submission" if self.transport_kind == "shared_recorder" else "socket_submission",
                 "sent_messages": self.sent, "outgoing_types": self.send_types,
                 "signature_present": self.signed, "signature_verified": False,
-                "identity_basis": "reported_uid_match_not_authenticated",
+                "identity_basis": ("reported_uid_match_not_authenticated" if self.connection.get("expected_uid")
+                                   else "reported_uid_discovered_not_authenticated"),
                 "boot_epoch": "single_observed_acquisition_clock_segment",
                 "initial_gate_observations": self.initial_gate_observations,
                 "final_gate_observations": self.gate_observations(),
@@ -547,7 +557,7 @@ class AcquisitionService:
                 "applicability_fingerprint": hashlib.sha256(_json(connection).encode()).hexdigest(),
                 "prerequisites": ["Shared mode uses the configured recorder socket; legacy dedicated mode requires a separate exclusive local UDP port.",
                                   "Remote endpoint must already stream selected disarmed autopilot heartbeats and time_boot_ms data.",
-                                  "An internal read-only AUTOPILOT_VERSION request obtains the declared UID before any parameter/log request.",
+                                  "A read-only AUTOPILOT_VERSION request discovers the aircraft UID before parameters are requested; an optional UID lock must match. No reported UID means recording only.",
                                   "Explicit log-transfer side-effect confirmation is required for listing/downloading."],
                 "outgoing_allowlist": ["PARAM_REQUEST_LIST", "PARAM_REQUEST_READ", "AUTOPILOT_VERSION request only", "LOG_REQUEST_LIST", "LOG_REQUEST_DATA", "LOG_REQUEST_END"],
                 "limitations": LIMITATIONS}

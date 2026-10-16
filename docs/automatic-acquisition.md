@@ -2,10 +2,18 @@
 
 The normal **Setup → Flights** workflow can enable automatic parameter capture
 through the same app UDP endpoint used for recording. Enable it in Setup, enter
-the actual return-capable peer port and controller UID, then use **Start
+the actual return-capable peer port, then use **Start
 collecting**. That action creates and approves a bounded policy for this capture.
 Saving setup, saving a policy or reopening the app sends nothing. Existing
 receive-only profiles remain receive-only after upgrade.
+
+Manual UID entry is optional in shared mode. Each new collection discovers a
+reported nonzero controller UID and pins it for that collection. A saved UID
+lock still requires that exact controller; clear it in advanced setup to reuse
+the connection for different aircraft. Identity changes stop requests without
+stopping raw recording. Stop and start collection when changing aircraft. If no
+UID is reported, automatic readback remains unavailable and the retained error
+explains the missing evidence; recording and imported-log analysis still work.
 
 The standard policy requests current preflight and postflight parameters, uses a
 60-second preflight freshness budget, enables stale-preflight refresh and permits
@@ -26,7 +34,7 @@ advanced client IDs. Incoming traffic using that same identity blocks readback;
 recording continues. See [request identity and gates](read-only-acquisition.md).
 
 A fresh selected disarmed heartbeat permits the narrow `AUTOPILOT_VERSION`
-bootstrap request if the declared UID has not yet been observed. Full parameter
+bootstrap request if the controller UID has not yet been observed. Full parameter
 requests additionally require matching UID and fresh boot-clock observations.
 Stale, ambiguous or armed state withholds requests while recording continues. The
 app does not generate GCS heartbeats or infer disarm from silence.

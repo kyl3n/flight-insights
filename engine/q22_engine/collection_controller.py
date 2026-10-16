@@ -39,8 +39,9 @@ class CollectionController:
             config["readback"] = {"feed_origin": "direct_bidirectional", "transport": "shared_recorder",
                 "local_address": connection["local_address"], "local_port": connection["listen_port"],
                 "remote_address": connection["expected_sender"], "remote_port": connection["readback"]["remote_port"],
-                "system_id": connection["system_id"], "component_id": connection["component_id"],
-                "expected_uid": connection["expected_uid"]}
+                "system_id": connection["system_id"], "component_id": connection["component_id"]}
+            if connection.get("expected_uid"):
+                config["readback"]["expected_uid"] = connection["expected_uid"]
             for key in ("client_system_id", "client_component_id"):
                 if key in connection["readback"]:
                     config["readback"][key] = connection["readback"][key]
@@ -90,7 +91,7 @@ class CollectionController:
                     and not capture.get("source_ambiguity") and not capture.get("active_armed_interval_id")
                     and not source.get("heartbeat_evidence") and not source.get("identity_conflict")
                     and not source.get("continuity_lost")
-                    and source.get("uid") in (None, connection["expected_uid"]))
+                    and (not connection.get("expected_uid") or source.get("uid") in (None, connection["expected_uid"])))
 
     def dispatch(self, method, params):
         if method == "session.status":

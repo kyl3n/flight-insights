@@ -43,13 +43,22 @@ component IDs are `1`; these are defaults, not detected identities. Change them
 under **Aircraft IDs and advanced settings** when needed.
 
 With **Capture parameters automatically before and after flights** enabled,
-also enter the return-capable **Aircraft link UDP port** and the controller's
-actual nonzero decimal UID. The same app socket receives telemetry and sends
-bounded read-only requests to that peer. Obtain the UID from reported
-`AUTOPILOT_VERSION` evidence, such as a MAVLink inspector; it is not the system ID.
-The app waits for matching identity, boot-clock evidence and fresh disarmed
-telemetry before parameter requests. Disable automatic capture for a one-way
-connection; full parameter exports can still be imported later.
+also enter the return-capable **Aircraft link UDP port**. No manual Controller
+UID is required: the app requests `AUTOPILOT_VERSION` and discovers the connected
+controller's nonzero UID for each new collection. The same app socket receives
+telemetry and sends bounded read-only requests to that peer. Parameter capture
+waits for consistent identity, boot-clock evidence and fresh disarmed telemetry.
+If the aircraft does not report a supported UID, recording and log analysis
+remain available, while automatic parameter capture reports the missing identity.
+Disable automatic capture for a one-way connection; full exports can be imported.
+
+Connect one aircraft at a time and stop collection before switching aircraft.
+The next collection discovers its identity again without changing the saved
+connection. A different UID during collection stops readback; it never silently
+switches the current flight to another aircraft. **Aircraft IDs and advanced
+settings → Lock to controller UID (optional)** restricts the connection to one
+controller. Existing UID locks remain in effect until explicitly cleared.
+Reported UIDs are identity evidence, not authentication or proof of uniqueness.
 
 Under **Aircraft IDs and advanced settings**, **App MAVLink system ID** and
 **App MAVLink component ID** identify Flight Lab's outgoing requests, separately

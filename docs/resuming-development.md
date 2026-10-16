@@ -1,6 +1,8 @@
 # Development checkpoint — 16 October 2026
 
-Flight Insights Preview **0.3.0** is built from clean source
+Current development source is **0.3.1**, with automatic controller UID discovery
+and an optional advanced UID lock. See [validation.md](validation.md) for current
+build status. The previous Flight Insights Preview **0.3.0** was built from clean source
 `77e39a03f225763cc245dd09167881399cbde8f9` on
 `codex/flight-insights-0.3.0-workspace`. The
 [Windows/Linux native run](https://github.com/kyl3n/flight-insights/actions/runs/38748020018)
@@ -14,7 +16,8 @@ The main navigation now has **Flights** and **Setup**. The two-step setup flow
 configures live UDP or saved-log use. Serial setup stays in the existing field
 radio/GCS equipment; there is no COM-port wizard. One app UDP endpoint can record
 telemetry and perform bounded read-only parameter capture when the radio/router
-provides a return path and the controller UID is configured. An existing GCS
+provides a return path and a supported nonzero controller UID is reported.
+Manual UID entry is optional in 0.3.1; existing UID locks remain until cleared. An existing GCS
 socket is not shared or taken over. A one-way feed still supports recording.
 Saving setup and starting the app send nothing; **Start collecting** activates
 the saved connection and its configured readback policy.

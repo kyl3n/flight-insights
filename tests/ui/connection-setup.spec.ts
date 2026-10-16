@@ -179,7 +179,7 @@ test('invalid addresses, ports, and aircraft source IDs keep setup on the correc
   } finally { await engine.close(); }
 });
 
-test('one app connection stores the parameter return path without choosing a GCS or opening a socket', async ({page}) => {
+test('one app connection stores the parameter return path without requiring a controller UID', async ({page}, testInfo) => {
   const engine = await connectEngine(page);
   try {
     await page.goto('/');
@@ -193,19 +193,55 @@ test('one app connection stores the parameter return path without choosing a GCS
     await page.getByLabel('Observer UDP port', {exact: true}).fill('14651');
     await continueSetup(page);
     await expect(page.getByRole('alert')).toContainText('Aircraft link UDP port');
-    await expect(page.getByRole('alert')).toContainText('controller UID');
+    await expect(page.getByRole('alert')).not.toContainText('controller UID');
     await expect(page.getByRole('button', {name: 'Save setup', exact: true})).toHaveCount(0);
     await page.getByLabel('Aircraft link UDP port', {exact: true}).fill('14590');
-    await page.getByLabel('Controller UID', {exact: true}).fill('12345');
+    await expect(page.getByLabel('Lock to controller UID (optional)', {exact: true})).not.toBeVisible();
+    await page.evaluate(() => { if (document.activeElement instanceof HTMLElement) document.activeElement.blur(); window.scrollTo(0, 0); });
+    await page.screenshot({path: testInfo.outputPath('automatic-aircraft-setup.png'), fullPage: true});
     await expect(page.getByRole('combobox', {name: 'Ground station', exact: true})).toHaveCount(0);
     await expect(page.getByLabel('Dedicated acquisition UDP port', {exact: true})).toHaveCount(0);
     await continueSetup(page);
     await expect(page.getByText('Automatic · same app port, requests to 10.0.0.2:14590', {exact: true})).toBeVisible();
+    await expect(page.getByText('Detect automatically for each collection', {exact: true})).toBeVisible();
     await page.getByRole('button', {name: 'Save setup', exact: true}).click();
     await expect(page.getByText('Setup saved on this computer', {exact: true})).toBeVisible();
     const profile = await page.evaluate(() => JSON.parse(localStorage.getItem('q22.collection-profile.v1')!));
     expect(profile.connection).toMatchObject({local_address: '10.0.0.5', listen_port: 14651,
-      expected_sender: '10.0.0.2', expected_uid: '12345', readback: {remote_port: 14590}});
+      expected_sender: '10.0.0.2', readback: {remote_port: 14590}});
+    expect(profile.connection.expected_uid).toBeUndefined();
+    expectNoChecks(engine.calls);
+  } finally { await engine.close(); }
+});
+
+test('an optional aircraft UID lock persists until explicitly cleared', async ({page}) => {
+  const engine = await connectEngine(page);
+  try {
+    await page.goto('/');
+    await expect(page.getByText('Engine connected', {exact: true})).toBeVisible();
+    await openSetup(page);
+    await page.getByRole('radio', {name: 'Local telemetry feed', exact: true}).check();
+    await page.getByLabel('Aircraft profile name', {exact: true}).filter({visible: true}).fill('Shared field connection');
+    await page.getByLabel(autoCapture, {exact: true}).check();
+    await page.getByLabel('Aircraft link UDP port', {exact: true}).fill('14590');
+    await openDisclosure(page, 'Aircraft IDs and advanced settings');
+    await page.getByLabel('Lock to controller UID (optional)', {exact: true}).fill('456');
+    await continueSetup(page);
+    await expect(page.getByText('Locked to controller UID 456', {exact: true})).toBeVisible();
+    await page.getByRole('button', {name: 'Save setup', exact: true}).click();
+    await page.reload();
+    await expect(page.getByText('Engine connected', {exact: true})).toBeVisible();
+    await openSetup(page);
+    await openDisclosure(page, 'Aircraft IDs and advanced settings');
+    const lock = page.getByLabel('Lock to controller UID (optional)', {exact: true});
+    await expect(lock).toHaveValue('456');
+    await lock.fill('');
+    await continueSetup(page);
+    await expect(page.getByText('Detect automatically for each collection', {exact: true})).toBeVisible();
+    await page.getByRole('button', {name: 'Save setup', exact: true}).click();
+    const profile = await page.evaluate(() => JSON.parse(localStorage.getItem('q22.collection-profile.v1')!));
+    expect(profile.connection.expected_uid).toBeUndefined();
+    expect(profile.connection.readback.remote_port).toBe(14590);
     expectNoChecks(engine.calls);
   } finally { await engine.close(); }
 });
@@ -225,7 +261,6 @@ test('saved shared connection starts collection and schedules bounded readbacks 
     await page.getByLabel('Observer UDP port', {exact: true}).fill(String(port));
     await page.getByLabel(autoCapture, {exact: true}).check();
     await page.getByLabel('Aircraft link UDP port', {exact: true}).fill('14590');
-    await page.getByLabel('Controller UID', {exact: true}).fill('12345');
     await openDisclosure(page, 'Aircraft IDs and advanced settings');
     await page.getByLabel('App MAVLink system ID', {exact: true}).fill('253');
     await page.getByLabel('App MAVLink component ID', {exact: true}).fill('192');
@@ -242,7 +277,9 @@ test('saved shared connection starts collection and schedules bounded readbacks 
     expect(starts).toHaveLength(1);
     expect(starts[0].params).toMatchObject({connection: {listen_port: port, readback: {remote_port: 14590, client_system_id: 253, client_component_id: 192}},
       acquisition_policy: {confirm_automatic_readback: true, confirm_experimental_adapter: true}});
+    expect(starts[0].params.connection.expected_uid).toBeUndefined();
     const save = engine.calls.find(call => call.method === 'orchestration.policy.save');
+    expect(save?.params.policy.connection.expected_uid).toBeUndefined();
     expect(save?.params.policy).toMatchObject({connection: {transport: 'shared_recorder', local_port: port,
       remote_address: '127.0.0.1', remote_port: 14590, client_system_id: 253, client_component_id: 192}, preflight_parameters: true, postflight_parameters: true,
       automatic_preflight_refresh: true, log_retrieval: 'disabled', max_requests_per_capture: 64});
@@ -252,6 +289,7 @@ test('saved shared connection starts collection and schedules bounded readbacks 
     await expect(page.getByText('Engine connected', {exact: true})).toBeVisible();
     await openSetup(page);
     await openDisclosure(page, 'Aircraft IDs and advanced settings');
+    await expect(page.getByLabel('Lock to controller UID (optional)', {exact: true})).toHaveValue('');
     await expect(page.getByLabel('App MAVLink system ID', {exact: true})).toHaveValue('253');
     await expect(page.getByLabel('App MAVLink component ID', {exact: true})).toHaveValue('192');
     expect(engine.calls.filter(call => call.method === 'session.prepare_and_watch')).toHaveLength(1);

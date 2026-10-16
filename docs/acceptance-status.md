@@ -1,6 +1,6 @@
 # Acceptance status
 
-Version 0.3.0 is the flight-centered Flight Insights Preview. The [current product direction](current-product-direction.md) records the user's 15 October 2026 requirements and supersedes conflicting assumptions in the supplied Revision 2 handoff; preserve the original handoff files unchanged. Update this document with executed checks; a test fixture or CI configuration is not a hardware-validation result. Stage 1 is not complete.
+Version 0.3.1 source adds automatic controller UID discovery to the flight-centered Flight Insights Preview. Manual UID entry is an optional advanced lock; current native build status is in [validation](validation.md). The [current product direction](current-product-direction.md) records the user's 15 October 2026 requirements and supersedes conflicting assumptions in the supplied Revision 2 handoff; preserve the original handoff files unchanged. Update this document with executed checks; a test fixture or CI configuration is not a hardware-validation result. Stage 1 is not complete.
 
 Windows x64 and Linux x64 are the current required release targets. macOS is deferred by the user's latest instruction; optional Mac build configurations remain available. See the [platform support matrix](platform-support.md).
 
@@ -58,7 +58,7 @@ logs can be aligned automatically after collection stops; ambiguous or incomplet
 matches remain for review. Complete readback association retains the independent
 content, identity, clock and original-integrity requirements.
 
-Current clean source `77e39a0` passed 983 engine tests, 29 subtests, 43 distinct
+The previous 0.3.0 clean source `77e39a0` passed 983 engine tests, 29 subtests, 43 distinct
 real-engine browser cases and 17 native desktop Rust tests locally. The 15 engine
 skips retain their platform/dependency reasons. Its Windows/Linux native run
 passed on 15 October, including both full browser suites and packaged production

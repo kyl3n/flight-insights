@@ -138,7 +138,8 @@ def shared_bootstrap_ready(current, connection):
             and current.get("event_backlog_bytes", 0) <= 256 * 1024
             and current.get("status_age_s") is not None and 0 <= current["status_age_s"] <= 2.5
             and len(selected) == 1 and selected[0].get("armed_state") == "disarmed"
-            and selected[0].get("uid") in (None, connection.get("expected_uid"))
+            and not selected[0].get("readback_identity_conflict")
+            and (not connection.get("expected_uid") or selected[0].get("uid") in (None, connection["expected_uid"]))
             and selected[0].get("sender") == connection.get("remote_address")
             and selected[0].get("sender_port") == connection.get("remote_port"))
 
@@ -430,6 +431,12 @@ class _Worker:
             uid = str(raw.get("uid")) if raw.get("uid") else None
             uid2 = bytes(raw.get("uid2", [])).hex() if any(raw.get("uid2", [])) else None
             firmware = {key: raw.get(key) for key in ("flight_sw_version", "board_version", "vendor_id", "product_id")}
+            # Pin the first observed identity for this recorder lifetime, even
+            # between acquisitions and before catalog callbacks catch up.
+            if source.get("_readback_uid") and uid != source["_readback_uid"]:
+                source["readback_identity_conflict"] = True
+            if uid and not source.get("_readback_uid"):
+                source["_readback_uid"] = uid
             source.update(uid=uid, uid2=uid2, identity_state="observed_uid" if uid or uid2 else "uid_unavailable")
             source["_identity_received_ns"] = mono_ns
             self.event("identity", mono_ns, utc_ns, **base, uid=uid, uid2=uid2, firmware_identity=firmware)
@@ -575,9 +582,10 @@ class _Worker:
                     or source.get("armed") is not False
                     or not fresh("last_heartbeat_monotonic_ns", limits["heartbeat_timeout_s"])):
                 raise ValueError("Shared socket lacks a fresh selected disarmed heartbeat.")
-            if source.get("uid") not in (None, connection["expected_uid"]):
+            expected_uid = connection.get("expected_uid") or source.get("_readback_uid")
+            if source.get("readback_identity_conflict") or source.get("uid") not in (None, expected_uid):
                 raise ValueError("Shared socket reported a different vehicle UID.")
-            if not bootstrap and (str(source.get("uid")) != connection["expected_uid"]
+            if not bootstrap and (not expected_uid or str(source.get("uid")) != expected_uid
                     or not fresh("_identity_received_ns", limits["identity_timeout_s"])
                     or not fresh("_boot_received_ns", limits["boot_timeout_s"])):
                 raise ValueError("Shared socket lacks fresh matching UID and boot-clock evidence.")

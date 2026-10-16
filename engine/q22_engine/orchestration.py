@@ -197,7 +197,7 @@ class OrchestrationService:
         connection = policy["connection"]
         if policy["aircraft_id"] != profile["aircraft_id"] or policy["synthetic"] != observe["synthetic"]:
             raise ValueError("Policy aircraft/provenance does not match the observation profile.")
-        if any(str(connection[key]) != str(observe.get(key)) for key in ("system_id", "component_id", "expected_uid")):
+        if any(str(connection.get(key)) != str(observe.get(key)) for key in ("system_id", "component_id", "expected_uid")):
             raise ValueError("Both endpoint profiles must explicitly select the same UID/system/component.")
         shared = connection.get("transport") == "shared_recorder"
         if shared:
@@ -323,7 +323,8 @@ class OrchestrationService:
         original = request.get("trigger_token", {})
         if (policy["connection"].get("transport") == "shared_recorder"
                 and original.get("uid") is None and original.get("firmware_identity") is None
-                and token.get("uid") == policy["connection"]["expected_uid"]):
+                and token.get("uid")
+                and (not policy["connection"].get("expected_uid") or token["uid"] == policy["connection"]["expected_uid"])):
             return original | {"uid": token["uid"], "firmware_identity": token.get("firmware_identity")}
         return original
 
@@ -372,13 +373,13 @@ class OrchestrationService:
         if (capture.get("selected_source_id") and not source.get("heartbeat_evidence")
                 and not capture.get("source_ambiguity") and not capture.get("active_armed_interval_id")
                 and not source.get("identity_conflict") and not source.get("continuity_lost")
-                and source.get("uid") in (None, policy["connection"]["expected_uid"])):
+                and (not policy["connection"].get("expected_uid") or source.get("uid") in (None, policy["connection"]["expected_uid"]))):
             from .recorder import shared_bootstrap_ready
             if shared_bootstrap_ready(recorder, policy["connection"]):
                 return {"allowed": True, "reason": "Fresh disarmed shared socket permits initial UID discovery; parameter requests still require independently verified UID and boot clock."}
         if (context["safety"].get("armed_state") != "disarmed" or capture.get("source_ambiguity")
                 or source.get("identity_conflict") or source.get("continuity_lost")
-                or (str(source.get("uid")) != policy["connection"]["expected_uid"]
+                or (policy["connection"].get("expected_uid") and str(source.get("uid")) != policy["connection"]["expected_uid"]
                     and not (policy["connection"].get("transport") == "shared_recorder" and source.get("uid") is None))
                 or source.get("heartbeat_evidence", {}).get("boot_epoch") in (None, "unknown")):
             return {"allowed": False, "reason": "Fresh disarmed source/UID/clock-segment evidence is unavailable."}

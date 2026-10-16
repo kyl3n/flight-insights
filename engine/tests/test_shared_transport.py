@@ -174,6 +174,82 @@ def test_app_identity_cannot_share_vehicle_system_id(shared):
         service.preview({"connection": shared_connection(peer) | {"client_system_id": 1}})
 
 
+def test_automatic_identity_is_rediscovered_between_collections(tmp_path):
+    from q22_engine.flight_configuration import FlightConfigurationService
+    peer = Peer()
+    recorder = RecorderService(tmp_path / "catalog")
+    service = AcquisitionService(Store(tmp_path / "catalog"), shared_transport=recorder.open_shared_transport)
+    profile = observer_profile(peer)
+    profile["connection"].pop("expected_uid")
+    connection = shared_connection(peer)
+    connection.pop("expected_uid")
+    try:
+        for uid in (123, 456):
+            peer.uid = uid
+            recorder.start(str(uuid4()), CollectionController._worker_config(profile))
+            result = service.dispatch("acquisition.parameters.capture",
+                params(service, peer, connection=connection, limits=durable_limits()))["acquisition"]
+            assert result["state"] == "complete", result
+            evidence = result["transport_evidence"]
+            assert evidence["identity_basis"] == "reported_uid_discovered_not_authenticated"
+            assert evidence["initial_gate_observations"]["identity"]["uid"] == str(uid)
+            assert evidence["final_gate_observations"]["identity"]["uid"] == str(uid)
+            assert "expected_uid" not in result["connection"]
+            snapshot = FlightConfigurationService(service.store).promote({"acquisition_id": result["id"]})["snapshot"]
+            assert snapshot["usable_for_full_comparison"] and snapshot["hardware_uid"] == str(uid)
+            recorder.stop()
+        assert "expected_uid" not in profile["connection"] and "expected_uid" not in connection
+        sent_before = len(peer.requests)
+        stopped = service.dispatch("acquisition.parameters.capture",
+            params(service, peer, connection=connection, limits=durable_limits()))["acquisition"]
+        assert stopped["state"] != "complete" and "active collection" in stopped["interruption_reason"]
+        assert len(peer.requests) == sent_before  # No unpinned post-stop fallback.
+    finally:
+        recorder.close()
+        peer.close()
+
+
+@pytest.mark.parametrize("condition", ["missing_uid", "changed_uid", "locked_uid"])
+def test_identity_discovery_never_ignores_missing_or_conflicting_identity(tmp_path, condition):
+    peer = Peer()
+    recorder = RecorderService(tmp_path / "catalog")
+    service = AcquisitionService(Store(tmp_path / "catalog"), shared_transport=recorder.open_shared_transport)
+    profile = observer_profile(peer)
+    connection = shared_connection(peer)
+    if condition != "locked_uid":
+        profile["connection"].pop("expected_uid")
+        connection.pop("expected_uid")
+    if condition == "missing_uid":
+        peer.uid = 0
+    elif condition == "locked_uid":
+        peer.uid = 456
+    else:
+        def change_during_readback(_message):
+            peer.value(0)
+            for uid in (456, 123):  # Returning to the first UID must not reopen the gate.
+                peer.send(mav.MAVLink_autopilot_version_message(peer.capabilities, 1, 0, 0, 1,
+                    [0] * 8, [0] * 8, [0] * 8, 1, 1, uid))
+        peer.readback_hook = change_during_readback
+    try:
+        recorder.start(str(uuid4()), CollectionController._worker_config(profile))
+        result = service.dispatch("acquisition.parameters.capture", params(service, peer,
+            connection=connection, limits=durable_limits() | {"bootstrap_timeout_s": 1.5}))["acquisition"]
+        assert result["state"] != "complete", result
+        assert "UID" in result["interruption_reason"], result
+        assert recorder.status()["active"]
+        if condition != "changed_uid":
+            assert not any(message.get_type().startswith("PARAM_REQUEST") for message in peer.requests)
+        else:
+            before = len(peer.requests)
+            second = service.dispatch("acquisition.parameters.capture",
+                params(service, peer, connection=connection, limits=durable_limits()))["acquisition"]
+            assert second["state"] != "complete", second
+            assert len(peer.requests) == before  # Recorder's identity lock survives new acquisitions.
+    finally:
+        recorder.close()
+        peer.close()
+
+
 def test_socket_owner_rejects_parameter_writes_even_if_internal_caller_bypasses_adapter(tmp_path):
     peer = Peer()
     connection = shared_connection(peer)
@@ -225,9 +301,14 @@ def test_socket_owner_drains_queued_armed_heartbeat_before_allowed_request(tmp_p
         peer.close()
 
 
-def test_shared_policy_bootstraps_uid_without_a_second_forwarded_stream(tmp_path):
+@pytest.mark.parametrize("automatic_uid,vehicle_uid", [(False, 123), (True, 123), (True, 456)])
+def test_shared_policy_bootstraps_uid_without_a_second_forwarded_stream(tmp_path, automatic_uid, vehicle_uid):
     from q22_engine.__main__ import Engine
     peer = Peer()
+    peer.uid = vehicle_uid
+    connection = shared_connection(peer)
+    if automatic_uid:
+        connection.pop("expected_uid")
     # Lower-rate production-like telemetry, with no unsolicited version packet.
     original_status, last_status = peer.status, [0.0]
     def status():
@@ -239,11 +320,13 @@ def test_shared_policy_bootstraps_uid_without_a_second_forwarded_stream(tmp_path
     engine = Engine(tmp_path / "engine")
     try:
         orchestrator = engine._orchestrator()
-        policy = {"aircraft_id": "SYNTHETIC SHARED ENDPOINT", "connection": shared_connection(peer),
+        policy = {"aircraft_id": "SYNTHETIC SHARED ENDPOINT", "connection": connection,
                   "synthetic": False, "preflight_parameters": True, "postflight_parameters": False,
                   "automatic_preflight_refresh": True, "limits": durable_limits()}
         saved = orchestrator.save_policy({"policy": policy, "operation_id": str(uuid4())})["policy"]
         profile = observer_profile(peer)
+        if automatic_uid:
+            profile["connection"].pop("expected_uid")
         preview = engine.collection.collection.preview(profile)
         reply = engine.handle({"jsonrpc": "2.0", "id": 1, "method": "session.prepare_and_watch", "params": {
             **preview["profile"], "operation_id": str(uuid4()), "target_profile_version": "test-v1",
@@ -260,6 +343,9 @@ def test_shared_policy_bootstraps_uid_without_a_second_forwarded_stream(tmp_path
             time.sleep(.05)
         assert latest["requests"] and latest["requests"][0]["state"] == "complete", latest
         assert latest["runs"][0]["preflight_readiness"]["current_for_next_flight"], latest
+        result = engine.store.get_document("acquisition", latest["requests"][0]["acquisition_id"])
+        assert result["transport_evidence"]["initial_gate_observations"]["identity"]["uid"] == str(vehicle_uid)
+        assert ("expected_uid" not in result["connection"]) is automatic_uid
         completed_id = latest["requests"][0]["id"]
         # Our own parameter replies have caught up to the catalog; they must not
         # cause an immediate invalidation/re-enumeration loop.
