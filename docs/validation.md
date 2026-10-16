@@ -38,6 +38,16 @@ full local engine suite passed 999 tests and 29 subtests (16 documented skips).
 The focused transport suite passed 21 cases locally with one Windows-only sequence skip.
 Retained diagnostics are under `/workspace/artifacts/native-ci-38896985463/`.
 
+The subsequent [run 38898405920](https://github.com/kyl3n/flight-insights/actions/runs/38898405920)
+failed one newly added Linux fault-injection case because its full live acquisition
+ended partial; 998 tests passed. The large failure object did not expose the reason.
+The six receipt-file cases now isolate IPC using a synthetic worker receipt and
+deterministic clock. They assert a single command, the original expiry, bounded
+polling, temporary-lock recovery and rejection of persistent/unrelated errors.
+The existing live transport tests and ten fresh Windows collection starts remain
+required. The revised focused suite passed 21 cases locally (one Windows-only skip).
+
+
 ### Third 0.3.1 native attempt
 
 [Native run 38895561199](https://github.com/kyl3n/flight-insights/actions/runs/38895561199)

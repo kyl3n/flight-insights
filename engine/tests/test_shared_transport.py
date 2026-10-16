@@ -142,34 +142,58 @@ def test_same_endpoint_can_be_used_directly_only_after_recorder_stops(shared):
     ("posix", 5, 3, False),
 ])
 def test_shared_reply_read_locks_never_resend_or_extend_the_request(
-        shared, monkeypatch, platform, winerror, locked_reads, complete):
+        tmp_path, monkeypatch, platform, winerror, locked_reads, complete):
+    """Exercise IPC receipt handling independently of live telemetry scheduling."""
     from q22_engine import recorder as recorder_module, shared_transport
-    peer, recorder, service = shared
-    original = recorder_module._read_json
-    attempted = []
+    clock, attempted, commands, released = [1000.0], [], [], []
+    original_read, original_write = recorder_module._read_json, recorder_module._atomic_json
+    def advance(seconds):
+        clock[0] += seconds
+    def worker_receipt(path, value):
+        assert path.name == "readback-command.json"
+        commands.append(value)
+        original_write(path, value)
+        original_write(path.with_name("readback-reply.json"), {"id": value["id"], "sent": True})
     def locked_reply(path, maximum=4 * 1024 * 1024):
-        if path.name == "readback-reply.json":
-            attempted.append(time.monotonic())
-            if len(attempted) <= locked_reads:
-                error = PermissionError("synthetic Windows receipt lock")
-                error.winerror = winerror
-                raise error
-        return original(path, maximum)
-    # Simulate receipt-read behavior without changing host pathlib or cleanup.
+        attempted.append(clock[0])
+        if len(attempted) <= locked_reads:
+            error = PermissionError("synthetic Windows receipt lock")
+            error.winerror = winerror
+            raise error
+        return original_read(path, maximum)
+    # Use a deterministic clock and a synthetic worker receipt. The separate
+    # Windows collection sequence still exercises real processes and MAVLink.
     monkeypatch.setattr(shared_transport, "sys", SimpleNamespace(platform="win32" if platform == "nt" else "linux"))
+    monkeypatch.setattr(shared_transport, "time", SimpleNamespace(
+        monotonic=lambda: clock[0], monotonic_ns=lambda: int(clock[0] * 1e9), sleep=advance))
     monkeypatch.setattr(recorder_module, "_read_json", locked_reply)
-    result = service.dispatch("acquisition.parameters.capture",
-        params(service, peer, connection=shared_connection(peer), limits=durable_limits()))["acquisition"]
-    assert attempted
-    assert (result["state"] == "complete") is complete, result
-    assert sum(message.get_type() == "COMMAND_LONG" for message in peer.requests) == 1
-    assert sum(message.get_type() == "PARAM_REQUEST_LIST" for message in peer.requests) == int(complete)
-    assert recorder.status()["state"] == "recording"
-    if locked_reads == 10000:
-        assert "did not acknowledge" in result["interruption_reason"]
-        assert len(attempted) < locked_reads  # Deadline ended polling while the lock remained.
-    elif not complete:
-        assert len(attempted) == 1 and "receipt lock" in result["interruption_reason"]
+    monkeypatch.setattr(recorder_module, "_atomic_json", worker_receipt)
+    recorder = SimpleNamespace(directory=tmp_path, status=lambda: {
+        "state": "recording", "active": True, "status_age_s": 0})
+    connection = {"remote_address": "127.0.0.1", "remote_port": 14550}
+    transport = shared_transport.RecorderTransport(recorder, connection, durable_limits(), lambda: released.append(True))
+    payload = b"synthetic request; IPC fixture only"
+    try:
+        if complete:
+            assert transport.sendto(payload, ("127.0.0.1", 14550)) == len(payload)
+        else:
+            reason = "did not acknowledge" if locked_reads == 10000 else "receipt lock"
+            with pytest.raises(OSError, match=reason):
+                transport.sendto(payload, ("127.0.0.1", 14550))
+        assert len(commands) == 1  # No command resend, even after a sharing error.
+        assert commands[0]["payload"] == payload.hex()
+        assert commands[0]["expires_monotonic_ns"] == "1001000000000"
+        assert clock[0] <= 1001.006  # Original deadline plus at most one poll tick.
+        assert not (tmp_path / "readback-command.json").exists()
+        if locked_reads == 10000:
+            assert clock[0] >= 1001 and 1 < len(attempted) < locked_reads
+        elif not complete:
+            assert len(attempted) == 1 and clock[0] == 1000
+        else:
+            assert len(attempted) == locked_reads + 1
+    finally:
+        transport.close()
+    assert released == [True]
 
 
 def test_observed_app_identity_collision_blocks_worker_sends(shared):
