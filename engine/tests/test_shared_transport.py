@@ -4,6 +4,7 @@ import json
 import socket
 import sys
 import time
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -130,6 +131,45 @@ def test_same_endpoint_can_be_used_directly_only_after_recorder_stops(shared):
         confirm_log_transfer_side_effects=True))["acquisition"]
     assert result["state"] == "complete", result
     assert result["transport_evidence"]["transport"] == "dedicated_udp"
+
+
+@pytest.mark.parametrize("platform,winerror,locked_reads,complete", [
+    ("nt", 5, 3, True),
+    ("nt", 32, 3, True),
+    ("nt", 33, 3, True),
+    ("nt", 5, 10000, False),
+    ("nt", 123, 3, False),
+    ("posix", 5, 3, False),
+])
+def test_shared_reply_read_locks_never_resend_or_extend_the_request(
+        shared, monkeypatch, platform, winerror, locked_reads, complete):
+    from q22_engine import recorder as recorder_module, shared_transport
+    peer, recorder, service = shared
+    original = recorder_module._read_json
+    attempted = []
+    def locked_reply(path, maximum=4 * 1024 * 1024):
+        if path.name == "readback-reply.json":
+            attempted.append(time.monotonic())
+            if len(attempted) <= locked_reads:
+                error = PermissionError("synthetic Windows receipt lock")
+                error.winerror = winerror
+                raise error
+        return original(path, maximum)
+    # Simulate receipt-read behavior without changing host pathlib or cleanup.
+    monkeypatch.setattr(shared_transport, "sys", SimpleNamespace(platform="win32" if platform == "nt" else "linux"))
+    monkeypatch.setattr(recorder_module, "_read_json", locked_reply)
+    result = service.dispatch("acquisition.parameters.capture",
+        params(service, peer, connection=shared_connection(peer), limits=durable_limits()))["acquisition"]
+    assert attempted
+    assert (result["state"] == "complete") is complete, result
+    assert sum(message.get_type() == "COMMAND_LONG" for message in peer.requests) == 1
+    assert sum(message.get_type() == "PARAM_REQUEST_LIST" for message in peer.requests) == int(complete)
+    assert recorder.status()["state"] == "recording"
+    if locked_reads == 10000:
+        assert "did not acknowledge" in result["interruption_reason"]
+        assert len(attempted) < locked_reads  # Deadline ended polling while the lock remained.
+    elif not complete:
+        assert len(attempted) == 1 and "receipt lock" in result["interruption_reason"]
 
 
 def test_observed_app_identity_collision_blocks_worker_sends(shared):

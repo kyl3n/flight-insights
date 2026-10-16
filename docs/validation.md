@@ -20,6 +20,24 @@ explicit lock mismatch, and blocked unpinned post-stop fallback. The GUI checks
 cover no-UID setup, collection start, persistence, and explicit clearing of locks.
 Fixtures are synthetic; these checks do not qualify a physical GCS/aircraft link.
 
+### Windows readback receipt correction
+
+[Run 38896985463](https://github.com/kyl3n/flight-insights/actions/runs/38896985463)
+reproduced a partial readback on the tenth fresh Windows collection. The expanded
+diagnostic identifies `PermissionError` while opening the recorder's atomically
+replaced `readback-reply.json`. That run passed 984 Windows engine tests and failed
+one; it does not qualify a Windows installer.
+
+The shared transport now waits through recognized Windows sharing/access errors
+when reading that receipt, within the existing one-second acknowledgement deadline.
+It never resends the MAVLink command, changes receipt identity checks, extends the
+deadline or treats an unreadable acknowledgement as success. Persistent locks still
+produce a partial readback while recording continues. Six added cases cover Windows
+errors 5/32/33, a persistent lock, an unrelated error and non-Windows behavior. The
+full local engine suite passed 999 tests and 29 subtests (16 documented skips).
+The focused transport suite passed 21 cases locally with one Windows-only sequence skip.
+Retained diagnostics are under `/workspace/artifacts/native-ci-38896985463/`.
+
 ### Third 0.3.1 native attempt
 
 [Native run 38895561199](https://github.com/kyl3n/flight-insights/actions/runs/38895561199)

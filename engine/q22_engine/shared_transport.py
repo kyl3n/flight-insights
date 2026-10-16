@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import socket
 import os
+import sys
 import time
 from uuid import uuid4
 
@@ -124,7 +125,17 @@ class RecorderTransport:
             while time.monotonic() < deadline:
                 self._check()
                 if reply.is_file() and not reply.is_symlink():
-                    receipt = _read_json(reply, 4096)
+                    try:
+                        receipt = _read_json(reply, 4096)
+                    except OSError as error:
+                        # Atomic replacement can briefly deny a Windows reader
+                        # access to the destination. Keep waiting for this exact
+                        # receipt within the original deadline. Never resend the
+                        # MAVLink request or treat an unreadable receipt as sent.
+                        if sys.platform != "win32" or getattr(error, "winerror", None) not in (5, 32, 33):
+                            raise
+                        time.sleep(.005)
+                        continue
                     if receipt.get("id") == request_id:
                         if not receipt.get("sent"):
                             raise OSError(receipt.get("reason", "Recorder withheld shared readback request."))
