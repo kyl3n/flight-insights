@@ -24,6 +24,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import traceback
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -34,6 +35,21 @@ REQUIRE_PUBLISHER = False
 REQUIRE_GUI = False
 GUI_REPETITIONS = 1
 GUI_SUMMARY_DIRECTORY: Path | None = None
+
+
+class QualificationDirectory(tempfile.TemporaryDirectory):
+    def cleanup(self) -> None:
+        # WebView2 can briefly retain a cache mapping after the application has
+        # exited. Retry only deletion, never an installation or GUI check. A
+        # persistent lock still fails qualification after at most 15 seconds.
+        for attempt in range(31):
+            try:
+                super().cleanup()
+                return
+            except PermissionError:
+                if sys.platform != "win32" or attempt == 30:
+                    raise
+                time.sleep(0.5)
 
 
 def run(command, **kwargs) -> subprocess.CompletedProcess:
@@ -312,7 +328,7 @@ def require_clean_windows_registration() -> None:
 
 
 def verify_artifact(artifact: Path, expected_engine: Path) -> dict:
-    with tempfile.TemporaryDirectory(prefix="Q22 Installed Δ with spaces ") as temporary:
+    with QualificationDirectory(prefix="Q22 Installed Δ with spaces ") as temporary:
         directory = Path(temporary)
         suffix = artifact.suffix.lower()
         if suffix == ".deb" and sys.platform == "linux":

@@ -1,4 +1,4 @@
-# Current product direction — 15 October 2026
+# Current product direction — updated 16 October 2026
 
 Flight Lab should explain how changes to an aircraft's configuration relate to
 changes in its measured flight performance, and help the operator choose the next
@@ -248,7 +248,7 @@ Filtering cannot undo sensor clipping or repair a mechanical fault.
 | Missing firmware, spectra, RPM or configuration evidence | Report explains the gap and recommends the next useful capture instead of presenting unsupported numeric tuning |
 | Installed field workflow | Windows/Linux bench validation covers actual GCS/digiQ routing, disconnects, repeated flights and a matched evidence bundle |
 
-Version 0.3.0 is an evaluation build with flight-centered analysis, shared
+Version 0.3.1 adds automatic aircraft identification to the evaluation build with flight-centered analysis, shared
 collection, evidence, comparison, research and experiment workflows. Complete software inventory, effective
 configuration reconstruction, firmware-exact dynamic filter simulation and
 aircraft-specific numeric tuning remain separate work. Building an installer and

@@ -18,6 +18,56 @@ def script(relative):
     spec.loader.exec_module(module)
     return module
 
+
+@pytest.mark.parametrize("platform,locked_attempts,expected_calls,raises", [
+    ("win32", 2, 3, False),
+    ("win32", 100, 31, True),
+    ("linux", 2, 1, True),
+])
+def test_qualification_cleanup_waits_for_transient_windows_locks_only(
+        monkeypatch, platform, locked_attempts, expected_calls, raises):
+    verify = script("scripts/verify-native-bundle.py")
+    directory = verify.QualificationDirectory()
+    original_cleanup = verify.tempfile.TemporaryDirectory.cleanup
+    calls = []
+    waits = []
+    def locked_cleanup(instance):
+        calls.append(instance.name)
+        if len(calls) <= locked_attempts:
+            raise PermissionError("synthetic WebView cache lock")
+        original_cleanup(instance)
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(verify.sys, "platform", platform)
+            patch.setattr(verify.tempfile.TemporaryDirectory, "cleanup", locked_cleanup)
+            patch.setattr(verify.time, "sleep", waits.append)
+            if raises:
+                with pytest.raises(PermissionError, match="WebView cache lock"):
+                    directory.cleanup()
+            else:
+                directory.cleanup()
+        assert len(calls) == expected_calls
+        assert waits == [0.5] * (expected_calls - 1)
+        assert os.path.exists(directory.name) is raises
+    finally:
+        original_cleanup(directory)
+
+
+def test_qualification_cleanup_does_not_retry_other_errors(monkeypatch):
+    verify = script("scripts/verify-native-bundle.py")
+    directory = verify.QualificationDirectory()
+    original_cleanup = verify.tempfile.TemporaryDirectory.cleanup
+    def broken_cleanup(instance):
+        raise OSError("synthetic filesystem failure")
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(verify.tempfile.TemporaryDirectory, "cleanup", broken_cleanup)
+            patch.setattr(verify.time, "sleep", lambda _: pytest.fail("unexpected cleanup retry"))
+            with pytest.raises(OSError, match="filesystem failure"):
+                directory.cleanup()
+    finally:
+        original_cleanup(directory)
+
 def test_gui_qualification_rejects_stale_report_from_another_invocation(tmp_path, monkeypatch):
     verify = script("scripts/verify-native-bundle.py")
     engine = tmp_path / "q22-engine"

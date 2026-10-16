@@ -20,8 +20,28 @@ explicit lock mismatch, and blocked unpinned post-stop fallback. The GUI checks
 cover no-UID setup, collection start, persistence, and explicit clearing of locks.
 Fixtures are synthetic; these checks do not qualify a physical GCS/aircraft link.
 
-Native 0.3.1 build results are pending. The 0.3.0 installers below remain a
-separate earlier build and do not include automatic UID discovery.
+[Initial native Windows/Linux run 38892091313](https://github.com/kyl3n/flight-insights/actions/runs/38892091313)
+checked clean source `358bcc213a584d371b0bf4197e14d261fe6dda0c` on
+`codex/flight-insights-auto-aircraft`. Linux passed 989 engine tests (15 skips,
+29 subtests), 44 browser cases, 17 desktop and 46 helper Rust tests. Its Debian,
+extracted AppRun and actual AppImage entrypoints each passed three fresh production
+GUI launches. Windows passed its engine/browser/Rust checks and all three fresh
+GUI launches, but the job failed afterward when deleting a temporary WebView2
+cache file that Windows still held open. No Windows installer was published.
+The failed run and its ordered GUI receipts remain retained under
+`/workspace/artifacts/native-ci-38892091313/`.
+
+The verification script now retries only temporary-directory deletion on Windows
+PermissionError for up to 15 seconds. Other errors and persistent locks still fail;
+installation, GUI launches and their verification are never retried. Focused
+regressions cover transient and permanent locks, non-Windows behavior and other
+filesystem errors. A new native run is required before Windows delivery.
+
+The initial clean source archive is
+`/workspace/artifacts/Q22-Flight-Lab-0.3.1-source-358bcc2.zip`, SHA-256
+`e5884c2857375b0d7bf4970275a2541418c5d88d35aa5d5202cad8371dc1fa1f`.
+Its manifest covers 287 files. This archive precedes the cleanup correction.
+The 0.3.0 installers below are separate earlier builds without automatic UID discovery.
 
 ## Flight-centered Preview 0.3.0 — built 15 October, documented 16 October 2026
 
