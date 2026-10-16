@@ -20,6 +20,31 @@ explicit lock mismatch, and blocked unpinned post-stop fallback. The GUI checks
 cover no-UID setup, collection start, persistence, and explicit clearing of locks.
 Fixtures are synthetic; these checks do not qualify a physical GCS/aircraft link.
 
+### Third 0.3.1 native attempt
+
+[Native run 38895561199](https://github.com/kyl3n/flight-insights/actions/runs/38895561199)
+checked clean source `6dbd84481f48a647ffe556c9f727b1daeeb28dad` on
+`codex/flight-insights-auto-aircraft`. Linux passed 993 engine tests, 29 subtests
+(16 skips), all 44 browser cases, 17 desktop and 46 helper Rust tests. Debian,
+extracted AppRun and the actual AppImage launcher each passed three fresh native
+GUI launches, including connected production UI, IPC, engine restart and shutdown.
+Windows passed 985 engine tests (24 skips, 29 subtests), including ten independent
+fresh collection starts with locked and automatically discovered identities.
+It also passed the frozen-engine, desktop and helper checks, but one browser case
+timed out after five seconds waiting for an imported flight. The preserved screenshot
+shows the background import still running; 43 other browser cases passed. The
+import checks now allow up to 30 seconds for the asynchronous job to produce the
+required flight and analysis. This changes test timing only; failed jobs or missing
+results still fail. No Windows installer was published from this attempt.
+
+The exact clean source archive is
+`/workspace/artifacts/Q22-Flight-Lab-0.3.1-source-6dbd844.zip`, SHA-256
+`9b7b4a7276a3e9ee29b63c1a237c294d49287d96793532b1fc80e269fdd0a128`.
+Its manifest covers 287 files. Third-attempt receipts are retained under
+`/workspace/artifacts/native-ci-38895561199/`.
+
+### Earlier 0.3.1 verification attempts
+
 [Initial native Windows/Linux run 38892091313](https://github.com/kyl3n/flight-insights/actions/runs/38892091313)
 checked clean source `358bcc213a584d371b0bf4197e14d261fe6dda0c` on
 `codex/flight-insights-auto-aircraft`. Linux passed 989 engine tests (15 skips,
@@ -42,7 +67,10 @@ passed 983 engine tests but failed the locked-UID shared bootstrap case because
 the readback was partial; the failure log truncated the underlying acquisition
 reason. The test now retains that full reason and recorder state in its failure
 message without changing the required complete result. Native delivery remains
-pending; neither failed Windows run qualifies an installer. The matching clean source archive is
+pending in that run; neither failed Windows run qualifies an installer. The
+affected scenario subsequently passed 20 consecutive local runs. Its underlying
+Windows failure reason remains unconfirmed; the later run adds detailed diagnostics
+and ten independently required Windows collection starts, without retrying failures. The matching clean source archive is
 `/workspace/artifacts/Q22-Flight-Lab-0.3.1-source-0c3f6b3.zip`, SHA-256
 `f9e0fc306bee654ab1b4718dc9c3a7cf6bf72efe8b7a3ec7eb049d22679dc5a2`.
 

@@ -50,7 +50,10 @@ test('flight import automatically analyzes saved logs and keeps deep insights on
     await page.getByRole('button', {name: 'Import and analyze', exact: true}).click();
     const history = page.getByRole('region', {name: 'Flight history', exact: true});
     const flight = history.getByRole('button', {name: /synthetic-insights/});
-    await expect(flight).toBeVisible();
+    // Import, indexing and analysis are asynchronous engine jobs. Allow their
+    // bounded completion window instead of treating five seconds as an import
+    // performance requirement on a shared Windows CI runner.
+    await expect(flight).toBeVisible({timeout: 30_000});
     await flight.click();
     const detail = page.getByRole('region', {name: 'Selected flight insights', exact: true});
     await expect(detail.getByRole('heading', {name: 'Performance', exact: true})).toBeVisible();
@@ -105,7 +108,7 @@ test('flight history uses recorded chronology and automatically compares earlier
     await page.getByRole('checkbox', {name: 'These are synthetic test logs', exact: true}).check();
     await page.getByRole('button', {name: 'Import and analyze', exact: true}).click();
     const history = page.getByRole('region', {name: 'Flight history', exact: true});
-    await expect(history.getByRole('button', {name: /earlier-flight/})).toBeVisible();
+    await expect(history.getByRole('button', {name: /earlier-flight/})).toBeVisible({timeout: 30_000});
     const rows = history.getByRole('button', {name: /(?:latest|earlier)-flight/});
     await expect(rows).toHaveCount(2);
     await expect(rows.nth(0)).toContainText('latest-flight');
